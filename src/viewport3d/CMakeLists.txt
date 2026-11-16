@@ -8,6 +8,7 @@ add_files(
     sprite_atlas.h
     terrain_mesh.cpp
     terrain_mesh.h
+    tile_sprites.h
     view3d_gui.cpp
     view3d_gui.h
     CONDITION VIEWPORT3D_ENABLED

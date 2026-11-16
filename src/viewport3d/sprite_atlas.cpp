@@ -28,20 +28,43 @@ SpriteAtlas::SpriteAtlas() : pixels(static_cast<size_t>(WIDTH) * HEIGHT, 0)
  * Get a sprite from the atlas, adding it when it is not there yet.
  * @param sprite The sprite.
  * @param pal The palette to recolour the sprite with, or PAL_NONE.
- * @return Where the sprite is; not valid when the sprite could not be added.
+ * @return Where the sprite is, relative to the point the 2D game draws it at; not valid when the sprite could not be added.
  */
 const AtlasSprite &SpriteAtlas::Get(SpriteID sprite, PaletteID pal)
 {
-	auto [it, inserted] = this->sprites.try_emplace(PalSpriteID{sprite, pal});
+	SpritePart part{.sprite = sprite, .pal = pal};
+	return this->Get({&part, 1});
+}
+
+/**
+ * Get a few sprites drawn over each other as one sprite from the atlas, adding it when it is not there yet.
+ * @param parts The sprites, in the order the 2D game draws them, relative to a reference point.
+ * @return Where the result is, relative to the reference point; not valid when it could not be added.
+ */
+const AtlasSprite &SpriteAtlas::Get(std::span<const SpritePart> parts)
+{
+	auto [it, inserted] = this->sprites.try_emplace(std::vector<SpritePart>(parts.begin(), parts.end()));
 	AtlasSprite &entry = it->second;
 	if (!inserted) return entry;
 
-	const Sprite *data = GetSprite(GB(sprite, 0, SPRITE_WIDTH), SpriteType::Normal);
-	int x_offs = UnScaleByZoom(data->x_offs, this->zoom);
-	int y_offs = UnScaleByZoom(data->y_offs, this->zoom);
-	uint width = UnScaleByZoom(data->width, this->zoom);
-	uint height = UnScaleByZoom(data->height, this->zoom);
-	if (width == 0 || height == 0) return entry;
+	/* Find the area that the sprites cover together. */
+	int left = INT_MAX, top = INT_MAX, right = INT_MIN, bottom = INT_MIN;
+	for (const SpritePart &part : parts) {
+		/* Sprites that make what is behind them see-through are left out. */
+		if (HasBit(part.sprite, PALETTE_MODIFIER_TRANSPARENT)) continue;
+		const Sprite *data = GetSprite(GB(part.sprite, 0, SPRITE_WIDTH), SpriteType::Normal);
+		int x = UnScaleByZoom(part.x + data->x_offs, this->zoom);
+		int y = UnScaleByZoom(part.y + data->y_offs, this->zoom);
+		left = std::min(left, x);
+		top = std::min(top, y);
+		right = std::max(right, x + UnScaleByZoom(data->width, this->zoom));
+		bottom = std::max(bottom, y + UnScaleByZoom(data->height, this->zoom));
+	}
+	if (left >= right || top >= bottom) return entry;
+	int x_offs = left;
+	int y_offs = top;
+	uint width = right - left;
+	uint height = bottom - top;
 
 	/* Sprites go next to each other in rows, each with a border of one pixel around it. */
 	uint cell_width = width + 2;
@@ -54,7 +77,7 @@ const AtlasSprite &SpriteAtlas::Get(SpriteID sprite, PaletteID pal)
 	}
 	if (this->shelf_y + cell_height > HEIGHT) return entry;
 
-	/* Let the blitter draw the sprite into an empty image, so what stays transparent can be told from what is drawn. */
+	/* Let the blitter draw the sprites into an empty image, so what stays transparent can be told from what is drawn. */
 	std::vector<uint32_t> image(static_cast<size_t>(cell_width) * cell_height, 0);
 	{
 		DrawPixelInfo dpi;
@@ -69,7 +92,12 @@ const AtlasSprite &SpriteAtlas::Get(SpriteID sprite, PaletteID pal)
 		AutoRestoreBackup dpi_backup(_cur_dpi, &dpi);
 		/* Keep the blitters with palette animation from writing to the animation buffer of the screen. */
 		AutoRestoreBackup anim_backup(_screen_disable_anim, true);
-		DrawSprite(sprite, pal, 1 - x_offs, 1 - y_offs, nullptr, this->zoom);
+		for (const SpritePart &part : parts) {
+			if (HasBit(part.sprite, PALETTE_MODIFIER_TRANSPARENT)) continue;
+			/* Clipping is relative to the position of the sprite, here in pixels at the most detailed zoom level. */
+			SubSprite sub{part.clip_left * static_cast<int>(ZOOM_BASE), part.clip_top * static_cast<int>(ZOOM_BASE), (part.clip_right + 1) * static_cast<int>(ZOOM_BASE) - 1, (part.clip_bottom + 1) * static_cast<int>(ZOOM_BASE) - 1};
+			DrawSprite(part.sprite, part.pal, 1 - x_offs + UnScaleByZoom(part.x, this->zoom), 1 - y_offs + UnScaleByZoom(part.y, this->zoom), part.clipped ? &sub : nullptr, this->zoom);
+		}
 	}
 
 	/* Give transparent pixels the colour of a neighbour, so filtering the texture does not darken the outline of the sprite. */

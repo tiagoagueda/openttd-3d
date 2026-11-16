@@ -10,7 +10,7 @@ SAMPLER2D(s_sprites, 0);
 
 void main()
 {
-	vec4 colour = texture2D(s_sprites, v_texcoord0);
+	vec4 colour = texture2D(s_sprites, v_texcoord0.xy);
 	if (colour.a < 0.5) discard;
 	gl_FragColor = vec4(colour.rgb, 1.0);
 }

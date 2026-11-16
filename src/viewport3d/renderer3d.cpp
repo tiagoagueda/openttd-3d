@@ -63,6 +63,7 @@ struct Renderer3D::Impl {
 	bgfx::ProgramHandle sprite_program = BGFX_INVALID_HANDLE;
 	bgfx::UniformHandle sprite_sampler = BGFX_INVALID_HANDLE;
 	bgfx::UniformHandle sprite_axes = BGFX_INVALID_HANDLE;
+	bgfx::UniformHandle sprite_nearer = BGFX_INVALID_HANDLE;
 	bgfx::TextureHandle sprite_atlas = BGFX_INVALID_HANDLE; ///< The sprites of the 2D game that are in use.
 	bgfx::UniformHandle ground_sampler = BGFX_INVALID_HANDLE;
 	bgfx::TextureHandle ground_textures = BGFX_INVALID_HANDLE; ///< Texture array with one layer per #GroundTexture.
@@ -148,7 +149,7 @@ static bgfx::ShaderHandle CreateShader(const ShaderVariants &variants)
 			Debug(Facility::Driver, Severity::Error, "[viewport3d] backend {} is not available", candidate.name);
 			continue;
 		}
-		if (impl.callback.failed || bgfx::getCaps()->limits.maxTextureLayers < GROUND_TEXTURE_END) {
+		if (impl.callback.failed || bgfx::getCaps()->limits.maxTextureLayers < GROUND_TEXTURE_END * 2) {
 			bgfx::shutdown();
 			continue;
 		}
@@ -165,6 +166,7 @@ static bgfx::ShaderHandle CreateShader(const ShaderVariants &variants)
 	impl.layout.begin()
 		.add(bgfx::Attrib::Position, 3, bgfx::AttribType::Float)
 		.add(bgfx::Attrib::Color0, 4, bgfx::AttribType::Uint8, true)
+		.add(bgfx::Attrib::TexCoord0, 1, bgfx::AttribType::Float)
 		.end();
 
 	impl.program = bgfx::createProgram(CreateShader(SHADER_VARIANTS(vs_terrain)), CreateShader(SHADER_VARIANTS(fs_terrain)), true);
@@ -172,20 +174,16 @@ static bgfx::ShaderHandle CreateShader(const ShaderVariants &variants)
 	impl.sprite_layout.begin()
 		.add(bgfx::Attrib::Position, 3, bgfx::AttribType::Float)
 		.add(bgfx::Attrib::TexCoord0, 4, bgfx::AttribType::Float)
+		.add(bgfx::Attrib::TexCoord1, 1, bgfx::AttribType::Float)
 		.end();
 	impl.sprite_program = bgfx::createProgram(CreateShader(SHADER_VARIANTS(vs_sprite)), CreateShader(SHADER_VARIANTS(fs_sprite)), true);
 	impl.sprite_sampler = bgfx::createUniform("s_sprites", bgfx::UniformType::Sampler);
 	impl.sprite_axes = bgfx::createUniform("u_spriteAxes", bgfx::UniformType::Vec4);
+	impl.sprite_nearer = bgfx::createUniform("u_spriteNearer", bgfx::UniformType::Vec4);
 	/* Without smaller versions of the atlas: sprites next to each other would blend into one another. */
 	impl.sprite_atlas = bgfx::createTexture2D(SpriteAtlas::WIDTH, SpriteAtlas::HEIGHT, false, 1, bgfx::TextureFormat::BGRA8, BGFX_SAMPLER_U_CLAMP | BGFX_SAMPLER_V_CLAMP);
 
 	impl.ground_sampler = bgfx::createUniform("s_ground", bgfx::UniformType::Sampler);
-
-	/* Until the real textures arrive everything is white, which leaves just the vertex colours. */
-	GroundTextureSet white;
-	white.size = 1;
-	white.layers.assign(GROUND_TEXTURE_END, std::vector<uint32_t>(1, 0xFFFFFFFF));
-	renderer->SetGroundTextures(white);
 
 	/* Two triangles per quad, split along the diagonal between vertex 1 and 2. */
 	static constexpr uint MAX_QUADS = MAX_CHUNK_QUADS;
@@ -216,6 +214,7 @@ Renderer3D::~Renderer3D()
 	if (bgfx::isValid(impl.quad_indices)) bgfx::destroy(impl.quad_indices);
 	if (bgfx::isValid(impl.sprite_atlas)) bgfx::destroy(impl.sprite_atlas);
 	if (bgfx::isValid(impl.sprite_axes)) bgfx::destroy(impl.sprite_axes);
+	if (bgfx::isValid(impl.sprite_nearer)) bgfx::destroy(impl.sprite_nearer);
 	if (bgfx::isValid(impl.sprite_sampler)) bgfx::destroy(impl.sprite_sampler);
 	if (bgfx::isValid(impl.sprite_program)) bgfx::destroy(impl.sprite_program);
 	if (bgfx::isValid(impl.ground_textures)) bgfx::destroy(impl.ground_textures);
@@ -237,27 +236,36 @@ bool Renderer3D::HomogeneousDepth() const
 	return bgfx::getCaps()->homogeneousDepth;
 }
 
+/** The number of ground textures there is room for. */
+uint Renderer3D::GetMaxGroundTextures() const
+{
+	static constexpr uint MAX_GROUND_TEXTURES = 1024;
+	return std::min<uint>(MAX_GROUND_TEXTURES, bgfx::getCaps()->limits.maxTextureLayers);
+}
+
 /**
- * Replace the ground textures.
- * @param textures The pixels of each #GroundTexture.
+ * Send the ground textures that were made since the last call to the GPU.
+ * @param textures The ground textures.
  */
-void Renderer3D::SetGroundTextures(const GroundTextureSet &textures)
+void Renderer3D::UpdateGroundTextures(GroundTextures &textures)
 {
 	Impl &impl = *this->impl;
-	assert(textures.layers.size() == GROUND_TEXTURE_END && HasExactlyOneBit(textures.size));
+	const uint texture_size = textures.GetSize();
+	assert(HasExactlyOneBit(texture_size));
 
-	if (bgfx::isValid(impl.ground_textures)) bgfx::destroy(impl.ground_textures);
-	impl.ground_textures = bgfx::createTexture2D(static_cast<uint16_t>(textures.size), static_cast<uint16_t>(textures.size), true, GROUND_TEXTURE_END,
-		bgfx::TextureFormat::BGRA8, BGFX_SAMPLER_MIN_ANISOTROPIC | BGFX_SAMPLER_MAG_ANISOTROPIC);
+	if (!bgfx::isValid(impl.ground_textures)) {
+		impl.ground_textures = bgfx::createTexture2D(static_cast<uint16_t>(texture_size), static_cast<uint16_t>(texture_size), true, static_cast<uint16_t>(this->GetMaxGroundTextures()),
+			bgfx::TextureFormat::BGRA8, BGFX_SAMPLER_MIN_ANISOTROPIC | BGFX_SAMPLER_MAG_ANISOTROPIC);
+	}
 
-	std::vector<uint32_t> level, smaller;
-	for (uint16_t layer = 0; layer < GROUND_TEXTURE_END; layer++) {
-		level = textures.layers[layer];
-		assert(level.size() == static_cast<size_t>(textures.size) * textures.size);
+	std::vector<uint32_t> smaller;
+	for (GroundTextures::Pending &pending : textures.TakePending()) {
+		std::vector<uint32_t> &level = pending.pixels;
+		assert(level.size() == static_cast<size_t>(texture_size) * texture_size);
 
 		uint8_t mip = 0;
-		for (uint size = textures.size; ; size /= 2, mip++) {
-			bgfx::updateTexture2D(impl.ground_textures, layer, mip, 0, 0, static_cast<uint16_t>(size), static_cast<uint16_t>(size),
+		for (uint size = texture_size; ; size /= 2, mip++) {
+			bgfx::updateTexture2D(impl.ground_textures, static_cast<uint16_t>(pending.layer), mip, 0, 0, static_cast<uint16_t>(size), static_cast<uint16_t>(size),
 				bgfx::copy(level.data(), static_cast<uint32_t>(level.size() * sizeof(uint32_t))));
 			if (size == 1) break;
 
@@ -393,6 +401,13 @@ void Renderer3D::Render(uint width, uint height, const Camera3D &camera, std::sp
 	Vec3 right = camera.GetRight();
 	const float sprite_axes[4] = {right.x * SPRITE_PIXEL_SIZE, right.y * SPRITE_PIXEL_SIZE, right.z * SPRITE_PIXEL_SIZE, WORLD_Z_SCALE};
 
+	/* A point this many pixels of height below a sprite's foot is hidden by ground that is that height divided by
+	 * the sine of the camera's pitch nearer to the camera. Limited, or sprites would show through hills when looking along the ground. */
+	Vec3 eye = camera.GetEye();
+	float eye_distance = std::max(1.0f, std::sqrt((eye.x - camera.target.x) * (eye.x - camera.target.x) + (eye.y - camera.target.y) * (eye.y - camera.target.y) + (eye.z - camera.target.z) * (eye.z - camera.target.z)));
+	const float sprite_nearer[4] = {(eye.x - camera.target.x) / eye_distance, (eye.y - camera.target.y) / eye_distance, (eye.z - camera.target.z) / eye_distance,
+		WORLD_Z_SCALE / std::max(0.35f, std::sin(camera.pitch))};
+
 	for (ChunkID id : chunks) {
 		auto it = impl.chunks.find(id);
 		if (it == impl.chunks.end()) continue;
@@ -412,6 +427,7 @@ void Renderer3D::Render(uint width, uint height, const Camera3D &camera, std::sp
 			bgfx::setVertexBuffer(0, chunk.sprites);
 			bgfx::setTexture(0, impl.sprite_sampler, impl.sprite_atlas);
 			bgfx::setUniform(impl.sprite_axes, sprite_axes);
+			bgfx::setUniform(impl.sprite_nearer, sprite_nearer);
 			bgfx::setIndexBuffer(impl.quad_indices, 0, chunk.num_sprites * 6);
 			bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A | BGFX_STATE_WRITE_Z | BGFX_STATE_DEPTH_TEST_LESS);
 			bgfx::submit(VIEW_SCENE, impl.sprite_program);

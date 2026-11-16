@@ -99,6 +99,7 @@
 
 #ifdef WITH_VIEWPORT3D
 #	include "viewport3d/view3d_gui.h"
+#	include "viewport3d/tile_sprites.h"
 #endif
 
 #include "table/strings.h"
@@ -3863,3 +3864,82 @@ void ViewportData::CancelFollow(const Window &viewport_window)
 	this->dest_scrollpos_y = this->scrollpos_y;
 	this->follow_vehicle = VehicleID::Invalid();
 }
+
+#ifdef WITH_VIEWPORT3D
+/**
+ * Find out which sprites the tile draws, by letting it draw itself as for a viewport and keeping the result.
+ * Must be called from the thread that draws the windows, and not while a viewport is being drawn.
+ * @param tile The tile.
+ * @param[out] sprites The sprites; previous contents are discarded.
+ */
+void CollectTileSprites(TileIndex tile, TileSprites &sprites)
+{
+	sprites.ground.clear();
+	sprites.groups.clear();
+	sprites.parts.clear();
+	if (!_vd.tile_sprites_to_draw.empty() || !_vd.parent_sprites_to_draw.empty() || !_vd.child_screen_sprites_to_draw.empty()) return;
+
+	/* A viewport that is large enough that nothing is left out for being outside of it. */
+	AutoRestoreBackup dpi_backup(_vd.dpi, DrawPixelInfo{});
+	_vd.dpi.left = _vd.dpi.top = -(1 << 29);
+	_vd.dpi.width = _vd.dpi.height = 1 << 30;
+	_vd.dpi.zoom = ZoomLevel::Normal;
+	AutoRestoreBackup cur_dpi_backup(_cur_dpi, &_vd.dpi);
+
+	_vd.combine_sprites = SpriteCombineMode::None;
+	_vd.last_child = LAST_CHILD_NONE;
+	_vd.foundation_part = FoundationPart::None;
+	_vd.foundation[FoundationPart::Normal] = -1;
+	_vd.foundation[FoundationPart::Halftile] = -1;
+	_vd.last_foundation_child[FoundationPart::Normal] = LAST_CHILD_NONE;
+	_vd.last_foundation_child[FoundationPart::Halftile] = LAST_CHILD_NONE;
+
+	_cur_ti.tile = tile;
+	_cur_ti.x = TileX(tile) * TILE_SIZE;
+	_cur_ti.y = TileY(tile) * TILE_SIZE;
+	std::tie(_cur_ti.tileh, _cur_ti.z) = GetTilePixelSlope(tile);
+	_tile_type_procs[GetTileType(tile)]->draw_tile_proc(&_cur_ti);
+
+	Point origin = RemapCoords(_cur_ti.x, _cur_ti.y, _cur_ti.z);
+	auto part = [&](SpriteID image, PaletteID pal, const SubSprite *sub, int x, int y) {
+		SpritePart result;
+		result.sprite = image;
+		result.pal = pal;
+		result.x = x - origin.x;
+		result.y = y - origin.y;
+		if (sub != nullptr) {
+			result.clipped = true;
+			result.clip_left = sub->left;
+			result.clip_top = sub->top;
+			result.clip_right = sub->right;
+			result.clip_bottom = sub->bottom;
+		}
+		return result;
+	};
+
+	for (const TileSpriteToDraw &ts : _vd.tile_sprites_to_draw) {
+		sprites.ground.push_back(part(ts.image, ts.pal, ts.sub, ts.x, ts.y));
+	}
+	for (const ParentSpriteToDraw &ps : _vd.parent_sprites_to_draw) {
+		TileSpriteGroup &group = sprites.groups.emplace_back();
+		group.xmin = ps.xmin;
+		group.ymin = ps.ymin;
+		group.zmin = ps.zmin;
+		group.xmax = ps.xmax;
+		group.ymax = ps.ymax;
+		group.zmax = ps.zmax;
+		group.first = static_cast<uint>(sprites.parts.size());
+		if (ps.image != SPR_EMPTY_BOUNDING_BOX) sprites.parts.push_back(part(ps.image, ps.pal, ps.sub, ps.x, ps.y));
+		for (int child = ps.first_child; child >= 0; child = _vd.child_screen_sprites_to_draw[child].next) {
+			const ChildScreenSpriteToDraw &cs = _vd.child_screen_sprites_to_draw[child];
+			sprites.parts.push_back(part(cs.image, cs.pal, cs.sub, (cs.relative ? ps.left : ps.x) + cs.x, (cs.relative ? ps.top : ps.y) + cs.y));
+		}
+		group.count = static_cast<uint>(sprites.parts.size()) - group.first;
+	}
+
+	_vd.string_sprites_to_draw.clear();
+	_vd.tile_sprites_to_draw.clear();
+	_vd.parent_sprites_to_draw.clear();
+	_vd.child_screen_sprites_to_draw.clear();
+}
+#endif /* WITH_VIEWPORT3D */

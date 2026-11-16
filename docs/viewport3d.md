@@ -3,9 +3,10 @@
 This fork adds a second, 3D view of the map next to the normal 2D game.
 The 2D game, its GUI, the simulation and multiplayer are unchanged: the 3D view only reads the map.
 
-Status: the window shows the landscape with a free camera.
-The ground (grass, rough land, rocks, snow, desert, farm fields, water and coasts), the trees and the hedges around farm fields are drawn with the graphics of the 2D game, so they follow the base set and NewGRFs in use.
-There are no buildings, vehicles or tracks in it yet; tiles with tracks, roads or buildings on them are drawn as flat coloured tiles.
+Status: the window shows the map as the 2D game draws it, apart from vehicles and signs, with a free camera.
+Everything is drawn with the graphics of the 2D game, so it follows the base set and NewGRFs in use.
+The ground, tracks and roads lie on the terrain. Trees, buildings, stations, industries, signals, bridges and the like are flat sprites that stand upright and turn to face the camera.
+From the viewing angle of the 2D game that looks the same as there; from other angles it shows that they are not real 3D models yet.
 
 ## Using it
 
@@ -51,7 +52,8 @@ All code lives in `src/viewport3d/`:
 | `view3d_gui.cpp` | The window, the camera controls, and deciding which parts of the terrain to (re)build and draw. |
 | `terrain_mesh.cpp` | Turns the map array into triangles, in chunks of 64x64 tiles, and picks the ground texture of each tile. Knows nothing about the GPU. |
 | `ground_textures.cpp` | Makes the ground textures from the 2D game's ground sprites when the window opens. |
-| `sprite_atlas.cpp` | Collects the sprites of things that stand on the ground, such as trees, in one texture. |
+| `sprite_atlas.cpp` | Collects the sprites of things that stand on the ground, such as trees and buildings, in one texture. |
+| `tile_sprites.h` | Asks a tile which sprites the 2D game draws for it. The implementation is `CollectTileSprites()` in `viewport.cpp`. |
 | `renderer3d.cpp` | The only file that uses bgfx. Draws the chunks into an offscreen image and reads the pixels back. |
 | `camera3d.h` | Orbit camera, matrices and frustum culling. |
 | `shaders/` | Shader sources and their precompiled forms. |
@@ -66,6 +68,11 @@ Slopes use the same texture as flat land and get their shading from the lighting
 Coasts are the exception: there the sprite of each slope is pulled straight, because it is the sprite that says where the water ends.
 All textures are layers of one texture array; each tile names its layer in the alpha channel of its vertices.
 
+Plain landscape tiles are handled directly. For every other tile, `CollectTileSprites()` lets the tile draw itself the way it does for a 2D viewport and keeps the list of sprites instead of drawing them.
+The sprites the 2D game draws flat on the ground, such as tracks and roads, are pulled straight into a ground texture for that combination of sprites; these textures are made on demand, up to 1024 of them.
+Every sprite with a bounding box, with the sprites drawn along with it, becomes one upright sprite that stands in the middle of that box.
+This way NewGRF houses, industries, stations and objects work without any code of their own.
+
 Trees are sprites on upright quads that turn to face the camera. Hedges and fences are sprites on small walls along the edge of their tile.
 Both are sized and placed such that from the viewing angle of the 2D game they look the same as there.
 
@@ -73,9 +80,9 @@ Coordinates are OpenTTD's own world coordinates: 16 units per tile, x to the sou
 Heights are scaled down: the 2D game draws a height level as 8 pixels, which at its viewing angle of 30 degrees corresponds to about 3.3 world units rather than 8.
 With that scale the 3D view at the default angle has the proportions of the 2D game.
 
-The existing game is touched in four small places:
+The existing game is touched in a few small places:
 
-* `MarkTileDirtyByTile()` in `viewport.cpp` tells the 3D view which tile changed.
+* `MarkTileDirtyByTile()` in `viewport.cpp` tells the 3D view which tile changed, and `CollectTileSprites()` at the end of that file tells it what a tile draws.
 * `console_cmds.cpp` has the `view3d` command.
 * `window_type.h` has the new window class.
 * `lang/english.txt` has the strings of the window.
@@ -86,6 +93,10 @@ The existing game is touched in four small places:
 * A 32bpp or 40bpp blitter is required, which is the default; the 8bpp blitters do not work.
 * Terrain is built for the part of the map that has been in view and stays in memory until the window is closed. On the very largest maps, looking at all of it uses a lot of memory.
 * The ground textures and sprites are taken from the game when the window opens or when they are first needed. After changing NewGRFs in a running game, close and reopen the window.
+* Vehicles, signs and station names are not drawn yet.
+* Buildings made of several sprites or covering several tiles can come apart when the camera is rotated, and tiles on foundations draw their ground as an upright sprite too.
+* Transparency options of the 2D game are followed, but see-through sprites are left out rather than drawn see-through.
+* Tiles with animations, such as some industries, rebuild their whole chunk of 64x64 tiles for every animation step.
 * Water is not animated, and sprites far away flicker a little because they have no smaller versions yet.
 * There is no anti-aliasing.
 * It has been run on Linux with Mesa's software Vulkan and OpenGL drivers, and on Windows with the Direct3D 11 video driver.

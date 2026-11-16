@@ -10,6 +10,7 @@
 #ifndef VIEWPORT3D_SPRITE_ATLAS_H
 #define VIEWPORT3D_SPRITE_ATLAS_H
 
+#include "tile_sprites.h"
 #include "../gfx_type.h"
 #include "../zoom_type.h"
 
@@ -18,8 +19,8 @@ struct AtlasSprite {
 	bool valid = false; ///< Whether the sprite is in the atlas.
 	float u0 = 0, v0 = 0; ///< Texture coordinate of the top left corner.
 	float u1 = 0, v1 = 0; ///< Texture coordinate of the bottom right corner.
-	float left = 0; ///< Position of the left edge relative to the sprite's anchor, in pixels at normal zoom.
-	float top = 0; ///< Position of the top edge relative to the sprite's anchor, in pixels at normal zoom; down is positive.
+	float left = 0; ///< Position of the left edge relative to the reference point, in pixels at normal zoom.
+	float top = 0; ///< Position of the top edge relative to the reference point, in pixels at normal zoom; down is positive.
 	float width = 0; ///< Width in pixels at normal zoom.
 	float height = 0; ///< Height in pixels at normal zoom.
 };
@@ -31,11 +32,12 @@ struct AtlasSprite {
 class SpriteAtlas {
 public:
 	static constexpr uint WIDTH = 4096; ///< Width of the atlas in pixels.
-	static constexpr uint HEIGHT = 2048; ///< Height of the atlas in pixels.
+	static constexpr uint HEIGHT = 4096; ///< Height of the atlas in pixels.
 
 	SpriteAtlas();
 
 	const AtlasSprite &Get(SpriteID sprite, PaletteID pal);
+	const AtlasSprite &Get(std::span<const SpritePart> sprites);
 
 	/** Pixels of the atlas, top row first, in the format of 32bpp blitters. */
 	std::span<const uint32_t> GetPixels() const { return this->pixels; }
@@ -58,7 +60,7 @@ public:
 private:
 	ZoomLevel zoom; ///< Zoom level of the sprites in the atlas.
 	std::vector<uint32_t> pixels; ///< The image.
-	std::map<PalSpriteID, AtlasSprite> sprites; ///< The sprites in the atlas, and the ones that did not fit.
+	std::map<std::vector<SpritePart>, AtlasSprite> sprites; ///< The sprites in the atlas, and the ones that did not fit.
 	uint shelf_x = 0; ///< Where the next sprite goes in the current row of sprites.
 	uint shelf_y = 0; ///< Top of the current row of sprites.
 	uint shelf_height = 0; ///< Height of the tallest sprite in the current row.

@@ -10,9 +10,12 @@
 #ifndef VIEWPORT3D_GROUND_TEXTURES_H
 #define VIEWPORT3D_GROUND_TEXTURES_H
 
+#include "tile_sprites.h"
+#include "../zoom_type.h"
+
 /**
- * The ground textures of the 3D viewport.
- * Each is one layer of a texture array; a tile names its layer in the alpha channel of its vertices.
+ * The ground textures of the 3D viewport that are always there.
+ * Each ground texture is one layer of a texture array, and these are the first layers.
  */
 enum GroundTexture : uint8_t {
 	GROUND_TEXTURE_NONE = 0, ///< Plain white, for tiles that are drawn in a flat colour.
@@ -25,15 +28,49 @@ enum GroundTexture : uint8_t {
 	GROUND_TEXTURE_DESERT_ROCKS = GROUND_TEXTURE_SNOWY_ROCKS + 4, ///< Rocks in the desert; 4 densities.
 	GROUND_TEXTURE_WATER = GROUND_TEXTURE_DESERT_ROCKS + 4, ///< Water.
 	GROUND_TEXTURE_SHORE, ///< Coasts; 18 shapes, in the order of the shore sprites.
-	GROUND_TEXTURE_END = GROUND_TEXTURE_SHORE + 18, ///< Number of ground textures.
+	GROUND_TEXTURE_END = GROUND_TEXTURE_SHORE + 18, ///< Number of ground textures that are always there. ///< Number of ground textures.
 };
 
-/** The pixels of all ground textures. */
-struct GroundTextureSet {
-	uint size = 0; ///< Width and height of each texture in pixels; a power of two.
-	std::vector<std::vector<uint32_t>> layers; ///< Pixels per GroundTexture, in the format of 32bpp blitters.
-};
+/**
+ * The ground textures of the 3D viewport.
+ * Besides the fixed ones of #GroundTexture, textures are made on demand for whatever
+ * sprites the 2D game draws on the ground of a tile, such as tracks and roads.
+ * Must be used from the thread that draws the windows.
+ */
+class GroundTextures {
+public:
+	/** A texture that still has to be sent to the GPU. */
+	struct Pending {
+		uint layer; ///< The layer of the texture array.
+		std::vector<uint32_t> pixels; ///< The pixels, in the format of 32bpp blitters.
+	};
 
-GroundTextureSet BuildGroundTextures();
+	GroundTextures(uint max_layers);
+
+	/** Width and height of each texture in pixels; a power of two. */
+	uint GetSize() const { return this->size; }
+
+	uint Get(std::span<const SpritePart> sprites, const std::array<uint8_t, 4> &heights);
+
+	/** The textures that were made since the last call. */
+	std::vector<Pending> TakePending()
+	{
+		std::vector<Pending> result;
+		result.swap(this->pending);
+		return result;
+	}
+
+private:
+	using Key = std::pair<std::array<uint8_t, 4>, std::vector<SpritePart>>;
+
+	bool Build(uint layer, std::span<const SpritePart> sprites, const std::array<uint8_t, 4> &heights);
+
+	ZoomLevel zoom; ///< Zoom level of the sprites to make the textures from.
+	uint size; ///< Width and height of each texture.
+	uint max_layers; ///< Number of layers the texture array has room for.
+	uint next_layer = GROUND_TEXTURE_END; ///< The next free layer.
+	std::map<Key, uint> layers; ///< The textures made on demand.
+	std::vector<Pending> pending; ///< Textures not sent to the GPU yet.
+};
 
 #endif /* VIEWPORT3D_GROUND_TEXTURES_H */

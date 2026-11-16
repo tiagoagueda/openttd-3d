@@ -20,21 +20,22 @@
 #include "../safeguards.h"
 
 /**
- * Turn the sprite of a ground tile into a square texture.
+ * Turn the sprites of a ground tile into a square texture.
  *
  * In the 2D game a flat tile is a diamond of 64 by 31 pixels (at normal zoom). The texture is that
  * diamond pulled straight: the texture's u axis runs along the tile's x axis and v along its y axis.
  * On a slope the diamond is bent; the heights of the corners tell how.
  *
- * @param sprites The ground sprite, and optionally sprites that the 2D game draws on top of it.
- * @param zoom Zoom level of the sprites to use.
- * @param size Width and height of the texture.
+ * @param layer The layer of the texture array to make.
+ * @param sprites The ground sprites, in the order the 2D game draws them, relative to where it draws the northern corner of the tile.
  * @param heights Heights of the northern, western, eastern and southern corner, in height levels above the lowest.
- * @param[out] texture The pixels of the texture.
  * @return Whether the sprites could be used.
  */
-static bool BuildGroundTexture(std::initializer_list<SpriteID> sprites, ZoomLevel zoom, uint size, const std::array<uint8_t, 4> &heights, std::vector<uint32_t> &texture)
+bool GroundTextures::Build(uint layer, std::span<const SpritePart> sprites, const std::array<uint8_t, 4> &heights)
 {
+	const ZoomLevel zoom = this->zoom;
+	const uint size = this->size;
+
 	/* Size of the sprites compared to normal zoom, at which the diamond is 64 pixels wide and 31 high. */
 	const int scale = UnScaleByZoom(4, zoom);
 	const int diamond_width = 64 * scale;
@@ -58,7 +59,13 @@ static bool BuildGroundTexture(std::initializer_list<SpriteID> sprites, ZoomLeve
 		/* Keep the blitters with palette animation from writing to the animation buffer of the screen. */
 		AutoRestoreBackup anim_backup(_screen_disable_anim, true);
 		/* The tile's origin, its northern corner, is one (unzoomed) pixel left of the diamond's centre line. */
-		for (SpriteID sprite : sprites) DrawSprite(sprite, PAL_NONE, diamond_width / 2 - scale, margin, nullptr, zoom);
+		for (const SpritePart &part : sprites) {
+			/* Sprites that make what is below them see-through cannot be drawn onto nothing. */
+			if (HasBit(part.sprite, PALETTE_MODIFIER_TRANSPARENT)) continue;
+			/* Clipping is relative to the position of the sprite, here in pixels at the most detailed zoom level. */
+			SubSprite sub{part.clip_left * static_cast<int>(ZOOM_BASE), part.clip_top * static_cast<int>(ZOOM_BASE), (part.clip_right + 1) * static_cast<int>(ZOOM_BASE) - 1, (part.clip_bottom + 1) * static_cast<int>(ZOOM_BASE) - 1};
+			DrawSprite(part.sprite, part.pal, diamond_width / 2 - scale + UnScaleByZoom(part.x, zoom), margin + UnScaleByZoom(part.y, zoom), part.clipped ? &sub : nullptr, zoom);
+		}
 	}
 
 	const float hn = heights[0], hw = heights[1], he = heights[2], hs = heights[3];
@@ -95,7 +102,7 @@ static bool BuildGroundTexture(std::initializer_list<SpriteID> sprites, ZoomLeve
 		return false;
 	};
 
-	texture.resize(static_cast<size_t>(size) * size);
+	std::vector<uint32_t> texture(static_cast<size_t>(size) * size);
 	for (uint ty = 0; ty < size; ty++) {
 		for (uint tx = 0; tx < size; tx++) {
 			/* Average four samples per pixel; the diamond has fewer pixels than the texture along one diagonal and more along the other. */
@@ -109,25 +116,42 @@ static bool BuildGroundTexture(std::initializer_list<SpriteID> sprites, ZoomLeve
 			texture[static_cast<size_t>(ty) * size + tx] = 0xFF000000 | ((r / count) << 16) | ((g / count) << 8) | (b / count);
 		}
 	}
+	this->pending.push_back({layer, std::move(texture)});
 	return true;
 }
 
 /**
- * Build all ground textures from the sprites that are loaded right now.
- * Must be called from the thread that draws the windows.
- * @return The textures. Textures whose sprites cannot be used are plain white.
+ * Get the texture for a tile with certain sprites on its ground, making it when it does not exist yet.
+ * @param sprites The ground sprites, in the order the 2D game draws them, relative to where it draws the northern corner of the tile.
+ * @param heights Heights of the northern, western, eastern and southern corner, in height levels above the lowest.
+ * @return The layer of the texture, or GROUND_TEXTURE_NONE when there is no room or nothing to see.
  */
-GroundTextureSet BuildGroundTextures()
+uint GroundTextures::Get(std::span<const SpritePart> sprites, const std::array<uint8_t, 4> &heights)
 {
-	GroundTextureSet set;
+	auto [it, inserted] = this->layers.try_emplace(Key{heights, {sprites.begin(), sprites.end()}}, GROUND_TEXTURE_NONE);
+	if (inserted && this->next_layer < this->max_layers && this->Build(this->next_layer, sprites, heights)) {
+		it->second = this->next_layer++;
+	}
+	return it->second;
+}
 
+/**
+ * Make the fixed ground textures from the sprites that are loaded right now.
+ * @param max_layers Number of layers the texture array has room for.
+ */
+GroundTextures::GroundTextures(uint max_layers) : max_layers(max_layers)
+{
 	/* Use the most detailed sprites the game is allowed to use; base sets without them get scaled up by the sprite loader. */
-	ZoomLevel zoom = std::min(_settings_client.gui.zoom_min, ZoomLevel::Normal);
-	set.size = UnScaleByZoom(256, zoom);
+	this->zoom = std::min(_settings_client.gui.zoom_min, ZoomLevel::Normal);
+	/* At the most detailed zoom level a tile is 256 pixels wide, but textures of that size for every kind of tile take too much memory. */
+	this->size = std::min(UnScaleByZoom(256, this->zoom), 128);
 
-	set.layers.resize(GROUND_TEXTURE_END);
+	this->pending.push_back({GROUND_TEXTURE_NONE, std::vector<uint32_t>(static_cast<size_t>(this->size) * this->size, 0xFFFFFFFF)});
 	auto build = [&](uint layer, std::initializer_list<SpriteID> sprites, const std::array<uint8_t, 4> &heights = {}) {
-		if (!BuildGroundTexture(sprites, zoom, set.size, heights, set.layers[layer])) set.layers[layer].clear();
+		std::vector<SpritePart> parts;
+		for (SpriteID sprite : sprites) parts.push_back({.sprite = sprite, .pal = PAL_NONE});
+		/* Textures whose sprites cannot be used are plain white. */
+		if (!this->Build(layer, parts, heights)) this->pending.push_back({layer, this->pending.front().pixels});
 	};
 
 	static constexpr SpriteID GRASS[] = {SPR_FLAT_BARE_LAND, SPR_FLAT_1_THIRD_GRASS_TILE, SPR_FLAT_2_THIRD_GRASS_TILE, SPR_FLAT_GRASS_TILE};
@@ -161,8 +185,4 @@ GroundTextureSet BuildGroundTextures()
 		build(GROUND_TEXTURE_SHORE + i, {SPR_SHORE_BASE + i}, {height(SLOPE_N, Corner::N), height(SLOPE_W, Corner::W), height(SLOPE_E, Corner::E), height(SLOPE_S, Corner::S)});
 	}
 
-	for (auto &layer : set.layers) {
-		if (layer.empty()) layer.assign(static_cast<size_t>(set.size) * set.size, 0xFFFFFFFF);
-	}
-	return set;
 }

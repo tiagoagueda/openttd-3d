@@ -11,6 +11,8 @@
 #include "terrain_mesh.h"
 #include "ground_textures.h"
 #include "sprite_atlas.h"
+#include "tile_sprites.h"
+#include "../bridge_map.h"
 #include "../clear_map.h"
 #include "../landscape.h"
 #include "../map_func.h"
@@ -19,6 +21,7 @@
 #include "../tile_map.h"
 #include "../tree_map.h"
 #include "../water_map.h"
+#include "../zoom_type.h"
 
 #include "../table/sprites.h"
 #include "../table/clear_land.h"
@@ -36,17 +39,10 @@ static constexpr TerrainColour Lerp(const TerrainColour &a, const TerrainColour 
 	return {a.r + (b.r - a.r) * t, a.g + (b.g - a.g) * t, a.b + (b.b - a.b) * t};
 }
 
-static constexpr TerrainColour COLOUR_RAIL{0x76, 0x66, 0x54};
-static constexpr TerrainColour COLOUR_ROAD{0x58, 0x58, 0x5c};
-static constexpr TerrainColour COLOUR_HOUSE{0xb4, 0x64, 0x50};
-static constexpr TerrainColour COLOUR_STATION{0xa4, 0xa4, 0xac};
-static constexpr TerrainColour COLOUR_INDUSTRY{0x94, 0x74, 0x94};
-static constexpr TerrainColour COLOUR_BRIDGE{0x68, 0x68, 0x68};
-static constexpr TerrainColour COLOUR_OBJECT{0x84, 0x94, 0x74};
 
 /** How to draw the ground of a tile. */
 struct TileGround {
-	GroundTexture texture; ///< The texture.
+	uint texture; ///< The layer of the texture.
 	TerrainColour colour; ///< Colour to multiply the texture with.
 	bool shaded = false; ///< Whether the texture already has the shading of the slope in it.
 };
@@ -75,11 +71,10 @@ static TileGround GetTileGround(Tile tile, uint x, uint y)
 	auto shore = [&]() {
 		Slope slope = GetTileSlope(TileXY(x, y));
 		if (slope == SLOPE_FLAT || IsHalftileSlope(slope)) return TileGround{GROUND_TEXTURE_WATER, COLOUR_WHITE};
-		return TileGround{static_cast<GroundTexture>(GROUND_TEXTURE_SHORE + SLOPE_TO_SHORE[slope]), COLOUR_WHITE, true};
+		return TileGround{static_cast<uint>(GROUND_TEXTURE_SHORE + SLOPE_TO_SHORE[slope]), COLOUR_WHITE, true};
 	};
 
-	auto textured = [](uint texture, const TerrainColour &colour = COLOUR_WHITE) { return TileGround{static_cast<GroundTexture>(texture), colour}; };
-	auto plain = [](const TerrainColour &colour) { return TileGround{GROUND_TEXTURE_NONE, colour}; };
+	auto textured = [](uint texture, const TerrainColour &colour = COLOUR_WHITE) { return TileGround{texture, colour}; };
 
 	switch (GetTileType(tile)) {
 		case TileType::Clear:
@@ -109,13 +104,6 @@ static TileGround GetTileGround(Tile tile, uint x, uint y)
 			if (IsCoast(tile)) return shore();
 			return textured(GROUND_TEXTURE_WATER);
 
-		case TileType::Railway: return plain(COLOUR_RAIL);
-		case TileType::Road: return plain(COLOUR_ROAD);
-		case TileType::House: return plain(COLOUR_HOUSE);
-		case TileType::Station: return plain(COLOUR_STATION);
-		case TileType::Industry: return plain(COLOUR_INDUSTRY);
-		case TileType::TunnelBridge: return plain(COLOUR_BRIDGE);
-		case TileType::Object: return plain(COLOUR_OBJECT);
 		default: return textured(GROUND_TEXTURE_GRASS + 3);
 	}
 }
@@ -126,9 +114,11 @@ static TileGround GetTileGround(Tile tile, uint x, uint y)
  * @param x Position along the x axis in world units.
  * @param y Position along the y axis in world units.
  * @param z Height in the z units of the game.
+ * @param nearer How much nearer to the camera the sprite counts as being when deciding what is in front.
+ *               A sprite that stands in the middle of what it shows needs this, or the ground would hide its lower part.
  * @param mesh The mesh to add to.
  */
-static void AddUprightSprite(const AtlasSprite &sprite, float x, float y, float z, TerrainChunkMesh &mesh)
+static void AddUprightSprite(const AtlasSprite &sprite, float x, float y, float z, float nearer, TerrainChunkMesh &mesh)
 {
 	if (!sprite.valid || mesh.sprites.size() >= MAX_CHUNK_QUADS * 4) return;
 
@@ -140,10 +130,10 @@ static void AddUprightSprite(const AtlasSprite &sprite, float x, float y, float 
 	float top = -sprite.top;
 	float bottom = -(sprite.top + sprite.height);
 	mesh.sprites.insert(mesh.sprites.end(), {
-		{x, y, z, left, top, sprite.u0, sprite.v0},
-		{x, y, z, right, top, sprite.u1, sprite.v0},
-		{x, y, z, left, bottom, sprite.u0, sprite.v1},
-		{x, y, z, right, bottom, sprite.u1, sprite.v1},
+		{x, y, z, left, top, sprite.u0, sprite.v0, nearer},
+		{x, y, z, right, top, sprite.u1, sprite.v0, nearer},
+		{x, y, z, left, bottom, sprite.u0, sprite.v1, nearer},
+		{x, y, z, right, bottom, sprite.u1, sprite.v1, nearer},
 	});
 }
 
@@ -177,7 +167,7 @@ static void AddTrees(Tile tile, uint x, uint y, SpriteAtlas &atlas, TerrainChunk
 		/* Only the last tree of a tile is still growing or dying. */
 		SpriteID sprite = sprites[i].sprite + to_underlying(i == trees - 1 ? GetTreeGrowth(tile) : TreeGrowthStage::Grown);
 		int z = base_z + GetPartialPixelZ(positions[i].x, positions[i].y, slope);
-		AddUprightSprite(atlas.Get(sprite, sprites[i].pal), static_cast<float>(x * TILE_SIZE + positions[i].x), static_cast<float>(y * TILE_SIZE + positions[i].y), static_cast<float>(z), mesh);
+		AddUprightSprite(atlas.Get(sprite, sprites[i].pal), static_cast<float>(x * TILE_SIZE + positions[i].x), static_cast<float>(y * TILE_SIZE + positions[i].y), static_cast<float>(z), 0, mesh);
 	}
 }
 
@@ -214,7 +204,7 @@ static void AddWallSprite(const AtlasSprite &sprite, const std::array<float, 3> 
 	auto vertex = [&](const std::array<float, 3> &p, float px, float py, float up) {
 		float u = std::clamp((px - sprite.left) / sprite.width, 0.0f, 1.0f);
 		float v = std::clamp((py - up - sprite.top) / sprite.height, 0.0f, 1.0f);
-		return SpriteVertex{p[0] / TILE_SIZE, p[1] / TILE_SIZE, (p[2] + up) / TILE_HEIGHT, 0, 0, sprite.u0 + (sprite.u1 - sprite.u0) * u, sprite.v0 + (sprite.v1 - sprite.v0) * v};
+		return SpriteVertex{p[0] / TILE_SIZE, p[1] / TILE_SIZE, (p[2] + up) / TILE_HEIGHT, 0, 0, sprite.u0 + (sprite.u1 - sprite.u0) * u, sprite.v0 + (sprite.v1 - sprite.v0) * v, 0};
 	};
 	mesh.sprites.insert(mesh.sprites.end(), {vertex(a, ax, ay, height), vertex(b, bx, by, height), vertex(a, ax, ay, 0), vertex(b, bx, by, 0)});
 }
@@ -252,13 +242,70 @@ static void AddFences(Tile tile, uint x, uint y, SpriteAtlas &atlas, TerrainChun
 }
 
 /**
+ * Add what the 2D game draws for a tile that has more on it than landscape, such as tracks, roads and buildings.
+ * Sprites that the 2D game draws flat on the ground become the ground texture of the tile.
+ * Everything else becomes sprites that stand upright at the front of their bounding box.
+ * @param x X coordinate of the tile.
+ * @param y Y coordinate of the tile.
+ * @param heights Heights of the northern, western, eastern and southern corner, in height levels above the lowest.
+ * @param textures The ground textures.
+ * @param atlas The atlas that provides the sprites.
+ * @param mesh The mesh to add to.
+ * @return How to draw the ground of the tile.
+ */
+static TileGround AddTileSprites(uint x, uint y, const std::array<uint8_t, 4> &heights, GroundTextures &textures, SpriteAtlas &atlas, TerrainChunkMesh &mesh)
+{
+	static TileSprites sprites;
+	static std::vector<SpritePart> group_parts;
+
+	TileIndex tile = TileXY(x, y);
+	CollectTileSprites(tile, sprites);
+
+	int tile_x = x * TILE_SIZE;
+	int tile_y = y * TILE_SIZE;
+	int tile_z = std::get<1>(GetTilePixelSlope(tile));
+
+	uint index = 0;
+	for (const TileSpriteGroup &group : sprites.groups) {
+		if (group.count == 0) continue;
+
+		/* The sprite stands in the middle of its bounding box, so it covers the place it stands on from all sides. */
+		int size_x = group.xmax + 1 - group.xmin;
+		int size_y = group.ymax + 1 - group.ymin;
+		float centre_x = group.xmin + size_x * 0.5f;
+		float centre_y = group.ymin + size_y * 0.5f;
+		/* Where the 2D game draws that point, relative to the reference point of the collected sprites. */
+		int screen_x = static_cast<int>(((centre_y - tile_y) - (centre_x - tile_x)) * 2 * ZOOM_BASE);
+		int screen_y = static_cast<int>(((centre_x - tile_x) + (centre_y - tile_y) - (group.zmin - tile_z)) * ZOOM_BASE);
+
+		group_parts.assign(sprites.parts.begin() + group.first, sprites.parts.begin() + group.first + group.count);
+		for (SpritePart &part : group_parts) {
+			part.x -= screen_x;
+			part.y -= screen_y;
+		}
+
+		/* The front half of the bounding box is drawn below the middle. That part of the sprite would end up in the ground,
+		 * so the sprite counts as that much nearer. A little extra per sprite puts later sprites of a tile in front of
+		 * earlier ones at the same place, like in the 2D game. */
+		float nearer = (size_x + size_y) * 0.5f + 0.5f * index++;
+		AddUprightSprite(atlas.Get(group_parts), centre_x, centre_y, static_cast<float>(group.zmin), nearer, mesh);
+	}
+
+	if (sprites.ground.empty()) return TileGround{GROUND_TEXTURE_GRASS, COLOUR_WHITE};
+	uint texture = textures.Get(sprites.ground, heights);
+	if (texture == GROUND_TEXTURE_NONE) return TileGround{GROUND_TEXTURE_NONE, TerrainColour{0x80, 0x80, 0x80}};
+	return TileGround{texture, COLOUR_WHITE, true};
+}
+
+/**
  * Build the geometry of one chunk of terrain from the current state of the map.
  * @param chunk_x X coordinate of the chunk, in chunks.
  * @param chunk_y Y coordinate of the chunk, in chunks.
+ * @param textures The ground textures.
  * @param atlas The atlas that provides the sprites.
  * @param[out] mesh The mesh to fill; previous contents are discarded.
  */
-void BuildTerrainChunkMesh(uint chunk_x, uint chunk_y, SpriteAtlas &atlas, TerrainChunkMesh &mesh)
+void BuildTerrainChunkMesh(uint chunk_x, uint chunk_y, GroundTextures &textures, SpriteAtlas &atlas, TerrainChunkMesh &mesh)
 {
 	/* Direction towards the light. It comes from the east, like in the original graphics. */
 	static constexpr float SUN_X = -0.4683f, SUN_Y = 0.5620f, SUN_Z = 0.6817f;
@@ -297,7 +344,27 @@ void BuildTerrainChunkMesh(uint chunk_x, uint chunk_y, SpriteAtlas &atlas, Terra
 			float light = (nx * SUN_X + ny * SUN_Y + SUN_Z) / std::sqrt(nx * nx + ny * ny + 1.0f);
 			light = AMBIENT + DIFFUSE * std::max(0.0f, light);
 
-			TileGround ground = GetTileGround(tile, x, y);
+			/* Tiles with more on them than landscape say themselves what the 2D game draws for them. */
+			bool collect = IsBridgeAbove(tile);
+			switch (GetTileType(tile)) {
+				case TileType::Clear:
+				case TileType::Trees:
+					break;
+				case TileType::Water:
+					if (!IsWater(tile) && !IsCoast(tile)) collect = true;
+					break;
+				default:
+					collect = true;
+					break;
+			}
+
+			TileGround ground;
+			if (collect) {
+				int low = std::min({hn, hw, he, hs});
+				ground = AddTileSprites(x, y, {static_cast<uint8_t>(hn - low), static_cast<uint8_t>(hw - low), static_cast<uint8_t>(he - low), static_cast<uint8_t>(hs - low)}, textures, atlas, mesh);
+			} else {
+				ground = GetTileGround(tile, x, y);
+			}
 			if (ground.shaded) light = AMBIENT + DIFFUSE * SUN_Z;
 			/* A slight checkerboard keeps individual tiles recognisable where there is no texture. */
 			if (ground.texture == GROUND_TEXTURE_NONE && ((x ^ y) & 1) != 0) light *= 0.97f;
@@ -309,7 +376,7 @@ void BuildTerrainChunkMesh(uint chunk_x, uint chunk_y, SpriteAtlas &atlas, Terra
 			uint8_t b = static_cast<uint8_t>(std::clamp(ground.colour.b * light, 0.0f, 255.0f));
 
 			auto vertex = [&](uint vx, uint vy, int h) {
-				return TerrainVertex{static_cast<float>(vx), static_cast<float>(vy), static_cast<float>(h), r, g, b, ground.texture};
+				return TerrainVertex{static_cast<float>(vx), static_cast<float>(vy), static_cast<float>(h), r, g, b, 0, static_cast<float>(ground.texture)};
 			};
 			TerrainVertex vn = vertex(x, y, hn);
 			TerrainVertex vw = vertex(x + 1, y, hw);
@@ -324,8 +391,10 @@ void BuildTerrainChunkMesh(uint chunk_x, uint chunk_y, SpriteAtlas &atlas, Terra
 				mesh.vertices.insert(mesh.vertices.end(), {vn, ve, vw, vs});
 			}
 
-			if (IsTileType(tile, TileType::Trees)) AddTrees(tile, x, y, atlas, mesh);
-			if (IsTileType(tile, TileType::Clear) && IsClearGround(tile, ClearGround::Fields)) AddFences(tile, x, y, atlas, mesh);
+			if (!collect) {
+				if (IsTileType(tile, TileType::Trees)) AddTrees(tile, x, y, atlas, mesh);
+				if (IsTileType(tile, TileType::Clear) && IsClearGround(tile, ClearGround::Fields)) AddFences(tile, x, y, atlas, mesh);
+			}
 		}
 	}
 

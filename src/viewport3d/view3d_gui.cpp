@@ -63,6 +63,7 @@ class View3DWindow : public Window {
 	std::vector<ChunkState> chunks; ///< State of all chunks, row by row.
 	std::vector<Renderer3D::ChunkID> visible_chunks; ///< Chunks to draw this frame.
 	TerrainChunkMesh scratch_mesh; ///< Reused while building chunks.
+	std::unique_ptr<GroundTextures> ground_textures; ///< The ground textures that the chunks use.
 	std::unique_ptr<SpriteAtlas> atlas; ///< The sprites of the 2D game that the chunks use.
 
 	bool panning = false; ///< Whether the view is being dragged with the left mouse button.
@@ -194,7 +195,7 @@ public:
 			this->CentreOnMainView();
 			this->renderer = Renderer3D::Create(_view3d_backend, this->error);
 			if (this->renderer != nullptr) {
-				this->renderer->SetGroundTextures(BuildGroundTextures());
+				this->ground_textures = std::make_unique<GroundTextures>(this->renderer->GetMaxGroundTextures());
 				this->atlas = std::make_unique<SpriteAtlas>();
 			}
 			this->SetDirty();
@@ -208,6 +209,7 @@ public:
 		if (view->current_x == 0 || view->current_y == 0) return;
 
 		bool geometry_changed = this->UpdateChunks(view->current_x, view->current_y);
+		this->renderer->UpdateGroundTextures(*this->ground_textures);
 		this->renderer->UpdateSpriteAtlas(*this->atlas);
 		if (!this->view_changed && !geometry_changed) return;
 
@@ -289,7 +291,7 @@ private:
 						continue;
 					}
 
-					BuildTerrainChunkMesh(cx, cy, *this->atlas, this->scratch_mesh);
+					BuildTerrainChunkMesh(cx, cy, *this->ground_textures, *this->atlas, this->scratch_mesh);
 					if (!chunk.built || chunk.hash != this->scratch_mesh.hash) {
 						this->renderer->SetChunk(id, this->scratch_mesh);
 						changed = true;

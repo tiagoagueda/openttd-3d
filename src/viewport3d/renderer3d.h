@@ -38,7 +38,8 @@ public:
 
 	std::string_view GetBackendName() const;
 
-	void SetGroundTextures(const GroundTextureSet &textures);
+	uint GetMaxGroundTextures() const;
+	void UpdateGroundTextures(GroundTextures &textures);
 	void UpdateSpriteAtlas(SpriteAtlas &atlas);
 
 	void SetChunk(ChunkID id, const TerrainChunkMesh &mesh);

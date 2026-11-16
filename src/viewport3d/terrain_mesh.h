@@ -19,9 +19,10 @@ struct TerrainVertex {
 	float y; ///< Position along the y axis in tiles.
 	float z; ///< Height in height levels.
 	uint8_t r, g, b; ///< Colour to multiply the texture with, including the lighting, at half brightness.
-	uint8_t texture; ///< The #GroundTexture of the tile.
+	uint8_t unused; ///< Not used.
+	float texture; ///< The layer of the tile's ground texture.
 };
-static_assert(sizeof(TerrainVertex) == 16);
+static_assert(sizeof(TerrainVertex) == 20);
 
 /**
  * One corner of a sprite that stands on the map.
@@ -36,8 +37,9 @@ struct SpriteVertex {
 	float up; ///< Offset upwards, in pixels of the 2D game at normal zoom.
 	float u; ///< Horizontal texture coordinate in the sprite atlas.
 	float v; ///< Vertical texture coordinate in the sprite atlas.
+	float nearer; ///< How much nearer to the camera the sprite counts as being when deciding what is in front, in pixels of height of the 2D game.
 };
-static_assert(sizeof(SpriteVertex) == 28);
+static_assert(sizeof(SpriteVertex) == 32);
 
 /** Most quads, of terrain or of sprites, that a chunk can have; limited by the 16 bit indices. */
 static constexpr uint MAX_CHUNK_QUADS = 16384;
@@ -56,8 +58,9 @@ struct TerrainChunkMesh {
 	uint64_t hash = 0; ///< Hash over the vertices, to detect whether a rebuild changed anything.
 };
 
+class GroundTextures;
 class SpriteAtlas;
 
-void BuildTerrainChunkMesh(uint chunk_x, uint chunk_y, SpriteAtlas &atlas, TerrainChunkMesh &mesh);
+void BuildTerrainChunkMesh(uint chunk_x, uint chunk_y, GroundTextures &textures, SpriteAtlas &atlas, TerrainChunkMesh &mesh);
 
 #endif /* VIEWPORT3D_TERRAIN_MESH_H */
