@@ -12,6 +12,7 @@
 
 #include "camera3d.h"
 #include "ground_textures.h"
+#include "sprite_atlas.h"
 #include "terrain_mesh.h"
 
 /**
@@ -38,6 +39,7 @@ public:
 	std::string_view GetBackendName() const;
 
 	void SetGroundTextures(const GroundTextureSet &textures);
+	void UpdateSpriteAtlas(SpriteAtlas &atlas);
 
 	void SetChunk(ChunkID id, const TerrainChunkMesh &mesh);
 	void ClearChunks();

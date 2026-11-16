@@ -18,6 +18,8 @@
 
 #include "shaders/vs_terrain.bin.h"
 #include "shaders/fs_terrain.bin.h"
+#include "shaders/vs_sprite.bin.h"
+#include "shaders/fs_sprite.bin.h"
 
 #include "../safeguards.h"
 
@@ -46,8 +48,10 @@ struct Renderer3DCallback : public bgfx::CallbackI {
 
 /** GPU buffers of one terrain chunk. */
 struct GpuChunk {
-	bgfx::VertexBufferHandle vertices = BGFX_INVALID_HANDLE;
-	uint32_t num_quads = 0;
+	bgfx::VertexBufferHandle vertices = BGFX_INVALID_HANDLE; ///< The terrain.
+	uint32_t num_quads = 0; ///< Number of tiles of terrain.
+	bgfx::VertexBufferHandle sprites = BGFX_INVALID_HANDLE; ///< The sprites standing on the terrain.
+	uint32_t num_sprites = 0; ///< Number of sprites.
 };
 
 struct Renderer3D::Impl {
@@ -55,6 +59,11 @@ struct Renderer3D::Impl {
 	bool initialised = false;
 	bgfx::VertexLayout layout;
 	bgfx::ProgramHandle program = BGFX_INVALID_HANDLE;
+	bgfx::VertexLayout sprite_layout;
+	bgfx::ProgramHandle sprite_program = BGFX_INVALID_HANDLE;
+	bgfx::UniformHandle sprite_sampler = BGFX_INVALID_HANDLE;
+	bgfx::UniformHandle sprite_axes = BGFX_INVALID_HANDLE;
+	bgfx::TextureHandle sprite_atlas = BGFX_INVALID_HANDLE; ///< The sprites of the 2D game that are in use.
 	bgfx::UniformHandle ground_sampler = BGFX_INVALID_HANDLE;
 	bgfx::TextureHandle ground_textures = BGFX_INVALID_HANDLE; ///< Texture array with one layer per #GroundTexture.
 	bgfx::IndexBufferHandle quad_indices = BGFX_INVALID_HANDLE; ///< Indices for a full chunk of quads, shared by all chunks.
@@ -71,35 +80,28 @@ struct ShaderBlob {
 	uint32_t size;
 };
 
+/** The precompiled variants of a shader. */
+struct ShaderVariants {
+	ShaderBlob glsl, essl, spv, mtl;
+};
+#define SHADER_VARIANTS(name) ShaderVariants{{name##_glsl, sizeof(name##_glsl)}, {name##_essl, sizeof(name##_essl)}, {name##_spv, sizeof(name##_spv)}, {name##_mtl, sizeof(name##_mtl)}}
+
 /**
- * Get the precompiled variant of the terrain shaders that fits a backend.
- * @param type The backend.
- * @param[out] vs The vertex shader.
- * @param[out] fs The fragment shader.
- * @return Whether shaders for this backend are available.
+ * Create a shader from the precompiled variant that fits the backend in use.
+ * @param variants The variants of the shader.
+ * @return The shader.
  */
-static bool GetShaders(bgfx::RendererType::Enum type, ShaderBlob &vs, ShaderBlob &fs)
+static bgfx::ShaderHandle CreateShader(const ShaderVariants &variants)
 {
-	switch (type) {
-		case bgfx::RendererType::OpenGL:
-			vs = {vs_terrain_glsl, sizeof(vs_terrain_glsl)};
-			fs = {fs_terrain_glsl, sizeof(fs_terrain_glsl)};
-			return true;
-		case bgfx::RendererType::OpenGLES:
-			vs = {vs_terrain_essl, sizeof(vs_terrain_essl)};
-			fs = {fs_terrain_essl, sizeof(fs_terrain_essl)};
-			return true;
-		case bgfx::RendererType::Vulkan:
-			vs = {vs_terrain_spv, sizeof(vs_terrain_spv)};
-			fs = {fs_terrain_spv, sizeof(fs_terrain_spv)};
-			return true;
-		case bgfx::RendererType::Metal:
-			vs = {vs_terrain_mtl, sizeof(vs_terrain_mtl)};
-			fs = {fs_terrain_mtl, sizeof(fs_terrain_mtl)};
-			return true;
-		default:
-			return false;
+	const ShaderBlob *blob;
+	switch (bgfx::getRendererType()) {
+		case bgfx::RendererType::OpenGL: blob = &variants.glsl; break;
+		case bgfx::RendererType::OpenGLES: blob = &variants.essl; break;
+		case bgfx::RendererType::Vulkan: blob = &variants.spv; break;
+		case bgfx::RendererType::Metal: blob = &variants.mtl; break;
+		default: NOT_REACHED();
 	}
+	return bgfx::createShader(bgfx::makeRef(blob->data, blob->size));
 }
 
 /**
@@ -165,13 +167,17 @@ static bool GetShaders(bgfx::RendererType::Enum type, ShaderBlob &vs, ShaderBlob
 		.add(bgfx::Attrib::Color0, 4, bgfx::AttribType::Uint8, true)
 		.end();
 
-	ShaderBlob vs, fs;
-	[[maybe_unused]] bool has_shaders = GetShaders(bgfx::getRendererType(), vs, fs);
-	assert(has_shaders);
-	impl.program = bgfx::createProgram(
-		bgfx::createShader(bgfx::makeRef(vs.data, vs.size)),
-		bgfx::createShader(bgfx::makeRef(fs.data, fs.size)),
-		true);
+	impl.program = bgfx::createProgram(CreateShader(SHADER_VARIANTS(vs_terrain)), CreateShader(SHADER_VARIANTS(fs_terrain)), true);
+
+	impl.sprite_layout.begin()
+		.add(bgfx::Attrib::Position, 3, bgfx::AttribType::Float)
+		.add(bgfx::Attrib::TexCoord0, 4, bgfx::AttribType::Float)
+		.end();
+	impl.sprite_program = bgfx::createProgram(CreateShader(SHADER_VARIANTS(vs_sprite)), CreateShader(SHADER_VARIANTS(fs_sprite)), true);
+	impl.sprite_sampler = bgfx::createUniform("s_sprites", bgfx::UniformType::Sampler);
+	impl.sprite_axes = bgfx::createUniform("u_spriteAxes", bgfx::UniformType::Vec4);
+	/* Without smaller versions of the atlas: sprites next to each other would blend into one another. */
+	impl.sprite_atlas = bgfx::createTexture2D(SpriteAtlas::WIDTH, SpriteAtlas::HEIGHT, false, 1, bgfx::TextureFormat::BGRA8, BGFX_SAMPLER_U_CLAMP | BGFX_SAMPLER_V_CLAMP);
 
 	impl.ground_sampler = bgfx::createUniform("s_ground", bgfx::UniformType::Sampler);
 
@@ -182,7 +188,7 @@ static bool GetShaders(bgfx::RendererType::Enum type, ShaderBlob &vs, ShaderBlob
 	renderer->SetGroundTextures(white);
 
 	/* Two triangles per quad, split along the diagonal between vertex 1 and 2. */
-	static constexpr uint MAX_QUADS = TERRAIN_CHUNK_SIZE * TERRAIN_CHUNK_SIZE;
+	static constexpr uint MAX_QUADS = MAX_CHUNK_QUADS;
 	const bgfx::Memory *mem = bgfx::alloc(MAX_QUADS * 6 * sizeof(uint16_t));
 	uint16_t *index = reinterpret_cast<uint16_t *>(mem->data);
 	for (uint i = 0; i < MAX_QUADS; i++) {
@@ -208,6 +214,10 @@ Renderer3D::~Renderer3D()
 	if (bgfx::isValid(impl.framebuffer)) bgfx::destroy(impl.framebuffer);
 	if (bgfx::isValid(impl.readback)) bgfx::destroy(impl.readback);
 	if (bgfx::isValid(impl.quad_indices)) bgfx::destroy(impl.quad_indices);
+	if (bgfx::isValid(impl.sprite_atlas)) bgfx::destroy(impl.sprite_atlas);
+	if (bgfx::isValid(impl.sprite_axes)) bgfx::destroy(impl.sprite_axes);
+	if (bgfx::isValid(impl.sprite_sampler)) bgfx::destroy(impl.sprite_sampler);
+	if (bgfx::isValid(impl.sprite_program)) bgfx::destroy(impl.sprite_program);
 	if (bgfx::isValid(impl.ground_textures)) bgfx::destroy(impl.ground_textures);
 	if (bgfx::isValid(impl.ground_sampler)) bgfx::destroy(impl.ground_sampler);
 	if (bgfx::isValid(impl.program)) bgfx::destroy(impl.program);
@@ -271,6 +281,20 @@ void Renderer3D::SetGroundTextures(const GroundTextureSet &textures)
 }
 
 /**
+ * Send the parts of the sprite atlas that changed to the GPU.
+ * @param atlas The atlas.
+ */
+void Renderer3D::UpdateSpriteAtlas(SpriteAtlas &atlas)
+{
+	uint top, bottom;
+	if (!atlas.TakeDirtyRows(top, bottom)) return;
+
+	std::span<const uint32_t> rows = atlas.GetPixels().subspan(static_cast<size_t>(top) * SpriteAtlas::WIDTH, static_cast<size_t>(bottom - top) * SpriteAtlas::WIDTH);
+	bgfx::updateTexture2D(this->impl->sprite_atlas, 0, 0, 0, static_cast<uint16_t>(top), SpriteAtlas::WIDTH, static_cast<uint16_t>(bottom - top),
+		bgfx::copy(rows.data(), static_cast<uint32_t>(rows.size_bytes())));
+}
+
+/**
  * Upload or replace the geometry of a terrain chunk.
  * @param id Identifier of the chunk, chosen by the caller.
  * @param mesh The geometry.
@@ -280,12 +304,22 @@ void Renderer3D::SetChunk(ChunkID id, const TerrainChunkMesh &mesh)
 	GpuChunk &chunk = this->impl->chunks[id];
 	if (bgfx::isValid(chunk.vertices)) bgfx::destroy(chunk.vertices);
 	chunk.vertices = BGFX_INVALID_HANDLE;
-	chunk.num_quads = static_cast<uint32_t>(mesh.vertices.size() / 4);
-	if (chunk.num_quads == 0) return;
+	if (bgfx::isValid(chunk.sprites)) bgfx::destroy(chunk.sprites);
+	chunk.sprites = BGFX_INVALID_HANDLE;
 
-	chunk.vertices = bgfx::createVertexBuffer(
-		bgfx::copy(mesh.vertices.data(), static_cast<uint32_t>(mesh.vertices.size() * sizeof(TerrainVertex))),
-		this->impl->layout);
+	chunk.num_quads = static_cast<uint32_t>(mesh.vertices.size() / 4);
+	if (chunk.num_quads != 0) {
+		chunk.vertices = bgfx::createVertexBuffer(
+			bgfx::copy(mesh.vertices.data(), static_cast<uint32_t>(mesh.vertices.size() * sizeof(TerrainVertex))),
+			this->impl->layout);
+	}
+
+	chunk.num_sprites = static_cast<uint32_t>(mesh.sprites.size() / 4);
+	if (chunk.num_sprites != 0) {
+		chunk.sprites = bgfx::createVertexBuffer(
+			bgfx::copy(mesh.sprites.data(), static_cast<uint32_t>(mesh.sprites.size() * sizeof(SpriteVertex))),
+			this->impl->sprite_layout);
+	}
 }
 
 /** Remove all terrain chunks from the GPU. */
@@ -293,6 +327,7 @@ void Renderer3D::ClearChunks()
 {
 	for (auto &[id, chunk] : this->impl->chunks) {
 		if (bgfx::isValid(chunk.vertices)) bgfx::destroy(chunk.vertices);
+		if (bgfx::isValid(chunk.sprites)) bgfx::destroy(chunk.sprites);
 	}
 	this->impl->chunks.clear();
 }
@@ -352,19 +387,35 @@ void Renderer3D::Render(uint width, uint height, const Camera3D &camera, std::sp
 	Matrix4 model;
 	model.m[0] = TILE_SIZE;
 	model.m[5] = TILE_SIZE;
-	model.m[10] = TILE_HEIGHT;
+	model.m[10] = HEIGHT_LEVEL_SIZE;
 	model.m[15] = 1;
+
+	Vec3 right = camera.GetRight();
+	const float sprite_axes[4] = {right.x * SPRITE_PIXEL_SIZE, right.y * SPRITE_PIXEL_SIZE, right.z * SPRITE_PIXEL_SIZE, WORLD_Z_SCALE};
 
 	for (ChunkID id : chunks) {
 		auto it = impl.chunks.find(id);
-		if (it == impl.chunks.end() || !bgfx::isValid(it->second.vertices)) continue;
+		if (it == impl.chunks.end()) continue;
+		const GpuChunk &chunk = it->second;
 
-		bgfx::setTransform(model.m.data());
-		bgfx::setVertexBuffer(0, it->second.vertices);
-		bgfx::setTexture(0, impl.ground_sampler, impl.ground_textures);
-		bgfx::setIndexBuffer(impl.quad_indices, 0, it->second.num_quads * 6);
-		bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A | BGFX_STATE_WRITE_Z | BGFX_STATE_DEPTH_TEST_LESS);
-		bgfx::submit(VIEW_SCENE, impl.program);
+		if (bgfx::isValid(chunk.vertices)) {
+			bgfx::setTransform(model.m.data());
+			bgfx::setVertexBuffer(0, chunk.vertices);
+			bgfx::setTexture(0, impl.ground_sampler, impl.ground_textures);
+			bgfx::setIndexBuffer(impl.quad_indices, 0, chunk.num_quads * 6);
+			bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A | BGFX_STATE_WRITE_Z | BGFX_STATE_DEPTH_TEST_LESS);
+			bgfx::submit(VIEW_SCENE, impl.program);
+		}
+
+		if (bgfx::isValid(chunk.sprites)) {
+			bgfx::setTransform(model.m.data());
+			bgfx::setVertexBuffer(0, chunk.sprites);
+			bgfx::setTexture(0, impl.sprite_sampler, impl.sprite_atlas);
+			bgfx::setUniform(impl.sprite_axes, sprite_axes);
+			bgfx::setIndexBuffer(impl.quad_indices, 0, chunk.num_sprites * 6);
+			bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A | BGFX_STATE_WRITE_Z | BGFX_STATE_DEPTH_TEST_LESS);
+			bgfx::submit(VIEW_SCENE, impl.sprite_program);
+		}
 	}
 
 	/* Copy the finished image into a texture the CPU can read, and ask for its contents. */

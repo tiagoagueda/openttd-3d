@@ -24,7 +24,8 @@ enum GroundTexture : uint8_t {
 	GROUND_TEXTURE_SNOWY_ROCKS = GROUND_TEXTURE_SNOW_DESERT + 4, ///< Rocks under snow; 4 densities.
 	GROUND_TEXTURE_DESERT_ROCKS = GROUND_TEXTURE_SNOWY_ROCKS + 4, ///< Rocks in the desert; 4 densities.
 	GROUND_TEXTURE_WATER = GROUND_TEXTURE_DESERT_ROCKS + 4, ///< Water.
-	GROUND_TEXTURE_END, ///< Number of ground textures.
+	GROUND_TEXTURE_SHORE, ///< Coasts; 18 shapes, in the order of the shore sprites.
+	GROUND_TEXTURE_END = GROUND_TEXTURE_SHORE + 18, ///< Number of ground textures.
 };
 
 /** The pixels of all ground textures. */

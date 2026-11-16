@@ -24,6 +24,25 @@ struct TerrainVertex {
 static_assert(sizeof(TerrainVertex) == 16);
 
 /**
+ * One corner of a sprite that stands on the map.
+ * A sprite is a quad; the offset moves each corner away from the position,
+ * sideways as seen from the camera and straight up, so the quad always faces the camera.
+ */
+struct SpriteVertex {
+	float x; ///< Position along the x axis in tiles.
+	float y; ///< Position along the y axis in tiles.
+	float z; ///< Height in height levels.
+	float right; ///< Offset to the right of the camera, in pixels of the 2D game at normal zoom.
+	float up; ///< Offset upwards, in pixels of the 2D game at normal zoom.
+	float u; ///< Horizontal texture coordinate in the sprite atlas.
+	float v; ///< Vertical texture coordinate in the sprite atlas.
+};
+static_assert(sizeof(SpriteVertex) == 28);
+
+/** Most quads, of terrain or of sprites, that a chunk can have; limited by the 16 bit indices. */
+static constexpr uint MAX_CHUNK_QUADS = 16384;
+
+/**
  * Geometry of one chunk of terrain.
  * Every tile is a quad of four vertices, of which vertex 1 and 2 are on the diagonal
  * along which the tile is split in two triangles. Index buffers are therefore the
@@ -31,11 +50,14 @@ static_assert(sizeof(TerrainVertex) == 16);
  */
 struct TerrainChunkMesh {
 	std::vector<TerrainVertex> vertices; ///< Four vertices per tile.
+	std::vector<SpriteVertex> sprites; ///< Four vertices per sprite standing on the terrain, in the same order as for tiles.
 	uint min_height = 0; ///< Lowest height level in the chunk.
 	uint max_height = 0; ///< Highest height level in the chunk.
 	uint64_t hash = 0; ///< Hash over the vertices, to detect whether a rebuild changed anything.
 };
 
-void BuildTerrainChunkMesh(uint chunk_x, uint chunk_y, TerrainChunkMesh &mesh);
+class SpriteAtlas;
+
+void BuildTerrainChunkMesh(uint chunk_x, uint chunk_y, SpriteAtlas &atlas, TerrainChunkMesh &mesh);
 
 #endif /* VIEWPORT3D_TERRAIN_MESH_H */

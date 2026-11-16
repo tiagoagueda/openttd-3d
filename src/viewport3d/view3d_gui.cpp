@@ -63,6 +63,7 @@ class View3DWindow : public Window {
 	std::vector<ChunkState> chunks; ///< State of all chunks, row by row.
 	std::vector<Renderer3D::ChunkID> visible_chunks; ///< Chunks to draw this frame.
 	TerrainChunkMesh scratch_mesh; ///< Reused while building chunks.
+	std::unique_ptr<SpriteAtlas> atlas; ///< The sprites of the 2D game that the chunks use.
 
 	bool panning = false; ///< Whether the view is being dragged with the left mouse button.
 	Point pan_last{}; ///< Cursor position at the previous step of the drag.
@@ -192,7 +193,10 @@ public:
 			this->renderer_tried = true;
 			this->CentreOnMainView();
 			this->renderer = Renderer3D::Create(_view3d_backend, this->error);
-			if (this->renderer != nullptr) this->renderer->SetGroundTextures(BuildGroundTextures());
+			if (this->renderer != nullptr) {
+				this->renderer->SetGroundTextures(BuildGroundTextures());
+				this->atlas = std::make_unique<SpriteAtlas>();
+			}
 			this->SetDirty();
 		}
 		if (this->renderer == nullptr) return;
@@ -204,6 +208,7 @@ public:
 		if (view->current_x == 0 || view->current_y == 0) return;
 
 		bool geometry_changed = this->UpdateChunks(view->current_x, view->current_y);
+		this->renderer->UpdateSpriteAtlas(*this->atlas);
 		if (!this->view_changed && !geometry_changed) return;
 
 		this->renderer->Render(view->current_x, view->current_y, this->camera, this->visible_chunks);
@@ -238,7 +243,7 @@ private:
 		this->camera.target.y = Clamp(this->camera.target.y, 0.0f, static_cast<float>(Map::MaxY() * TILE_SIZE));
 
 		TileIndex tile = TileXY(std::min(static_cast<uint>(this->camera.target.x) / TILE_SIZE, Map::MaxX()), std::min(static_cast<uint>(this->camera.target.y) / TILE_SIZE, Map::MaxY()));
-		this->camera.target.z = static_cast<float>(TileHeight(tile) * TILE_HEIGHT);
+		this->camera.target.z = TileHeight(tile) * HEIGHT_LEVEL_SIZE;
 		this->view_changed = true;
 	}
 
@@ -256,7 +261,9 @@ private:
 
 		Matrix4 view_proj = this->camera.GetProjectionMatrix(static_cast<float>(width) / height, this->renderer->HomogeneousDepth()) * this->camera.GetViewMatrix();
 		Frustum3D frustum(view_proj);
-		float max_height = static_cast<float>(_settings_game.construction.map_height_limit * TILE_HEIGHT);
+		/* Room above the ground for what stands on it. */
+		static constexpr float HEADROOM = 48.0f;
+		float max_height = _settings_game.construction.map_height_limit * HEIGHT_LEVEL_SIZE + HEADROOM;
 
 		this->visible_chunks.clear();
 		bool changed = false;
@@ -270,8 +277,8 @@ private:
 				Vec3 min{static_cast<float>(cx * TERRAIN_CHUNK_SIZE * TILE_SIZE), static_cast<float>(cy * TERRAIN_CHUNK_SIZE * TILE_SIZE), 0};
 				Vec3 max{min.x + TERRAIN_CHUNK_SIZE * TILE_SIZE, min.y + TERRAIN_CHUNK_SIZE * TILE_SIZE, max_height};
 				if (chunk.built && !chunk.dirty) {
-					min.z = static_cast<float>(chunk.min_height * TILE_HEIGHT);
-					max.z = static_cast<float>(chunk.max_height * TILE_HEIGHT);
+					min.z = chunk.min_height * HEIGHT_LEVEL_SIZE;
+					max.z = chunk.max_height * HEIGHT_LEVEL_SIZE + HEADROOM;
 				}
 				if (!frustum.IntersectsBox(min, max)) continue;
 
@@ -282,7 +289,7 @@ private:
 						continue;
 					}
 
-					BuildTerrainChunkMesh(cx, cy, this->scratch_mesh);
+					BuildTerrainChunkMesh(cx, cy, *this->atlas, this->scratch_mesh);
 					if (!chunk.built || chunk.hash != this->scratch_mesh.hash) {
 						this->renderer->SetChunk(id, this->scratch_mesh);
 						changed = true;

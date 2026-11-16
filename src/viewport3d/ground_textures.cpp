@@ -13,29 +13,34 @@
 #include "../core/math_func.hpp"
 #include "../gfx_func.h"
 #include "../settings_type.h"
+#include "../slope_func.h"
 #include "../zoom_func.h"
 #include "../table/sprites.h"
 
 #include "../safeguards.h"
 
 /**
- * Turn the sprite of a flat ground tile into a square texture.
+ * Turn the sprite of a ground tile into a square texture.
  *
  * In the 2D game a flat tile is a diamond of 64 by 31 pixels (at normal zoom). The texture is that
  * diamond pulled straight: the texture's u axis runs along the tile's x axis and v along its y axis.
+ * On a slope the diamond is bent; the heights of the corners tell how.
  *
  * @param sprites The ground sprite, and optionally sprites that the 2D game draws on top of it.
  * @param zoom Zoom level of the sprites to use.
  * @param size Width and height of the texture.
+ * @param heights Heights of the northern, western, eastern and southern corner, in height levels above the lowest.
  * @param[out] texture The pixels of the texture.
  * @return Whether the sprites could be used.
  */
-static bool BuildGroundTexture(std::initializer_list<SpriteID> sprites, ZoomLevel zoom, uint size, std::vector<uint32_t> &texture)
+static bool BuildGroundTexture(std::initializer_list<SpriteID> sprites, ZoomLevel zoom, uint size, const std::array<uint8_t, 4> &heights, std::vector<uint32_t> &texture)
 {
 	/* Size of the sprites compared to normal zoom, at which the diamond is 64 pixels wide and 31 high. */
 	const int scale = UnScaleByZoom(4, zoom);
 	const int diamond_width = 64 * scale;
-	const int diamond_height = 31 * scale;
+	/* Raised corners are drawn up to two height levels of 8 pixels above the tile's origin. */
+	const int margin = 16 * scale;
+	const int diamond_height = 31 * scale + margin + scale;
 
 	/* Let the blitter draw the sprites over each other into an image that covers exactly the diamond. */
 	std::vector<uint32_t> diamond(static_cast<size_t>(diamond_width) * diamond_height, 0);
@@ -53,17 +58,33 @@ static bool BuildGroundTexture(std::initializer_list<SpriteID> sprites, ZoomLeve
 		/* Keep the blitters with palette animation from writing to the animation buffer of the screen. */
 		AutoRestoreBackup anim_backup(_screen_disable_anim, true);
 		/* The tile's origin, its northern corner, is one (unzoomed) pixel left of the diamond's centre line. */
-		for (SpriteID sprite : sprites) DrawSprite(sprite, PAL_NONE, diamond_width / 2 - scale, 0, nullptr, zoom);
+		for (SpriteID sprite : sprites) DrawSprite(sprite, PAL_NONE, diamond_width / 2 - scale, margin, nullptr, zoom);
 	}
 
+	const float hn = heights[0], hw = heights[1], he = heights[2], hs = heights[3];
+	/* Height of the surface in height levels; the tile is split in two triangles the same way as in the terrain mesh. */
+	auto surface = [&](float u, float v) {
+		if (std::abs(hn - hs) <= std::abs(hw - he)) {
+			return u >= v ? hn + (hw - hn) * (u - v) + (hs - hn) * v : hn + (he - hn) * (v - u) + (hs - hn) * u;
+		}
+		return u + v <= 1.0f ? hn + (hw - hn) * u + (he - hn) * v : hs + (hw - hs) * (1.0f - v) + (he - hs) * (1.0f - u);
+	};
+	/* Where a point of the tile is in the image. */
+	auto project = [&](float u, float v, float &fx, float &fy) {
+		fx = diamond_width * 0.5f + (v - u) * diamond_width * 0.5f;
+		fy = margin + (u + v) * 15.5f * scale - surface(u, v) * 8 * scale;
+	};
+	float centre_x, centre_y;
+	project(0.5f, 0.5f, centre_x, centre_y);
+
 	auto sample = [&](float u, float v, uint &b, uint &g, uint &r) {
-		float fx = diamond_width * 0.5f + (v - u) * diamond_width * 0.5f;
-		float fy = (u + v) * diamond_height * 0.5f;
-		/* The corners of the diamond are not in the sprite; move towards the centre until there is a pixel. */
+		float fx, fy;
+		project(u, v, fx, fy);
+		/* The very corners of the diamond are not in the sprite; move towards the centre until there is a pixel. */
 		for (int step = 0; step <= 16; step++) {
 			float t = step / 16.0f;
-			int x = Clamp(static_cast<int>(fx + (diamond_width * 0.5f - fx) * t), 0, diamond_width - 1);
-			int y = Clamp(static_cast<int>(fy + (diamond_height * 0.5f - fy) * t), 0, diamond_height - 1);
+			int x = Clamp(static_cast<int>(fx + (centre_x - fx) * t), 0, diamond_width - 1);
+			int y = Clamp(static_cast<int>(fy + (centre_y - fy) * t), 0, diamond_height - 1);
 			uint32_t pixel = diamond[static_cast<size_t>(y) * diamond_width + x];
 			if ((pixel >> 24) == 0) continue;
 			b += pixel & 0xFF;
@@ -105,8 +126,8 @@ GroundTextureSet BuildGroundTextures()
 	set.size = UnScaleByZoom(256, zoom);
 
 	set.layers.resize(GROUND_TEXTURE_END);
-	auto build = [&](uint layer, std::initializer_list<SpriteID> sprites) {
-		if (!BuildGroundTexture(sprites, zoom, set.size, set.layers[layer])) set.layers[layer].clear();
+	auto build = [&](uint layer, std::initializer_list<SpriteID> sprites, const std::array<uint8_t, 4> &heights = {}) {
+		if (!BuildGroundTexture(sprites, zoom, set.size, heights, set.layers[layer])) set.layers[layer].clear();
 	};
 
 	static constexpr SpriteID GRASS[] = {SPR_FLAT_BARE_LAND, SPR_FLAT_1_THIRD_GRASS_TILE, SPR_FLAT_2_THIRD_GRASS_TILE, SPR_FLAT_GRASS_TILE};
@@ -125,6 +146,20 @@ GroundTextureSet BuildGroundTextures()
 		build(GROUND_TEXTURE_DESERT_ROCKS + i, {SNOW_DESERT[i], SPR_OVERLAY_ROCKS_BASE});
 	}
 	build(GROUND_TEXTURE_WATER, {SPR_FLAT_WATER_TILE});
+
+	/* The slope that each shore sprite is drawn for; the reverse of the table in DrawShoreTile(). */
+	static constexpr Slope SHORE_SLOPES[] = {
+		SLOPE_STEEP_S, SLOPE_W, SLOPE_S, SLOPE_SW, SLOPE_E, SLOPE_STEEP_W, SLOPE_SE, SLOPE_WSE, SLOPE_N,
+		SLOPE_NW, SLOPE_STEEP_N, SLOPE_NWS, SLOPE_NE, SLOPE_ENW, SLOPE_SEN, SLOPE_STEEP_E, SLOPE_EW, SLOPE_NS,
+	};
+	for (uint i = 0; i < std::size(SHORE_SLOPES); i++) {
+		Slope slope = SHORE_SLOPES[i];
+		auto height = [&](Slope bit, Corner corner) -> uint8_t {
+			if (IsSteepSlope(slope) && GetHighestSlopeCorner(slope) == corner) return 2;
+			return (slope & bit) != 0 ? 1 : 0;
+		};
+		build(GROUND_TEXTURE_SHORE + i, {SPR_SHORE_BASE + i}, {height(SLOPE_N, Corner::N), height(SLOPE_W, Corner::W), height(SLOPE_E, Corner::E), height(SLOPE_S, Corner::S)});
+	}
 
 	for (auto &layer : set.layers) {
 		if (layer.empty()) layer.assign(static_cast<size_t>(set.size) * set.size, 0xFFFFFFFF);

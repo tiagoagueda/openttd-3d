@@ -35,6 +35,18 @@ struct Matrix4 {
 	}
 };
 
+/**
+ * World units of height per unit of the game's z coordinate.
+ * The 2D game looks down at 30 degrees and draws a z unit as one pixel, where a true
+ * projection would draw a world unit of height as sqrt(6) pixels. So that the 3D view at
+ * the same angle looks like the 2D game, heights are scaled down by that factor.
+ */
+static constexpr float WORLD_Z_SCALE = 0.40824829f;
+/** World units of height per height level. */
+static constexpr float HEIGHT_LEVEL_SIZE = 8 * WORLD_Z_SCALE;
+/** World units, parallel to the screen, per pixel of the 2D game at normal zoom. */
+static constexpr float SPRITE_PIXEL_SIZE = 0.35355339f;
+
 /** Simple 3D vector in world units (16 units per tile, 8 units per height level). */
 struct Vec3 {
 	float x = 0, y = 0, z = 0;
