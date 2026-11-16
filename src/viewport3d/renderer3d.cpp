@@ -55,6 +55,8 @@ struct Renderer3D::Impl {
 	bool initialised = false;
 	bgfx::VertexLayout layout;
 	bgfx::ProgramHandle program = BGFX_INVALID_HANDLE;
+	bgfx::UniformHandle ground_sampler = BGFX_INVALID_HANDLE;
+	bgfx::TextureHandle ground_textures = BGFX_INVALID_HANDLE; ///< Texture array with one layer per #GroundTexture.
 	bgfx::IndexBufferHandle quad_indices = BGFX_INVALID_HANDLE; ///< Indices for a full chunk of quads, shared by all chunks.
 	bgfx::FrameBufferHandle framebuffer = BGFX_INVALID_HANDLE;
 	bgfx::TextureHandle readback = BGFX_INVALID_HANDLE;
@@ -144,7 +146,7 @@ static bool GetShaders(bgfx::RendererType::Enum type, ShaderBlob &vs, ShaderBlob
 			Debug(Facility::Driver, Severity::Error, "[viewport3d] backend {} is not available", candidate.name);
 			continue;
 		}
-		if (impl.callback.failed) {
+		if (impl.callback.failed || bgfx::getCaps()->limits.maxTextureLayers < GROUND_TEXTURE_END) {
 			bgfx::shutdown();
 			continue;
 		}
@@ -170,6 +172,14 @@ static bool GetShaders(bgfx::RendererType::Enum type, ShaderBlob &vs, ShaderBlob
 		bgfx::createShader(bgfx::makeRef(vs.data, vs.size)),
 		bgfx::createShader(bgfx::makeRef(fs.data, fs.size)),
 		true);
+
+	impl.ground_sampler = bgfx::createUniform("s_ground", bgfx::UniformType::Sampler);
+
+	/* Until the real textures arrive everything is white, which leaves just the vertex colours. */
+	GroundTextureSet white;
+	white.size = 1;
+	white.layers.assign(GROUND_TEXTURE_END, std::vector<uint32_t>(1, 0xFFFFFFFF));
+	renderer->SetGroundTextures(white);
 
 	/* Two triangles per quad, split along the diagonal between vertex 1 and 2. */
 	static constexpr uint MAX_QUADS = TERRAIN_CHUNK_SIZE * TERRAIN_CHUNK_SIZE;
@@ -198,6 +208,8 @@ Renderer3D::~Renderer3D()
 	if (bgfx::isValid(impl.framebuffer)) bgfx::destroy(impl.framebuffer);
 	if (bgfx::isValid(impl.readback)) bgfx::destroy(impl.readback);
 	if (bgfx::isValid(impl.quad_indices)) bgfx::destroy(impl.quad_indices);
+	if (bgfx::isValid(impl.ground_textures)) bgfx::destroy(impl.ground_textures);
+	if (bgfx::isValid(impl.ground_sampler)) bgfx::destroy(impl.ground_sampler);
 	if (bgfx::isValid(impl.program)) bgfx::destroy(impl.program);
 	bgfx::shutdown();
 	Renderer3D::exists = false;
@@ -213,6 +225,49 @@ std::string_view Renderer3D::GetBackendName() const
 bool Renderer3D::HomogeneousDepth() const
 {
 	return bgfx::getCaps()->homogeneousDepth;
+}
+
+/**
+ * Replace the ground textures.
+ * @param textures The pixels of each #GroundTexture.
+ */
+void Renderer3D::SetGroundTextures(const GroundTextureSet &textures)
+{
+	Impl &impl = *this->impl;
+	assert(textures.layers.size() == GROUND_TEXTURE_END && HasExactlyOneBit(textures.size));
+
+	if (bgfx::isValid(impl.ground_textures)) bgfx::destroy(impl.ground_textures);
+	impl.ground_textures = bgfx::createTexture2D(static_cast<uint16_t>(textures.size), static_cast<uint16_t>(textures.size), true, GROUND_TEXTURE_END,
+		bgfx::TextureFormat::BGRA8, BGFX_SAMPLER_MIN_ANISOTROPIC | BGFX_SAMPLER_MAG_ANISOTROPIC);
+
+	std::vector<uint32_t> level, smaller;
+	for (uint16_t layer = 0; layer < GROUND_TEXTURE_END; layer++) {
+		level = textures.layers[layer];
+		assert(level.size() == static_cast<size_t>(textures.size) * textures.size);
+
+		uint8_t mip = 0;
+		for (uint size = textures.size; ; size /= 2, mip++) {
+			bgfx::updateTexture2D(impl.ground_textures, layer, mip, 0, 0, static_cast<uint16_t>(size), static_cast<uint16_t>(size),
+				bgfx::copy(level.data(), static_cast<uint32_t>(level.size() * sizeof(uint32_t))));
+			if (size == 1) break;
+
+			/* The next level is half the size, each pixel the average of four. */
+			uint half = size / 2;
+			smaller.resize(static_cast<size_t>(half) * half);
+			for (uint y = 0; y < half; y++) {
+				for (uint x = 0; x < half; x++) {
+					const uint32_t *src = &level[static_cast<size_t>(y) * 2 * size + x * 2];
+					uint32_t result = 0;
+					for (uint shift = 0; shift < 32; shift += 8) {
+						uint sum = ((src[0] >> shift) & 0xFF) + ((src[1] >> shift) & 0xFF) + ((src[size] >> shift) & 0xFF) + ((src[size + 1] >> shift) & 0xFF);
+						result |= ((sum + 2) / 4) << shift;
+					}
+					smaller[static_cast<size_t>(y) * half + x] = result;
+				}
+			}
+			std::swap(level, smaller);
+		}
+	}
 }
 
 /**
@@ -306,6 +361,7 @@ void Renderer3D::Render(uint width, uint height, const Camera3D &camera, std::sp
 
 		bgfx::setTransform(model.m.data());
 		bgfx::setVertexBuffer(0, it->second.vertices);
+		bgfx::setTexture(0, impl.ground_sampler, impl.ground_textures);
 		bgfx::setIndexBuffer(impl.quad_indices, 0, it->second.num_quads * 6);
 		bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A | BGFX_STATE_WRITE_Z | BGFX_STATE_DEPTH_TEST_LESS);
 		bgfx::submit(VIEW_SCENE, impl.program);

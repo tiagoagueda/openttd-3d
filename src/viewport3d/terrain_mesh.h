@@ -18,7 +18,8 @@ struct TerrainVertex {
 	float x; ///< Position along the x axis in tiles.
 	float y; ///< Position along the y axis in tiles.
 	float z; ///< Height in height levels.
-	uint8_t r, g, b, a; ///< Colour with the lighting already applied.
+	uint8_t r, g, b; ///< Colour to multiply the texture with, including the lighting, at half brightness.
+	uint8_t texture; ///< The #GroundTexture of the tile.
 };
 static_assert(sizeof(TerrainVertex) == 16);
 

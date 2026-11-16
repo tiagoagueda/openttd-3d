@@ -192,6 +192,7 @@ public:
 			this->renderer_tried = true;
 			this->CentreOnMainView();
 			this->renderer = Renderer3D::Create(_view3d_backend, this->error);
+			if (this->renderer != nullptr) this->renderer->SetGroundTextures(BuildGroundTextures());
 			this->SetDirty();
 		}
 		if (this->renderer == nullptr) return;

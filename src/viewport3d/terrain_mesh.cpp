@@ -9,6 +9,7 @@
 
 #include "../stdafx.h"
 #include "terrain_mesh.h"
+#include "ground_textures.h"
 #include "../clear_map.h"
 #include "../landscape.h"
 #include "../map_func.h"
@@ -29,16 +30,7 @@ static constexpr TerrainColour Lerp(const TerrainColour &a, const TerrainColour 
 	return {a.r + (b.r - a.r) * t, a.g + (b.g - a.g) * t, a.b + (b.b - a.b) * t};
 }
 
-static constexpr TerrainColour COLOUR_GRASS{0x4c, 0x9a, 0x2a};
-static constexpr TerrainColour COLOUR_DIRT{0x8a, 0x6b, 0x3d};
-static constexpr TerrainColour COLOUR_ROUGH{0x5c, 0x86, 0x32};
-static constexpr TerrainColour COLOUR_ROCKS{0x84, 0x82, 0x78};
-static constexpr TerrainColour COLOUR_FIELDS{0xb4, 0x9c, 0x44};
-static constexpr TerrainColour COLOUR_DESERT{0xd8, 0xc0, 0x74};
-static constexpr TerrainColour COLOUR_SNOW{0xee, 0xf0, 0xf6};
 static constexpr TerrainColour COLOUR_TREES{0x2e, 0x70, 0x26};
-static constexpr TerrainColour COLOUR_SEA{0x2a, 0x5c, 0xb0};
-static constexpr TerrainColour COLOUR_RIVER{0x3c, 0x78, 0xc8};
 static constexpr TerrainColour COLOUR_COAST{0xb8, 0xb0, 0x84};
 static constexpr TerrainColour COLOUR_RAIL{0x76, 0x66, 0x54};
 static constexpr TerrainColour COLOUR_ROAD{0x58, 0x58, 0x5c};
@@ -48,46 +40,69 @@ static constexpr TerrainColour COLOUR_INDUSTRY{0x94, 0x74, 0x94};
 static constexpr TerrainColour COLOUR_BRIDGE{0x68, 0x68, 0x68};
 static constexpr TerrainColour COLOUR_OBJECT{0x84, 0x94, 0x74};
 
-/**
- * Get the unlit colour to draw a tile with.
- * This is a stand-in until tiles get real ground textures and models.
- */
-static TerrainColour GetTileColour(Tile tile)
+/** How to draw the ground of a tile. */
+struct TileGround {
+	GroundTexture texture; ///< The texture.
+	TerrainColour colour; ///< Colour to multiply the texture with.
+};
+
+static constexpr TerrainColour COLOUR_WHITE{0xff, 0xff, 0xff};
+/** Tint for the ground under trees, so forests stand out as long as the trees themselves are not drawn. */
+static constexpr TerrainColour COLOUR_TREE_TINT{0xdc, 0xec, 0xd4};
+
+/** Get the texture of rough land, which has a few variants that depend on the position of the tile. */
+static GroundTexture GetRoughTexture(uint x, uint y)
 {
+	static constexpr uint8_t VARIANTS[8] = {0, 1, 2, 3, 4, 0, 1, 2};
+	return static_cast<GroundTexture>(GROUND_TEXTURE_ROUGH + VARIANTS[GB(TileHash(x * TILE_SIZE, y * TILE_SIZE), 0, 3)]);
+}
+
+/**
+ * Get the texture and colour to draw the ground of a tile with.
+ * Follows what the 2D game draws as ground sprite. Tiles of which the contents cannot be
+ * drawn yet, such as tracks and buildings, get a flat colour as stand-in.
+ */
+static TileGround GetTileGround(Tile tile, uint x, uint y)
+{
+	auto textured = [](uint texture, const TerrainColour &colour = COLOUR_WHITE) { return TileGround{static_cast<GroundTexture>(texture), colour}; };
+	auto plain = [](const TerrainColour &colour) { return TileGround{GROUND_TEXTURE_NONE, colour}; };
+
 	switch (GetTileType(tile)) {
 		case TileType::Clear:
-			if (IsSnowTile(tile)) return Lerp(COLOUR_ROCKS, COLOUR_SNOW, (GetClearDensity(tile) + 1) / 4.0f);
+			if (IsSnowTile(tile)) {
+				return textured((GetClearGround(tile) == ClearGround::Rocks ? GROUND_TEXTURE_SNOWY_ROCKS : GROUND_TEXTURE_SNOW_DESERT) + GetClearDensity(tile));
+			}
 			switch (GetClearGround(tile)) {
-				case ClearGround::Grass: return Lerp(COLOUR_DIRT, COLOUR_GRASS, GetClearDensity(tile) / 3.0f);
-				case ClearGround::Rough: return COLOUR_ROUGH;
-				case ClearGround::Rocks: return COLOUR_ROCKS;
-				case ClearGround::Fields: return COLOUR_FIELDS;
-				case ClearGround::Desert: return Lerp(COLOUR_GRASS, COLOUR_DESERT, (GetClearDensity(tile) + 1) / 4.0f);
-				default: return COLOUR_GRASS;
+				case ClearGround::Grass: return textured(GROUND_TEXTURE_GRASS + GetClearDensity(tile));
+				case ClearGround::Rough: return textured(GetRoughTexture(x, y));
+				case ClearGround::Rocks:
+					if (GetTropicZone(tile) == TropicZone::Desert) return textured(GROUND_TEXTURE_DESERT_ROCKS + GetClearDensity(tile));
+					return textured(GROUND_TEXTURE_ROCKS);
+				case ClearGround::Fields: return textured(GROUND_TEXTURE_FIELDS + std::min<uint>(GetFieldType(tile), 8));
+				case ClearGround::Desert: return textured(GROUND_TEXTURE_SNOW_DESERT + GetClearDensity(tile));
+				default: return textured(GROUND_TEXTURE_GRASS + 3);
 			}
 
 		case TileType::Trees:
 			switch (GetTreeGround(tile)) {
-				case TreeGround::SnowOrDesert:
-				case TreeGround::RoughSnow:
-					return Lerp(COLOUR_TREES, _settings_game.game_creation.landscape == LandscapeType::Tropic ? COLOUR_DESERT : COLOUR_SNOW, 0.6f);
-				case TreeGround::Shore: return Lerp(COLOUR_TREES, COLOUR_COAST, 0.5f);
-				default: return COLOUR_TREES;
+				case TreeGround::Shore: return plain(Lerp(COLOUR_TREES, COLOUR_COAST, 0.5f));
+				case TreeGround::Grass: return textured(GROUND_TEXTURE_GRASS + GetTreeDensity(tile), COLOUR_TREE_TINT);
+				case TreeGround::Rough: return textured(GetRoughTexture(x, y), COLOUR_TREE_TINT);
+				default: return textured(GROUND_TEXTURE_SNOW_DESERT + GetTreeDensity(tile), COLOUR_TREE_TINT);
 			}
 
 		case TileType::Water:
-			if (IsCoast(tile)) return COLOUR_COAST;
-			if (IsWater(tile) && !IsSea(tile)) return COLOUR_RIVER;
-			return COLOUR_SEA;
+			if (IsCoast(tile)) return plain(COLOUR_COAST);
+			return textured(GROUND_TEXTURE_WATER);
 
-		case TileType::Railway: return COLOUR_RAIL;
-		case TileType::Road: return COLOUR_ROAD;
-		case TileType::House: return COLOUR_HOUSE;
-		case TileType::Station: return COLOUR_STATION;
-		case TileType::Industry: return COLOUR_INDUSTRY;
-		case TileType::TunnelBridge: return COLOUR_BRIDGE;
-		case TileType::Object: return COLOUR_OBJECT;
-		default: return COLOUR_GRASS;
+		case TileType::Railway: return plain(COLOUR_RAIL);
+		case TileType::Road: return plain(COLOUR_ROAD);
+		case TileType::House: return plain(COLOUR_HOUSE);
+		case TileType::Station: return plain(COLOUR_STATION);
+		case TileType::Industry: return plain(COLOUR_INDUSTRY);
+		case TileType::TunnelBridge: return plain(COLOUR_BRIDGE);
+		case TileType::Object: return plain(COLOUR_OBJECT);
+		default: return textured(GROUND_TEXTURE_GRASS + 3);
 	}
 }
 
@@ -134,16 +149,19 @@ void BuildTerrainChunkMesh(uint chunk_x, uint chunk_y, TerrainChunkMesh &mesh)
 			float ny = -((he + hs) - (hn + hw)) * 0.5f * SLOPE_SCALE;
 			float light = (nx * SUN_X + ny * SUN_Y + SUN_Z) / std::sqrt(nx * nx + ny * ny + 1.0f);
 			light = AMBIENT + DIFFUSE * std::max(0.0f, light);
-			/* A slight checkerboard keeps individual tiles recognisable on flat land. */
-			if (((x ^ y) & 1) != 0) light *= 0.97f;
 
-			TerrainColour c = GetTileColour(tile);
-			uint8_t r = static_cast<uint8_t>(std::clamp(c.r * light, 0.0f, 255.0f));
-			uint8_t g = static_cast<uint8_t>(std::clamp(c.g * light, 0.0f, 255.0f));
-			uint8_t b = static_cast<uint8_t>(std::clamp(c.b * light, 0.0f, 255.0f));
+			TileGround ground = GetTileGround(tile, x, y);
+			/* A slight checkerboard keeps individual tiles recognisable where there is no texture. */
+			if (ground.texture == GROUND_TEXTURE_NONE && ((x ^ y) & 1) != 0) light *= 0.97f;
+
+			/* The light can be brighter than 1; the shader doubles the colour to make up for the halving here. */
+			light *= 0.5f;
+			uint8_t r = static_cast<uint8_t>(std::clamp(ground.colour.r * light, 0.0f, 255.0f));
+			uint8_t g = static_cast<uint8_t>(std::clamp(ground.colour.g * light, 0.0f, 255.0f));
+			uint8_t b = static_cast<uint8_t>(std::clamp(ground.colour.b * light, 0.0f, 255.0f));
 
 			auto vertex = [&](uint vx, uint vy, int h) {
-				return TerrainVertex{static_cast<float>(vx), static_cast<float>(vy), static_cast<float>(h), r, g, b, 255};
+				return TerrainVertex{static_cast<float>(vx), static_cast<float>(vy), static_cast<float>(h), r, g, b, ground.texture};
 			};
 			TerrainVertex vn = vertex(x, y, hn);
 			TerrainVertex vw = vertex(x + 1, y, hw);

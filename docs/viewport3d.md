@@ -3,8 +3,9 @@
 This fork adds a second, 3D view of the map next to the normal 2D game.
 The 2D game, its GUI, the simulation and multiplayer are unchanged: the 3D view only reads the map.
 
-Status: milestone 0. The window shows the terrain as a lit, coloured mesh with a free camera.
-There are no textures, buildings, vehicles or tracks in it yet; tiles with those on them are drawn as flat coloured tiles.
+Status: the window shows the terrain as a lit mesh with a free camera.
+Grass, rough land, rocks, snow, desert, farm fields and water are textured with the ground sprites of the 2D game, so they follow the base set and NewGRFs in use.
+There are no trees, buildings, vehicles or tracks in it yet; tiles with tracks, roads or buildings on them are drawn as flat coloured tiles, coasts as a plain sand colour, and the ground under trees is slightly darker.
 
 ## Using it
 
@@ -48,7 +49,8 @@ All code lives in `src/viewport3d/`:
 | File | Purpose |
 | --- | --- |
 | `view3d_gui.cpp` | The window, the camera controls, and deciding which parts of the terrain to (re)build and draw. |
-| `terrain_mesh.cpp` | Turns the map array into triangles, in chunks of 64x64 tiles. Knows nothing about the GPU. |
+| `terrain_mesh.cpp` | Turns the map array into triangles, in chunks of 64x64 tiles, and picks the ground texture of each tile. Knows nothing about the GPU. |
+| `ground_textures.cpp` | Makes the ground textures from the 2D game's ground sprites when the window opens. |
 | `renderer3d.cpp` | The only file that uses bgfx. Draws the chunks into an offscreen image and reads the pixels back. |
 | `camera3d.h` | Orbit camera, matrices and frustum culling. |
 | `shaders/` | Shader sources and their precompiled forms. |
@@ -57,6 +59,10 @@ The renderer creates its own GPU device without a window, renders offscreen, and
 The window then draws those pixels into OpenTTD's screen buffer like any other widget.
 That costs a copy per frame, but it means the 3D view works with every video driver and never touches the game's own drawing code.
 Sharing the GPU context with the video driver is a later optimisation.
+
+A ground texture is the sprite of a flat tile, a diamond of 64x31 pixels at normal zoom, pulled straight into a square that covers one tile.
+Slopes use the same texture as flat land and get their shading from the lighting instead of from the slope sprites.
+All textures are layers of one texture array; each tile names its layer in the alpha channel of its vertices.
 
 Coordinates are OpenTTD's own world coordinates: 16 units per tile, 8 units per height level, x to the south-west, y to the south-east, z up.
 
@@ -72,6 +78,8 @@ The existing game is touched in four small places:
 * The renderer uses Vulkan, or OpenGL 3.3 when Vulkan is not available (Metal on macOS, untested). Direct3D is not used yet, because its shaders can only be compiled on Windows.
 * A 32bpp or 40bpp blitter is required, which is the default; the 8bpp blitters do not work.
 * Terrain is built for the part of the map that has been in view and stays in memory until the window is closed. On the very largest maps, looking at all of it uses a lot of memory.
+* The ground textures are made when the window opens. After changing NewGRFs in a running game, close and reopen the window.
+* Water is not animated.
 * There is no anti-aliasing.
 * It has been run on Linux with Mesa's software Vulkan and OpenGL drivers, and on Windows with the Direct3D 11 video driver.
 

@@ -1,5 +1,7 @@
 add_files(
     camera3d.h
+    ground_textures.cpp
+    ground_textures.h
     renderer3d.cpp
     renderer3d.h
     terrain_mesh.cpp

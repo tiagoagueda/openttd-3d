@@ -11,6 +11,7 @@
 #define VIEWPORT3D_RENDERER3D_H
 
 #include "camera3d.h"
+#include "ground_textures.h"
 #include "terrain_mesh.h"
 
 /**
@@ -35,6 +36,8 @@ public:
 	static bool Exists() { return Renderer3D::exists; }
 
 	std::string_view GetBackendName() const;
+
+	void SetGroundTextures(const GroundTextureSet &textures);
 
 	void SetChunk(ChunkID id, const TerrainChunkMesh &mesh);
 	void ClearChunks();
