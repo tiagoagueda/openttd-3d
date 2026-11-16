@@ -61,7 +61,7 @@ static TerrainColour GetTileColour(Tile tile)
 				case ClearGround::Grass: return Lerp(COLOUR_DIRT, COLOUR_GRASS, GetClearDensity(tile) / 3.0f);
 				case ClearGround::Rough: return COLOUR_ROUGH;
 				case ClearGround::Rocks: return COLOUR_ROCKS;
-				case ClearGround::Fields: return Lerp(COLOUR_FIELDS, COLOUR_GRASS, (GetFieldType(tile) % 4) * 0.12f);
+				case ClearGround::Fields: return COLOUR_FIELDS;
 				case ClearGround::Desert: return Lerp(COLOUR_GRASS, COLOUR_DESERT, (GetClearDensity(tile) + 1) / 4.0f);
 				default: return COLOUR_GRASS;
 			}
@@ -143,7 +143,7 @@ void BuildTerrainChunkMesh(uint chunk_x, uint chunk_y, TerrainChunkMesh &mesh)
 			uint8_t b = static_cast<uint8_t>(std::clamp(c.b * light, 0.0f, 255.0f));
 
 			auto vertex = [&](uint vx, uint vy, int h) {
-				return TerrainVertex{static_cast<int16_t>(vx), static_cast<int16_t>(vy), static_cast<int16_t>(h), 1, r, g, b, 255};
+				return TerrainVertex{static_cast<float>(vx), static_cast<float>(vy), static_cast<float>(h), r, g, b, 255};
 			};
 			TerrainVertex vn = vertex(x, y, hn);
 			TerrainVertex vw = vertex(x + 1, y, hw);

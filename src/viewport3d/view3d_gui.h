@@ -12,7 +12,7 @@
 
 #include "../tile_type.h"
 
-void ShowView3DWindow();
+void ShowView3DWindow(std::string_view backend = {});
 void MarkTileDirtyForView3D(TileIndex tile);
 
 #endif /* VIEWPORT3D_VIEW3D_GUI_H */

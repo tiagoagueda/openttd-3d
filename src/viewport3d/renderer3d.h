@@ -28,8 +28,11 @@ public:
 	/** Identifies a terrain chunk on the GPU. */
 	using ChunkID = uint32_t;
 
-	static std::unique_ptr<Renderer3D> Create(std::string &error);
+	static std::unique_ptr<Renderer3D> Create(std::string_view backend, std::string &error);
 	~Renderer3D();
+
+	/** Whether a renderer currently exists; there can only be one at a time. */
+	static bool Exists() { return Renderer3D::exists; }
 
 	std::string_view GetBackendName() const;
 
@@ -51,6 +54,8 @@ public:
 
 private:
 	Renderer3D() = default;
+
+	static inline bool exists = false; ///< Whether a renderer currently exists.
 
 	struct Impl;
 	std::unique_ptr<Impl> impl; ///< bgfx state; kept out of the header so only the renderer includes bgfx.

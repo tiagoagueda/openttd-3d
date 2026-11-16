@@ -36,6 +36,7 @@ enum View3DWidgets : WidgetID {
 };
 
 class View3DWindow;
+static std::string _view3d_backend; ///< Graphics API the user asked for; empty to pick automatically.
 static View3DWindow *_view3d_window = nullptr; ///< The open 3D view, if any, so tile changes can find it quickly.
 
 /** Window showing the map in 3D. */
@@ -195,9 +196,11 @@ public:
 		if (this->IsShaded()) return;
 
 		if (!this->renderer_tried) {
+			/* A window that was just closed may still own the renderer; wait for it to go away. */
+			if (Renderer3D::Exists()) return;
 			/* Created here rather than in the constructor, so it always happens on the thread that draws. */
 			this->renderer_tried = true;
-			this->renderer = Renderer3D::Create(this->error);
+			this->renderer = Renderer3D::Create(_view3d_backend, this->error);
 			this->SetDirty();
 		}
 		if (this->renderer == nullptr) return;
@@ -358,9 +361,17 @@ static WindowDesc _view3d_desc(
 	_nested_view3d_widgets
 );
 
-/** Open the 3D view, or bring it to the front. */
-void ShowView3DWindow()
+/**
+ * Open the 3D view, or bring it to the front.
+ * @param backend Graphics API to use ("vulkan", "opengl" or "metal"); empty to pick automatically.
+ */
+void ShowView3DWindow(std::string_view backend)
 {
+	if (backend != _view3d_backend) {
+		/* Switching graphics API needs a new renderer. */
+		CloseWindowById(WindowClass::View3D, 0);
+		_view3d_backend = backend;
+	}
 	AllocateWindowDescFront<View3DWindow>(_view3d_desc, 0);
 }
 

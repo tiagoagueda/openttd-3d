@@ -15,13 +15,12 @@ static constexpr uint TERRAIN_CHUNK_SIZE = 64;
 
 /** One corner of a tile, as sent to the GPU. */
 struct TerrainVertex {
-	int16_t x; ///< Position along the x axis in tiles.
-	int16_t y; ///< Position along the y axis in tiles.
-	int16_t z; ///< Height in height levels.
-	int16_t w; ///< Unused, always 1.
+	float x; ///< Position along the x axis in tiles.
+	float y; ///< Position along the y axis in tiles.
+	float z; ///< Height in height levels.
 	uint8_t r, g, b, a; ///< Colour with the lighting already applied.
 };
-static_assert(sizeof(TerrainVertex) == 12);
+static_assert(sizeof(TerrainVertex) == 16);
 
 /**
  * Geometry of one chunk of terrain.

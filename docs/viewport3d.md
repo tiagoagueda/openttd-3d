@@ -12,6 +12,8 @@ There are no textures, buildings, vehicles or tracks in it yet; tiles with those
 2. Open the console (the key left of `1`, or the `?` menu), and type `view3d`.
 
 A window opens that looks at the same spot as the main view.
+The status bar of the window shows which graphics API is in use.
+To force one, type `view3d vulkan` or `view3d opengl`.
 
 | Action | Effect |
 | --- | --- |
@@ -64,10 +66,11 @@ The existing game is touched in four small places:
 
 ## Limitations
 
-* The renderer uses Vulkan, or OpenGL when Vulkan is not available (Metal on macOS, untested). Direct3D is not used yet, because its shaders can only be compiled on Windows.
+* The renderer uses Vulkan, or OpenGL 3.3 when Vulkan is not available (Metal on macOS, untested). Direct3D is not used yet, because its shaders can only be compiled on Windows.
 * A 32bpp blitter is required, which is the default.
 * Terrain is built for the part of the map that has been in view and stays in memory until the window is closed. On the very largest maps, looking at all of it uses a lot of memory.
 * There is no anti-aliasing.
+* So far it has only been run on Linux, with Mesa's software Vulkan and OpenGL drivers.
 
 ## Changing the shaders
 

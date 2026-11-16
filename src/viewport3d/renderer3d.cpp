@@ -9,7 +9,9 @@
 
 #include "../stdafx.h"
 #include "renderer3d.h"
+#include "../core/math_func.hpp"
 #include "../debug.h"
+#include "../string_func.h"
 #include "../tile_type.h"
 
 #include <bgfx/bgfx.h>
@@ -100,18 +102,24 @@ static bool GetShaders(bgfx::RendererType::Enum type, ShaderBlob &vs, ShaderBlob
 
 /**
  * Start the renderer on the first backend that works.
+ * @param backend Name of the only backend to try ("vulkan", "opengl" or "metal"); empty to try all.
  * @param[out] error Explanation for the user when no backend works.
  * @return The renderer, or \c nullptr on failure.
  */
-/* static */ std::unique_ptr<Renderer3D> Renderer3D::Create(std::string &error)
+/* static */ std::unique_ptr<Renderer3D> Renderer3D::Create(std::string_view backend, std::string &error)
 {
+	/** A backend the renderer can run on. */
+	struct Backend {
+		bgfx::RendererType::Enum type;
+		std::string_view name;
+	};
 	/* Backends in order of preference. Direct3D is missing because its shaders can only be compiled on Windows. */
-	static constexpr bgfx::RendererType::Enum BACKENDS[] = {
+	static constexpr Backend BACKENDS[] = {
 #if defined(__APPLE__)
-		bgfx::RendererType::Metal,
+		{bgfx::RendererType::Metal, "metal"},
 #else
-		bgfx::RendererType::Vulkan,
-		bgfx::RendererType::OpenGL,
+		{bgfx::RendererType::Vulkan, "vulkan"},
+		{bgfx::RendererType::OpenGL, "opengl"},
 #endif
 	};
 
@@ -119,9 +127,10 @@ static bool GetShaders(bgfx::RendererType::Enum type, ShaderBlob &vs, ShaderBlob
 	renderer->impl = std::make_unique<Impl>();
 	Impl &impl = *renderer->impl;
 
-	static constexpr uint64_t NEEDED_CAPS = BGFX_CAPS_TEXTURE_BLIT | BGFX_CAPS_TEXTURE_READ_BACK;
+	for (const Backend &candidate : BACKENDS) {
+		if (!backend.empty() && !StrEqualsIgnoreCase(backend, candidate.name)) continue;
+		bgfx::RendererType::Enum type = candidate.type;
 
-	for (bgfx::RendererType::Enum type : BACKENDS) {
 		bgfx::Init init;
 		init.type = type;
 		init.fallback = false;
@@ -132,11 +141,10 @@ static bool GetShaders(bgfx::RendererType::Enum type, ShaderBlob &vs, ShaderBlob
 		impl.callback.failed = false;
 
 		if (!bgfx::init(init)) {
-			Debug(Facility::Driver, Severity::Error, "[viewport3d] backend {} is not available", bgfx::getRendererName(type));
+			Debug(Facility::Driver, Severity::Error, "[viewport3d] backend {} is not available", candidate.name);
 			continue;
 		}
-		if (impl.callback.failed || (bgfx::getCaps()->supported & NEEDED_CAPS) != NEEDED_CAPS) {
-			Debug(Facility::Driver, Severity::Error, "[viewport3d] backend {} cannot read back images", bgfx::getRendererName(type));
+		if (impl.callback.failed) {
 			bgfx::shutdown();
 			continue;
 		}
@@ -145,13 +153,13 @@ static bool GetShaders(bgfx::RendererType::Enum type, ShaderBlob &vs, ShaderBlob
 	}
 
 	if (!impl.initialised) {
-		error = "No usable Vulkan or OpenGL graphics driver was found.";
+		error = backend.empty() ? "No usable Vulkan or OpenGL graphics driver was found." : fmt::format("The graphics API '{}' is not available.", backend);
 		return nullptr;
 	}
 	Debug(Facility::Driver, Severity::Error, "[viewport3d] using bgfx backend {}", bgfx::getRendererName(bgfx::getRendererType()));
 
 	impl.layout.begin()
-		.add(bgfx::Attrib::Position, 4, bgfx::AttribType::Int16)
+		.add(bgfx::Attrib::Position, 3, bgfx::AttribType::Float)
 		.add(bgfx::Attrib::Color0, 4, bgfx::AttribType::Uint8, true)
 		.end();
 
@@ -173,6 +181,8 @@ static bool GetShaders(bgfx::RendererType::Enum type, ShaderBlob &vs, ShaderBlob
 	}
 	impl.quad_indices = bgfx::createIndexBuffer(mem);
 
+	Renderer3D::exists = true;
+
 	return renderer;
 }
 
@@ -190,6 +200,7 @@ Renderer3D::~Renderer3D()
 	if (bgfx::isValid(impl.quad_indices)) bgfx::destroy(impl.quad_indices);
 	if (bgfx::isValid(impl.program)) bgfx::destroy(impl.program);
 	bgfx::shutdown();
+	Renderer3D::exists = false;
 }
 
 /** Name of the graphics API in use, for display. */

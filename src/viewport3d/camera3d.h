@@ -77,7 +77,7 @@ struct Camera3D {
 	}
 
 	/** Unit vector pointing to the right of the screen, parallel to the ground. */
-	Vec3 GetRight() const { return {std::sin(this->yaw), -std::cos(this->yaw), 0}; }
+	Vec3 GetRight() const { return {-std::sin(this->yaw), std::cos(this->yaw), 0}; }
 
 	/** Unit vector pointing away from the camera, parallel to the ground. */
 	Vec3 GetForward() const { return {-std::cos(this->yaw), -std::sin(this->yaw), 0}; }

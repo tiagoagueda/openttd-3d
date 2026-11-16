@@ -271,7 +271,8 @@ static bool ConResetEngines(std::span<std::string_view> argv)
 static bool ConView3D(std::span<std::string_view> argv)
 {
 	if (argv.empty()) {
-		IConsolePrint(CC_HELP, "Open the experimental 3D view of the map. Usage: 'view3d'.");
+		IConsolePrint(CC_HELP, "Open the experimental 3D view of the map. Usage: 'view3d [vulkan|opengl|metal]'.");
+		IConsolePrint(CC_HELP, "The graphics API is picked automatically when none is given.");
 		return true;
 	}
 
@@ -280,7 +281,7 @@ static bool ConView3D(std::span<std::string_view> argv)
 		IConsolePrint(CC_ERROR, "The 3D view can only be opened in a game or in the scenario editor.");
 		return true;
 	}
-	ShowView3DWindow();
+	ShowView3DWindow(argv.size() > 1 ? argv[1] : std::string_view{});
 #else
 	IConsolePrint(CC_ERROR, "This build of OpenTTD does not include the 3D view (OPTION_VIEWPORT3D).");
 #endif
