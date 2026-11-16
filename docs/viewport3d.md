@@ -70,10 +70,10 @@ The existing game is touched in four small places:
 ## Limitations
 
 * The renderer uses Vulkan, or OpenGL 3.3 when Vulkan is not available (Metal on macOS, untested). Direct3D is not used yet, because its shaders can only be compiled on Windows.
-* A 32bpp blitter is required, which is the default.
+* A 32bpp or 40bpp blitter is required, which is the default; the 8bpp blitters do not work.
 * Terrain is built for the part of the map that has been in view and stays in memory until the window is closed. On the very largest maps, looking at all of it uses a lot of memory.
 * There is no anti-aliasing.
-* So far it has only been run on Linux, with Mesa's software Vulkan and OpenGL drivers.
+* It has been run on Linux with Mesa's software Vulkan and OpenGL drivers, and on Windows with the Direct3D 11 video driver.
 
 ## Changing the shaders
 
