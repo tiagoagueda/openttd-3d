@@ -27,7 +27,7 @@ compile() {
 		echo
 	} > "$out"
 	# suffix:platform:profile
-	for target in glsl:linux:150 essl:android:300_es spv:linux:spirv mtl:osx:metal; do
+	for target in glsl:linux:330 essl:android:300_es spv:linux:spirv mtl:osx:metal; do
 		suffix="${target%%:*}"
 		rest="${target#*:}"
 		platform="${rest%%:*}"
