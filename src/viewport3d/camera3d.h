@@ -66,7 +66,7 @@ struct Camera3D {
 
 	Vec3 target{}; ///< Point the camera looks at.
 	float yaw = 0.7853982f; ///< Direction from the target to the camera around the z axis; the default looks north like the 2D view.
-	float pitch = 0.6f; ///< Angle of the camera above the horizon.
+	float pitch = 0.5235988f; ///< Angle of the camera above the horizon; the default of 30 degrees matches the 2D view.
 	float distance = 640.0f; ///< Distance from the target to the camera.
 
 	/** Position of the camera. */

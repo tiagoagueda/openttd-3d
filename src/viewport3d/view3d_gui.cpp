@@ -76,16 +76,6 @@ public:
 		this->chunks_y = CeilDiv(Map::MaxY(), TERRAIN_CHUNK_SIZE);
 		this->chunks.resize(static_cast<size_t>(this->chunks_x) * this->chunks_y);
 
-		/* Start by looking at the same spot as the main view. */
-		Point centre{static_cast<int>(Map::SizeX() * TILE_SIZE / 2), static_cast<int>(Map::SizeY() * TILE_SIZE / 2)};
-		const Window *main_window = GetMainWindow();
-		if (main_window != nullptr && main_window->viewport != nullptr) {
-			const Viewport &vp = *main_window->viewport;
-			centre = InverseRemapCoords(vp.virtual_left + vp.virtual_width / 2, vp.virtual_top + vp.virtual_height / 2);
-		}
-		this->camera.target = {static_cast<float>(centre.x), static_cast<float>(centre.y), 0};
-		this->ClampCamera();
-
 		_view3d_window = this;
 	}
 
@@ -200,6 +190,7 @@ public:
 			if (Renderer3D::Exists()) return;
 			/* Created here rather than in the constructor, so it always happens on the thread that draws. */
 			this->renderer_tried = true;
+			this->CentreOnMainView();
 			this->renderer = Renderer3D::Create(_view3d_backend, this->error);
 			this->SetDirty();
 		}
@@ -220,6 +211,23 @@ public:
 	}
 
 private:
+	/**
+	 * Look at the same spot as the main view.
+	 * This is done on the first frame rather than in the constructor: when the window
+	 * is opened from a start-up script, the main view is not in place yet.
+	 */
+	void CentreOnMainView()
+	{
+		Point centre{static_cast<int>(Map::SizeX() * TILE_SIZE / 2), static_cast<int>(Map::SizeY() * TILE_SIZE / 2)};
+		const Window *main_window = GetMainWindow();
+		if (main_window != nullptr && main_window->viewport != nullptr) {
+			const Viewport &vp = *main_window->viewport;
+			centre = InverseRemapCoords(vp.virtual_left + vp.virtual_width / 2, vp.virtual_top + vp.virtual_height / 2);
+		}
+		this->camera.target = {static_cast<float>(centre.x), static_cast<float>(centre.y), 0};
+		this->ClampCamera();
+	}
+
 	/** Keep the camera within sensible limits and on the ground. */
 	void ClampCamera()
 	{
