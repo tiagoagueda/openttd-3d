@@ -309,7 +309,9 @@ private:
 	 */
 	void DrawView(const Rect &r) const
 	{
-		GfxFillRect(r, PC_BLACK);
+		/* Fill with palette index 0. Blitters with an animation buffer take the colour of a pixel
+		 * from the palette unless its index is 0, and the 3D image has no palette indices. */
+		GfxFillRect(r, PixelColour{0});
 
 		Blitter *blitter = BlitterFactory::GetCurrentBlitter();
 		if (blitter->GetScreenDepth() != 32) {
