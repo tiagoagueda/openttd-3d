@@ -27,6 +27,7 @@ add_subdirectory(table)
 add_subdirectory(tests)
 add_subdirectory(timer)
 add_subdirectory(video)
+add_subdirectory(viewport3d)
 add_subdirectory(widgets)
 
 add_files(

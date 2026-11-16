@@ -97,6 +97,10 @@
 
 #include "widgets/vehicle_widget.h"
 
+#ifdef WITH_VIEWPORT3D
+#	include "viewport3d/view3d_gui.h"
+#endif
+
 #include "table/strings.h"
 #include "table/string_colours.h"
 
@@ -2130,6 +2134,9 @@ void ConstrainAllViewportsZoom()
  */
 void MarkTileDirtyByTile(TileIndex tile, int bridge_level_offset, int tile_height_override)
 {
+#ifdef WITH_VIEWPORT3D
+	MarkTileDirtyForView3D(tile);
+#endif
 	Point pt = RemapCoords(TileX(tile) * TILE_SIZE, TileY(tile) * TILE_SIZE, tile_height_override * TILE_HEIGHT);
 	MarkAllViewportsDirty(
 			pt.x - MAX_TILE_EXTENT_LEFT,

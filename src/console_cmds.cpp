@@ -51,6 +51,10 @@
 #include "network/network_content.h"
 #endif /* WITH_ZLIB */
 
+#ifdef WITH_VIEWPORT3D
+#	include "viewport3d/view3d_gui.h"
+#endif
+
 #include "table/strings.h"
 
 #include "safeguards.h"
@@ -257,6 +261,29 @@ static bool ConResetEngines(std::span<std::string_view> argv)
 	}
 
 	StartupEngines();
+	return true;
+}
+
+/**
+ * Open the experimental 3D view of the map.
+ * @copydoc IConsoleCmdProc
+ */
+static bool ConView3D(std::span<std::string_view> argv)
+{
+	if (argv.empty()) {
+		IConsolePrint(CC_HELP, "Open the experimental 3D view of the map. Usage: 'view3d'.");
+		return true;
+	}
+
+#ifdef WITH_VIEWPORT3D
+	if (_game_mode != GameMode::Normal && _game_mode != GameMode::Editor) {
+		IConsolePrint(CC_ERROR, "The 3D view can only be opened in a game or in the scenario editor.");
+		return true;
+	}
+	ShowView3DWindow();
+#else
+	IConsolePrint(CC_ERROR, "This build of OpenTTD does not include the 3D view (OPTION_VIEWPORT3D).");
+#endif
 	return true;
 }
 
@@ -2983,6 +3010,7 @@ void IConsoleStdLibRegister()
 	IConsole::CmdRegister("return",                  ConReturn);
 	IConsole::CmdRegister("screenshot",              ConScreenShot);
 	IConsole::CmdRegister("script",                  ConScript);
+	IConsole::CmdRegister("view3d",                  ConView3D);
 	IConsole::CmdRegister("zoomto",                  ConZoomToLevel);
 	IConsole::CmdRegister("scrollto",                ConScrollToTile);
 	IConsole::CmdRegister("alias",                   ConAlias);

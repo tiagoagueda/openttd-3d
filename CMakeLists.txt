@@ -234,6 +234,12 @@ if(OPTION_PACKAGE_DEPENDENCIES)
     set(CMAKE_BUILD_WITH_INSTALL_RPATH ON)
 endif()
 
+# The experimental 3D viewport needs a GPU, so it is not built for dedicated servers.
+set(VIEWPORT3D_ENABLED OFF)
+if(OPTION_VIEWPORT3D AND NOT OPTION_DEDICATED AND NOT EMSCRIPTEN)
+    set(VIEWPORT3D_ENABLED ON)
+endif()
+
 include(CTest)
 include(SourceList)
 
@@ -308,6 +314,9 @@ endif()
 set_target_properties(openttd PROPERTIES VS_DEBUGGER_WORKING_DIRECTORY "${CMAKE_BINARY_DIR}")
 
 include(LinkPackage)
+if(VIEWPORT3D_ENABLED)
+    include(Viewport3D)
+endif()
 link_package(PNG TARGET PNG::PNG ENCOURAGED)
 link_package(ZLIB TARGET ZLIB::ZLIB ENCOURAGED)
 link_package(LIBLZMA TARGET LibLZMA::LibLZMA ENCOURAGED)

@@ -743,6 +743,12 @@ enum class WindowClass : uint16_t {
 	 */
 	Help,
 
+	/**
+	 * Experimental 3D view of the map; %Window numbers:
+	 *   - 0 = #View3DWidgets
+	 */
+	View3D,
+
 	Invalid = 0xFFFF, ///< Invalid window.
 };
 
