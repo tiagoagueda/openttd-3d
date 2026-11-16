@@ -30,6 +30,9 @@ While configuring, CMake downloads [bgfx](https://github.com/bkaradzic/bgfx) (th
 
 Build as described in [COMPILING.md](../COMPILING.md). To leave the 3D view out, configure with `-DOPTION_VIEWPORT3D=OFF`.
 
+On Windows, start the game with `run-openttd-3d.cmd` from the top of the checkout rather than by double-clicking `openttd.exe`.
+The game looks for its language files in the working directory, which has to be the `build` folder; started from anywhere else it stops with "No available language packs".
+
 On Linux, bgfx also needs the OpenGL and X11 development files, for example `libgl1-mesa-dev libegl1-mesa-dev libx11-dev` on Debian and Ubuntu.
 
 To build without downloading, point CMake at local checkouts:
