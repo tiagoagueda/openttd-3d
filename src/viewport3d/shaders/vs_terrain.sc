@@ -1,5 +1,5 @@
 $input a_position, a_color0, a_texcoord0
-$output v_color0, v_texcoord0
+$output v_color0, v_texcoord0, v_texcoord1
 
 /*
  * Terrain vertex shader for the OpenTTD 3D viewport.
@@ -10,9 +10,13 @@ $output v_color0, v_texcoord0
 
 #include <bgfx_shader.sh>
 
+/* World to shadow map. */
+uniform mat4 u_shadowMtx;
+
 void main()
 {
 	gl_Position = mul(u_modelViewProj, vec4(a_position, 1.0));
 	v_color0 = a_color0;
 	v_texcoord0 = vec3(a_position.xy, a_texcoord0.x);
+	v_texcoord1 = mul(u_shadowMtx, mul(u_model[0], vec4(a_position, 1.0)));
 }

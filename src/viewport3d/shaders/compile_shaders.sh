@@ -33,7 +33,7 @@ compile() {
 		platform="${rest%%:*}"
 		profile="${rest#*:}"
 		"$SHADERC" -f "$1.sc" -o "$out.tmp" --type "$2" --platform "$platform" -p "$profile" \
-			--varyingdef varying.def.sc -i "$BGFX_SRC" --bin2c "$1_$suffix"
+			--varyingdef varying.def.sc -i "$BGFX_SRC" -i . --bin2c "$1_$suffix"
 		cat "$out.tmp" >> "$out"
 		rm "$out.tmp"
 	done
@@ -45,3 +45,5 @@ compile vs_sprite vertex
 compile fs_sprite fragment
 compile vs_model vertex
 compile fs_model fragment
+compile vs_shadow vertex
+compile fs_shadow fragment

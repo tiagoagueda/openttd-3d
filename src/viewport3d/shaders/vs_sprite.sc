@@ -1,5 +1,5 @@
 $input a_position, a_texcoord0, a_texcoord1
-$output v_texcoord0
+$output v_texcoord0, v_texcoord1
 
 /*
  * Vertex shader for sprites of the 2D game that stand on the map of the OpenTTD 3D viewport.
@@ -15,6 +15,8 @@ $output v_texcoord0
 uniform vec4 u_spriteAxes;
 /* xyz: direction towards the camera. w: world units towards the camera per unit of a_texcoord1.x. */
 uniform vec4 u_spriteNearer;
+/* World to shadow map. */
+uniform mat4 u_shadowMtx;
 
 void main()
 {
@@ -25,4 +27,5 @@ void main()
 	vec4 nearer = mul(u_viewProj, vec4(world.xyz + u_spriteNearer.xyz * (u_spriteNearer.w * a_texcoord1.x), 1.0));
 	gl_Position.z = nearer.z / nearer.w * gl_Position.w;
 	v_texcoord0 = vec3(a_texcoord0.zw, 0.0);
+	v_texcoord1 = mul(u_shadowMtx, world);
 }

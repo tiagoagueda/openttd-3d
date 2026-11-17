@@ -22,8 +22,13 @@
 #include "shaders/fs_sprite.bin.h"
 #include "shaders/vs_model.bin.h"
 #include "shaders/fs_model.bin.h"
+#include "shaders/vs_shadow.bin.h"
+#include "shaders/fs_shadow.bin.h"
 
 #include "../safeguards.h"
+
+/** Texels along each side of the shadow map. */
+static constexpr uint16_t SHADOW_MAP_SIZE = 2048;
 
 /** Receives messages from bgfx. */
 struct Renderer3DCallback : public bgfx::CallbackI {
@@ -73,6 +78,12 @@ struct Renderer3D::Impl {
 	bgfx::UniformHandle model_sun = BGFX_INVALID_HANDLE;
 	bgfx::UniformHandle model_light = BGFX_INVALID_HANDLE;
 	std::vector<GpuModel> models;
+	bgfx::ProgramHandle shadow_program = BGFX_INVALID_HANDLE; ///< Draws depth into the shadow map.
+	bgfx::FrameBufferHandle shadow_map = BGFX_INVALID_HANDLE; ///< Depth of what casts shadows, seen from the sun.
+	bgfx::UniformHandle shadow_sampler = BGFX_INVALID_HANDLE;
+	bgfx::UniformHandle shadow_matrix = BGFX_INVALID_HANDLE;
+	bgfx::UniformHandle shadow_params = BGFX_INVALID_HANDLE;
+	bool shadows = false; ///< Whether the GPU can compare depths when sampling, which shadows need.
 	Renderer3DCallback callback;
 	bool initialised = false;
 	bgfx::VertexLayout layout;
@@ -213,6 +224,22 @@ static bgfx::ShaderHandle CreateShader(const ShaderVariants &variants)
 
 	impl.ground_sampler = bgfx::createUniform("s_ground", bgfx::UniformType::Sampler);
 
+	/* The shadow map; without a depth format that can be compared when sampling, there are no shadows, but the shaders still need a map. */
+	impl.shadow_program = bgfx::createProgram(CreateShader(SHADER_VARIANTS(vs_shadow)), CreateShader(SHADER_VARIANTS(fs_shadow)), true);
+	impl.shadow_sampler = bgfx::createUniform("s_shadow", bgfx::UniformType::Sampler);
+	impl.shadow_matrix = bgfx::createUniform("u_shadowMtx", bgfx::UniformType::Mat4);
+	impl.shadow_params = bgfx::createUniform("u_shadowParams", bgfx::UniformType::Vec4);
+	bgfx::TextureFormat::Enum shadow_format = bgfx::TextureFormat::D16;
+	for (bgfx::TextureFormat::Enum candidate : {bgfx::TextureFormat::D32F, bgfx::TextureFormat::D24, bgfx::TextureFormat::D16}) {
+		if (bgfx::isTextureValid(0, false, 1, candidate, BGFX_TEXTURE_RT | BGFX_SAMPLER_COMPARE_LEQUAL)) {
+			shadow_format = candidate;
+			impl.shadows = true;
+			break;
+		}
+	}
+	bgfx::TextureHandle shadow_texture = bgfx::createTexture2D(SHADOW_MAP_SIZE, SHADOW_MAP_SIZE, false, 1, shadow_format, BGFX_TEXTURE_RT | BGFX_SAMPLER_COMPARE_LEQUAL | BGFX_SAMPLER_U_CLAMP | BGFX_SAMPLER_V_CLAMP);
+	impl.shadow_map = bgfx::createFrameBuffer(1, &shadow_texture, true);
+
 	/* Two triangles per quad, split along the diagonal between vertex 1 and 2. */
 	static constexpr uint MAX_QUADS = MAX_CHUNK_QUADS;
 	const bgfx::Memory *mem = bgfx::alloc(MAX_QUADS * 6 * sizeof(uint16_t));
@@ -245,6 +272,11 @@ Renderer3D::~Renderer3D()
 	if (bgfx::isValid(impl.model_tint)) bgfx::destroy(impl.model_tint);
 	if (bgfx::isValid(impl.model_sun)) bgfx::destroy(impl.model_sun);
 	if (bgfx::isValid(impl.model_light)) bgfx::destroy(impl.model_light);
+	if (bgfx::isValid(impl.shadow_program)) bgfx::destroy(impl.shadow_program);
+	if (bgfx::isValid(impl.shadow_map)) bgfx::destroy(impl.shadow_map);
+	if (bgfx::isValid(impl.shadow_sampler)) bgfx::destroy(impl.shadow_sampler);
+	if (bgfx::isValid(impl.shadow_matrix)) bgfx::destroy(impl.shadow_matrix);
+	if (bgfx::isValid(impl.shadow_params)) bgfx::destroy(impl.shadow_params);
 	if (bgfx::isValid(impl.framebuffer)) bgfx::destroy(impl.framebuffer);
 	if (bgfx::isValid(impl.readback)) bgfx::destroy(impl.readback);
 	if (bgfx::isValid(impl.quad_indices)) bgfx::destroy(impl.quad_indices);
@@ -400,6 +432,78 @@ void Renderer3D::ClearChunks()
 	this->impl->chunks.clear();
 }
 
+/** How the sun looks at the map, for the shadow map. */
+struct ShadowView {
+	Matrix4 view; ///< World to the sun's view.
+	Matrix4 proj; ///< The sun's view to clip space.
+	Matrix4 sample; ///< World to coordinates in the shadow map.
+	float bias; ///< How much nearer a point must be than what the map holds, to not shadow itself.
+};
+
+/**
+ * Find how the sun looks at the area around what the camera looks at.
+ * @param camera The camera.
+ * @param sun Direction towards the sun.
+ * @param homogeneous_depth Whether clip space depth runs from -1 to 1.
+ * @param origin_bottom_left Whether textures start at the bottom.
+ * @return The view of the sun.
+ */
+static ShadowView GetShadowView(const Camera3D &camera, Vec3 sun, bool homogeneous_depth, bool origin_bottom_left)
+{
+	/* Covers what is near enough to see shadows; when looking from far away, shadows are too small to matter. */
+	float radius = std::clamp(camera.distance * 1.1f, 96.0f, 1200.0f);
+	float depth = radius * 2 + 1024;
+
+	sun = Normalise(sun);
+	Vec3 side = Normalise(Cross(Vec3{0, 0, 1}, sun));
+	Vec3 up = Cross(sun, side);
+
+	/* Move the view by whole texels only, so shadows do not shimmer when the camera moves. */
+	float texel = radius * 2 / SHADOW_MAP_SIZE;
+	Vec3 centre = camera.target;
+	float cs = std::floor(Dot(centre, side) / texel) * texel;
+	float cu = std::floor(Dot(centre, up) / texel) * texel;
+	float cd = Dot(centre, sun);
+	Vec3 eye = side * cs + up * cu + sun * (cd + depth / 2);
+
+	ShadowView result;
+	/* Looks along -sun; x to the side, y up. */
+	result.view.m = {
+		side.x, up.x, sun.x, 0,
+		side.y, up.y, sun.y, 0,
+		side.z, up.z, sun.z, 0,
+		-Dot(side, eye), -Dot(up, eye), -Dot(sun, eye), 1,
+	};
+	/* Orthographic; view space z runs from 0 at the eye to -depth. */
+	result.proj.m = {};
+	result.proj.m[0] = 1 / radius;
+	result.proj.m[5] = 1 / radius;
+	if (homogeneous_depth) {
+		result.proj.m[10] = -2 / depth;
+		result.proj.m[14] = -1;
+	} else {
+		result.proj.m[10] = -1 / depth;
+		result.proj.m[14] = 0;
+	}
+	result.proj.m[15] = 1;
+
+	/* From clip space to texture coordinates and depth from 0 to 1. */
+	Matrix4 crop;
+	float sy = origin_bottom_left ? 0.5f : -0.5f;
+	float sz = homogeneous_depth ? 0.5f : 1.0f;
+	float tz = homogeneous_depth ? 0.5f : 0.0f;
+	crop.m = {
+		0.5f, 0, 0, 0,
+		0, sy, 0, 0,
+		0, 0, sz, 0,
+		0.5f, 0.5f, tz, 1,
+	};
+	result.sample = crop * result.proj * result.view;
+	/* About a texel and a half of depth. */
+	result.bias = 1.5f * texel / depth + 0.0005f;
+	return result;
+}
+
 /**
  * Start drawing a new image. The result arrives a few calls to Poll() later.
  * Must not be called while IsBusy().
@@ -441,8 +545,9 @@ void Renderer3D::Render(uint width, uint height, const Camera3D &camera, std::sp
 		impl.fb_height = height;
 	}
 
-	static constexpr bgfx::ViewId VIEW_SCENE = 0;
-	static constexpr bgfx::ViewId VIEW_READBACK = 1;
+	static constexpr bgfx::ViewId VIEW_SHADOW = 0;
+	static constexpr bgfx::ViewId VIEW_SCENE = 1;
+	static constexpr bgfx::ViewId VIEW_READBACK = 2;
 
 	Matrix4 view = camera.GetViewMatrix();
 	Matrix4 proj = camera.GetProjectionMatrix(static_cast<float>(width) / height, bgfx::getCaps()->homogeneousDepth);
@@ -452,6 +557,21 @@ void Renderer3D::Render(uint width, uint height, const Camera3D &camera, std::sp
 	bgfx::setViewClear(VIEW_SCENE, BGFX_CLEAR_COLOR | BGFX_CLEAR_DEPTH, 0x8fb8e0ff, 1.0f, 0);
 	bgfx::setViewTransform(VIEW_SCENE, view.m.data(), proj.m.data());
 	bgfx::touch(VIEW_SCENE);
+
+	/* The shadow map looks from the sun at the area around the point the camera looks at; further away there are no shadows. */
+	static constexpr float MODEL_SUN[4] = {-0.4683f, 0.5620f, 0.6817f, 0};
+	ShadowView shadow = GetShadowView(camera, Vec3{MODEL_SUN[0], MODEL_SUN[1], MODEL_SUN[2]}, bgfx::getCaps()->homogeneousDepth, bgfx::getCaps()->originBottomLeft);
+	bgfx::setViewFrameBuffer(VIEW_SHADOW, impl.shadow_map);
+	bgfx::setViewRect(VIEW_SHADOW, 0, 0, SHADOW_MAP_SIZE, SHADOW_MAP_SIZE);
+	bgfx::setViewClear(VIEW_SHADOW, BGFX_CLEAR_DEPTH, 0, 1.0f, 0);
+	bgfx::setViewTransform(VIEW_SHADOW, shadow.view.m.data(), shadow.proj.m.data());
+	bgfx::touch(VIEW_SHADOW);
+	const float shadow_params[4] = {impl.shadows ? 1.0f : 0.0f, shadow.bias, 1.0f / SHADOW_MAP_SIZE, 0};
+	auto set_shadow = [&]() {
+		bgfx::setTexture(1, impl.shadow_sampler, bgfx::getTexture(impl.shadow_map));
+		bgfx::setUniform(impl.shadow_matrix, shadow.sample.m.data());
+		bgfx::setUniform(impl.shadow_params, shadow_params);
+	};
 
 	/* Vertices are in tiles and height levels; the model matrix turns them into world units. */
 	Matrix4 model;
@@ -471,7 +591,6 @@ void Renderer3D::Render(uint width, uint height, const Camera3D &camera, std::sp
 		WORLD_Z_SCALE / std::max(0.35f, std::sin(camera.pitch))};
 
 	/* The same light as the terrain gets in BuildTerrainChunkMesh(). */
-	static constexpr float MODEL_SUN[4] = {-0.4683f, 0.5620f, 0.6817f, 0};
 	static constexpr float MODEL_LIGHT[4] = {0.45f, 0.80f, 0, 0};
 	auto draw_model = [&](const ModelInstance &instance) {
 		if (instance.model >= impl.models.size()) return;
@@ -486,8 +605,16 @@ void Renderer3D::Render(uint width, uint height, const Camera3D &camera, std::sp
 			bgfx::setUniform(impl.model_tint, instance.tint.data());
 			bgfx::setUniform(impl.model_sun, MODEL_SUN);
 			bgfx::setUniform(impl.model_light, MODEL_LIGHT);
+			set_shadow();
 			bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A | BGFX_STATE_WRITE_Z | BGFX_STATE_DEPTH_TEST_LESS);
 			bgfx::submit(VIEW_SCENE, impl.model_program);
+
+			if (!impl.shadows) return;
+			bgfx::setTransform(transform.m.data());
+			bgfx::setVertexBuffer(0, gpu.vertices);
+			bgfx::setIndexBuffer(gpu.indices, first, count);
+			bgfx::setState(BGFX_STATE_WRITE_Z | BGFX_STATE_DEPTH_TEST_LESS);
+			bgfx::submit(VIEW_SHADOW, impl.shadow_program);
 		};
 		submit(instance.transform, 0, gpu.num_fixed_indices);
 		if (instance.load <= 0) return;
@@ -509,6 +636,7 @@ void Renderer3D::Render(uint width, uint height, const Camera3D &camera, std::sp
 			bgfx::setVertexBuffer(0, chunk.vertices);
 			bgfx::setTexture(0, impl.ground_sampler, impl.ground_textures);
 			bgfx::setIndexBuffer(impl.quad_indices, 0, chunk.num_quads * 6);
+			set_shadow();
 			bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A | BGFX_STATE_WRITE_Z | BGFX_STATE_DEPTH_TEST_LESS);
 			bgfx::submit(VIEW_SCENE, impl.program);
 		}
@@ -522,6 +650,7 @@ void Renderer3D::Render(uint width, uint height, const Camera3D &camera, std::sp
 			bgfx::setUniform(impl.sprite_axes, sprite_axes);
 			bgfx::setUniform(impl.sprite_nearer, sprite_nearer);
 			bgfx::setIndexBuffer(impl.quad_indices, 0, chunk.num_sprites * 6);
+			set_shadow();
 			bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A | BGFX_STATE_WRITE_Z | BGFX_STATE_DEPTH_TEST_LESS);
 			bgfx::submit(VIEW_SCENE, impl.sprite_program);
 		}
@@ -540,6 +669,7 @@ void Renderer3D::Render(uint width, uint height, const Camera3D &camera, std::sp
 		bgfx::setUniform(impl.sprite_axes, sprite_axes);
 		bgfx::setUniform(impl.sprite_nearer, sprite_nearer);
 		bgfx::setIndexBuffer(impl.quad_indices, 0, num_sprites * 6);
+		set_shadow();
 		bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A | BGFX_STATE_WRITE_Z | BGFX_STATE_DEPTH_TEST_LESS);
 		bgfx::submit(VIEW_SCENE, impl.sprite_program);
 	}
