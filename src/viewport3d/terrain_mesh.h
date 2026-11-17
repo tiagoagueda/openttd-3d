@@ -26,8 +26,10 @@ struct TerrainVertex {
 	uint8_t r, g, b; ///< Colour to multiply the texture with, including the lighting, at half brightness.
 	uint8_t unused; ///< Not used.
 	float texture; ///< The layer of the tile's ground texture.
+	float u; ///< Position within the tile along the x axis, 0 to 1.
+	float v; ///< Position within the tile along the y axis, 0 to 1.
 };
-static_assert(sizeof(TerrainVertex) == 20);
+static_assert(sizeof(TerrainVertex) == 28);
 
 /**
  * One corner of a sprite that stands on the map.

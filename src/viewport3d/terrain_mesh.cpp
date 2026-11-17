@@ -1697,7 +1697,7 @@ void BuildTerrainChunkMesh(uint chunk_x, uint chunk_y, GroundTextures &textures,
 			uint8_t b = static_cast<uint8_t>(std::clamp(ground.colour.b * light, 0.0f, 255.0f));
 
 			auto vertex = [&](uint vx, uint vy, int h) {
-				return TerrainVertex{static_cast<float>(vx), static_cast<float>(vy), static_cast<float>(h), r, g, b, 0, static_cast<float>(ground.texture)};
+				return TerrainVertex{static_cast<float>(vx), static_cast<float>(vy), static_cast<float>(h), r, g, b, 0, static_cast<float>(ground.texture), static_cast<float>(vx - x), static_cast<float>(vy - y)};
 			};
 			if (ground.foundation) {
 				/* Walls from the flat top of the foundation down to the ground around it. */
@@ -1710,7 +1710,7 @@ void BuildTerrainChunkMesh(uint chunk_x, uint chunk_y, GroundTextures &textures,
 					uint8_t wg = static_cast<uint8_t>(std::clamp(STONE.g * wall_light, 0.0f, 255.0f));
 					uint8_t wb = static_cast<uint8_t>(std::clamp(STONE.b * wall_light, 0.0f, 255.0f));
 					auto corner = [&](uint vx, uint vy, int h) {
-						return TerrainVertex{static_cast<float>(vx), static_cast<float>(vy), static_cast<float>(h), wr, wg, wb, 0, static_cast<float>(GROUND_TEXTURE_NONE)};
+						return TerrainVertex{static_cast<float>(vx), static_cast<float>(vy), static_cast<float>(h), wr, wg, wb, 0, static_cast<float>(GROUND_TEXTURE_NONE), 0.0f, 0.0f};
 					};
 					mesh.vertices.insert(mesh.vertices.end(), {corner(ax, ay, top), corner(bx, by, top), corner(ax, ay, ha), corner(bx, by, hb)});
 				};

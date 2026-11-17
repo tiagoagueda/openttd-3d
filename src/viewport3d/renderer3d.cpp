@@ -218,7 +218,7 @@ static bgfx::ShaderHandle CreateShader(const ShaderVariants &variants)
 	impl.layout.begin()
 		.add(bgfx::Attrib::Position, 3, bgfx::AttribType::Float)
 		.add(bgfx::Attrib::Color0, 4, bgfx::AttribType::Uint8, true)
-		.add(bgfx::Attrib::TexCoord0, 1, bgfx::AttribType::Float)
+		.add(bgfx::Attrib::TexCoord0, 3, bgfx::AttribType::Float)
 		.end();
 
 	impl.program = bgfx::createProgram(CreateShader(SHADER_VARIANTS(vs_terrain)), CreateShader(SHADER_VARIANTS(fs_terrain)), true);

@@ -1,4 +1,4 @@
-$input v_color0, v_texcoord0, v_texcoord1, v_haze
+$input v_color0, v_texcoord0, v_texcoord1, v_haze, v_tile
 
 /*
  * Terrain fragment shader for the OpenTTD 3D viewport.
@@ -24,10 +24,17 @@ void main()
 {
 	float layer = floor(v_texcoord0.z + 0.5);
 	vec2 at = v_texcoord0.xy;
-	vec3 ground = texture2DArray(s_ground, vec3(at, layer)).rgb;
-
 	bool water = abs(layer - u_water.x) < 0.5;
 	bool coast = layer > u_water.y - 0.5 && layer < u_water.z - 0.5;
+	if (coast) {
+		/* The texture starts over at the edge of the tile, so the filtering would mix the land of the far side into the water at the edge
+		 * and draw the outline of the tile in the water. Stay away from the edge, further when the texture is drawn smaller.
+		 * With anti-aliasing, pixels on the edge get a position just outside the tile; the position within the tile shows that, where fract() would start over. */
+		float margin = min(max(0.008, 1.5 * max(fwidth(at.x), fwidth(at.y))), 0.5);
+		at = at - v_tile + clamp(v_tile, vec2_splat(margin), vec2_splat(1.0 - margin));
+	}
+	vec3 ground = texture2DArray(s_ground, vec3(at, layer)).rgb;
+
 	if (water || coast) {
 		float wet = water ? 1.0 : IsWaterColour(ground);
 		/* Waves of a few sizes and directions, moving at their own speeds, lighten and darken the water. */
