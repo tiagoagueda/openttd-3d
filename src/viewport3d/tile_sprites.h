@@ -56,7 +56,16 @@ struct TileSprites {
 };
 
 void CollectTileSprites(TileIndex tile, TileSprites &sprites);
-bool HasTileSelection(TileIndex tile);
+
+/** How the 2D game marks a tile, apart from what is on it. */
+enum class TileMark : uint8_t {
+	None, ///< Not marked.
+	White, ///< Selected by a build tool, or part of a highlighted station.
+	Blue, ///< In the catchment area of a station.
+	Red, ///< Where building failed, or a house out of reach of the stations of a highlighted town.
+	Authority, ///< Within the local authority of a highlighted town.
+};
+TileMark GetTileMark(TileIndex tile);
 /** A town name, station name or sign, which the 3D view shows on a board that stands on the map. */
 struct View3DLabel {
 	/** What the label names. */

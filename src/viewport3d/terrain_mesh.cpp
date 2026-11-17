@@ -68,7 +68,8 @@ struct TileGround {
 	uint texture; ///< The layer of the texture.
 	TerrainColour colour; ///< Colour to multiply the texture with.
 	bool shaded = false; ///< Whether the texture already has the shading of the slope in it.
-	bool foundation = false; ///< Whether the tile stands on a foundation, so its top is flat at the height of its highest corner.
+	bool foundation = false; ///< Whether the tile stands on a foundation, so its top is flat at the height of its highest corner, or inclined.
+	Slope foundation_slope = SLOPE_FLAT; ///< With a foundation: the slope of its top; inclined foundations lie on the highest corners, the others one lower.
 	uint8_t under = 0; ///< For a mixed texture: the layer of the texture of the model package under it.
 };
 
@@ -391,6 +392,21 @@ static const ModelPack::Entry *GetTrackPiece(RailType rt, bool diagonal, const M
 }
 
 /**
+ * Get the 3D model of the short piece of track where straight track meets diagonal track.
+ * @param rt The rail type.
+ * @param pack The package of 3D models.
+ * @return The model, or \c nullptr if there is none for this kind of track.
+ */
+static const ModelPack::Entry *GetTrackJoint(RailType rt, const ModelPack &pack)
+{
+	const ModelPack::Entry *straight = GetTrackPiece(rt, false, pack);
+	if (straight == nullptr) return nullptr;
+	const RailTypeInfo *rti = GetRailTypeInfo(rt);
+	uint kind = rti->label == RAILTYPE_LABEL_MONO ? 1 : (rti->label == RAILTYPE_LABEL_MAGLEV ? 2 : 0);
+	return pack.Find(ModelKind::Track, 0, 6 + kind);
+}
+
+/**
  * Add 3D track on a tile: one piece for each track.
  * @param tile The tile, a plain rail tile.
  * @param x X coordinate of the tile.
@@ -411,6 +427,41 @@ static bool AddTrackModels(Tile tile, uint x, uint y, const std::array<int, 4> &
 		if (!bits.Test(static_cast<Track>(track))) continue;
 		const float *p = TRACK_PIECES[track];
 		AddPieceModel(track < 2 ? *straight : *diagonal, x, y, heights, p[0], p[1], p[2], p[3], mesh);
+	}
+
+	/* Where straight track leaves the tile into diagonal track on the next tile, the rails of the two pieces miss each
+	 * other at the outside of the bend; a joint that bends with them closes the gap. */
+	const ModelPack::Entry *joint = GetTrackJoint(GetRailType(tile), pack);
+	if (joint == nullptr) return true;
+	/* For each side of a tile, in the order of DiagDirection (NE, SE, SW, NW): the middle of that side, which way
+	 * is out of the tile there, and the diagonal tracks that end there. */
+	struct Side { float x, y, ox, oy; Track a, b; };
+	static constexpr float H = TILE_SIZE * 0.5f;
+	static constexpr Side SIDES[4] = {
+		{0, H, -1, 0, Track::Upper, Track::Right}, {H, TILE_SIZE, 0, 1, Track::Lower, Track::Right},
+		{TILE_SIZE, H, 1, 0, Track::Lower, Track::Left}, {H, 0, 0, -1, Track::Upper, Track::Left},
+	};
+	for (DiagDirection dir : {DiagDirection::NE, DiagDirection::SE, DiagDirection::SW, DiagDirection::NW}) {
+		/* Straight track along x ends at the north-east and south-west sides, along y at the other two. */
+		Track along = DiagDirToAxis(dir) == Axis::X ? Track::X : Track::Y;
+		if (!bits.Test(along)) continue;
+		TileIndex next = TileAddByDiagDir(tile, dir);
+		if (next == INVALID_TILE || !IsPlainRailTile(next)) continue;
+		const Side &here = SIDES[to_underlying(dir)];
+		const Side &there = SIDES[to_underlying(ReverseDiagDir(dir))];
+		TrackBits next_bits = GetTrackBits(next);
+		for (Track track : {there.a, there.b}) {
+			if (!next_bits.Test(track)) continue;
+			/* Into the next tile along its diagonal track: from the side towards the middle of the piece. */
+			const float *p = TRACK_PIECES[to_underlying(track)];
+			float ix = p[0] - there.x, iy = p[1] - there.y;
+			float il = std::sqrt(ix * ix + iy * iy);
+			float bx = here.ox + ix / il, by = here.oy + iy / il;
+			float bl = std::sqrt(bx * bx + by * by);
+			/* The joint turns left; for a turn to the right it lies the other way around. */
+			if (here.ox * iy - here.oy * ix < 0) bl = -bl;
+			AddPieceModel(*joint, x, y, heights, here.x, here.y, bx / bl, by / bl, mesh);
+		}
 	}
 	return true;
 }
@@ -1194,6 +1245,33 @@ static bool AddCrossingModel(TileIndex tile, const ModelPack &pack, std::vector<
 }
 
 /**
+ * Add the track through a rail station or waypoint tile, and its overhead wires.
+ * @param tile The tile, with rail.
+ * @param pack The package of 3D models.
+ * @param models The models to add to.
+ */
+static void AddStationTrack(TileIndex tile, const ModelPack &pack, std::vector<ModelInstance> &models)
+{
+	RailType rt = GetRailType(tile);
+	const ModelPack::Entry *track = GetTrackPiece(rt, false, pack);
+	if (track == nullptr || GetRailTypeInfo(rt)->UsesOverlay()) return;
+	bool along_x = GetRailStationAxis(tile) == Axis::X;
+	float ux = along_x ? 1.0f : 0.0f, uy = along_x ? 0.0f : 1.0f;
+	float cx = TileX(tile) * TILE_SIZE + TILE_SIZE * 0.5f, cy = TileY(tile) * TILE_SIZE + TILE_SIZE * 0.5f;
+	/* Stations stand on flat foundations. */
+	float z = GetTileMaxPixelZ(tile) * WORLD_Z_SCALE;
+	static TerrainChunkMesh scratch;
+	scratch.models.clear();
+	std::array<float, 3> a{cx - ux * TILE_SIZE * 0.5f, cy - uy * TILE_SIZE * 0.5f, z}, b{cx + ux * TILE_SIZE * 0.5f, cy + uy * TILE_SIZE * 0.5f, z};
+	AddEdgeModel(*track, a, b, scratch);
+	if (HasRailCatenaryDrawn(rt)) {
+		const ModelPack::Entry *wires = pack.Find(ModelKind::Catenary, 0, 2);
+		if (wires != nullptr) AddEdgeModel(*wires, a, b, scratch);
+	}
+	models.insert(models.end(), scratch.models.begin(), scratch.models.end());
+}
+
+/**
  * Find whether OpenGFX3D has a model for the building on a tile, and add the model when this tile is where it stands.
  * @param tile The tile.
  * @param pack The package of 3D models.
@@ -1297,6 +1375,8 @@ static bool AddTileModel(TileIndex tile, const ModelPack &pack, std::vector<Mode
 			}
 			if (entry == nullptr) return false;
 			PlaceModel(*entry, tile, 1, 1, front, GetOwnerTint(IsBuoy(tile) ? OWNER_NONE : GetTileOwner(tile)), models);
+			/* The track through stations and waypoints of the base game is the same as on plain rail; GetGroundPattern() gives them its ballast. */
+			if (HasStationRail(tile) && GetStationSpec(tile) == nullptr) AddStationTrack(tile, pack, models);
 			return true;
 		}
 
@@ -1570,7 +1650,7 @@ void GetLiveTileModels(TileIndex tile, const ModelPack &pack, std::vector<ModelI
  */
 static bool GetGroundPattern(TileIndex tile, Slope slope, const ModelPack *pack, GroundTextures &textures, TileGround &result)
 {
-	if (pack == nullptr || pack->IsEmpty() || IsHalftileSlope(slope) || HasTileSelection(tile) || IsBridgeAbove(tile)) return false;
+	if (pack == nullptr || pack->IsEmpty() || IsHalftileSlope(slope) || IsBridgeAbove(tile)) return false;
 
 	GroundTextures::PatternKind kind;
 	uint8_t bits;
@@ -1607,6 +1687,19 @@ static bool GetGroundPattern(TileIndex tile, Slope slope, const ModelPack *pack,
 			under = GROUND_TEXTURE_GRASS;
 		}
 		bits = static_cast<uint8_t>(road.base());
+	} else if (IsTileType(tile, TileType::Station) && HasStationRail(tile) && GetStationSpec(tile) == nullptr) {
+		/* Stations and waypoints of the base game: ballast along the track, the platforms are models. */
+		RailType rt = GetRailType(tile);
+		if (GetTrackPiece(rt, false, *pack) == nullptr || GetRailTypeInfo(rt)->UsesOverlay()) return false;
+		kind = GroundTextures::PatternKind::Rail;
+		bits = static_cast<uint8_t>(TrackBits{GetRailStationTrack(tile)}.base());
+		if (_settings_client.gui.show_track_reservation && HasStationReservation(tile)) reserved = bits;
+	} else if (IsTileType(tile, TileType::Station) && IsAnyRoadStop(tile) && GetRoadStopSpec(tile) == nullptr) {
+		/* Road stops of the base game: road along the stop, the shelters and canopies are models. */
+		if (HasRoadTypeTram(tile) || !HasRoadTypeRoad(tile) || GetRoadTypeRoad(tile) != ROADTYPE_ROAD) return false;
+		kind = GroundTextures::PatternKind::Road;
+		Axis axis = IsDriveThroughStopTile(tile) ? GetDriveThroughStopAxis(tile) : DiagDirToAxis(GetBayRoadStopDir(tile));
+		bits = static_cast<uint8_t>((axis == Axis::X ? ROAD_X : ROAD_Y).base());
 	} else {
 		return false;
 	}
@@ -1668,7 +1761,14 @@ static TileGround AddTileSprites(uint x, uint y, const std::array<uint8_t, 4> &h
 
 	/* Foundations under half a tile leave the other half sloped; those keep the foundation sprite. */
 	bool flat_foundation = !IsHalftileSlope(slope) && std::ranges::any_of(sprites.groups, &TileSpriteGroup::foundation);
-	int foundation_z = GetTileMaxPixelZ(tile);
+	/* Most foundations are flat on top; inclined ones, as under ramps and tracks going up a hill, slope along the way up. */
+	auto [foundation_slope, foundation_z] = GetFoundationPixelSlope(tile);
+	if (IsSteepSlope(foundation_slope) || IsHalftileSlope(foundation_slope)) foundation_slope = SLOPE_FLAT;
+	std::array<uint8_t, 4> foundation_heights{};
+	if (foundation_slope != SLOPE_FLAT) {
+		auto raised = [&](Slope corner) -> uint8_t { return (foundation_slope & corner) != 0 ? 1 : 0; };
+		foundation_heights = {raised(SLOPE_N), raised(SLOPE_W), raised(SLOPE_E), raised(SLOPE_S)};
+	}
 	static std::vector<SpritePart> ground;
 	ground = sprites.ground;
 	/* A tunnel portal has its own track or road; the ground in front of it is plain. */
@@ -1750,7 +1850,7 @@ static TileGround AddTileSprites(uint x, uint y, const std::array<uint8_t, 4> &h
 	} else if (ground.empty()) {
 		result = ground_only ? GetTileGround(Tile(tile), x, y, false) : TileGround{GROUND_TEXTURE_GRASS, COLOUR_WHITE};
 	} else {
-		uint texture = textures.Get(ground, flat_foundation ? std::array<uint8_t, 4>{} : heights);
+		uint texture = textures.Get(ground, flat_foundation ? foundation_heights : heights);
 		if (texture == GROUND_TEXTURE_NONE) {
 			result = TileGround{GROUND_TEXTURE_NONE, TerrainColour{0x80, 0x80, 0x80}};
 		} else if (textures.IsMixing()) {
@@ -1762,7 +1862,58 @@ static TileGround AddTileSprites(uint x, uint y, const std::array<uint8_t, 4> &h
 		}
 	}
 	result.foundation = flat_foundation;
+	result.foundation_slope = flat_foundation ? foundation_slope : SLOPE_FLAT;
 	return result;
+}
+
+/**
+ * Mark a tile with a see-through plate that follows the ground, like the 2D game draws its selections on the ground.
+ * @param mark How the tile is marked.
+ * @param x X coordinate of the tile.
+ * @param y Y coordinate of the tile.
+ * @param heights Heights of the northern, western, eastern and southern corner of the top of the tile, in height levels.
+ * @param split_ns Whether the ground of the tile is split along the line from north to south, rather than from west to east.
+ * @param pack The package of 3D models, or \c nullptr.
+ * @param mesh The mesh to add to.
+ */
+static void AddTileMark(TileMark mark, uint x, uint y, const std::array<float, 4> &heights, bool split_ns, const ModelPack *pack, TerrainChunkMesh &mesh)
+{
+	const ModelPack::Entry *half = pack != nullptr ? pack->Find(ModelKind::Interface, 0, 5) : nullptr;
+	if (half == nullptr) return;
+	std::array<float, 4> tint;
+	switch (mark) {
+		case TileMark::Blue: tint = {0.35f, 0.6f, 1.0f, 0.45f}; break;
+		case TileMark::Red: tint = {1.0f, 0.25f, 0.2f, 0.5f}; break;
+		case TileMark::Authority: tint = {1.0f, 0.55f, 0.35f, 0.4f}; break;
+		default: tint = {1.0f, 1.0f, 1.0f, 0.4f}; break;
+	}
+	/* A little above the ground, so the plate is not lost in it. */
+	static constexpr float LIFT = 0.3f;
+	enum : uint { N, W, E, S };
+	static constexpr float CORNERS[4][2] = {{0, 0}, {TILE_SIZE, 0}, {0, TILE_SIZE}, {TILE_SIZE, TILE_SIZE}};
+	auto corner = [&](uint c) {
+		return std::array<float, 3>{x * TILE_SIZE + CORNERS[c][0], y * TILE_SIZE + CORNERS[c][1], heights[c] * HEIGHT_LEVEL_SIZE + LIFT};
+	};
+	/* Each half from a corner along two sides, turning the same way as the model, so its top stays up. */
+	auto add = [&](uint origin, uint a, uint b) {
+		std::array<float, 3> o = corner(origin), pa = corner(a), pb = corner(b);
+		ModelInstance &instance = mesh.models.emplace_back();
+		instance.model = half->model;
+		instance.transform.m = {
+			pa[0] - o[0], pa[1] - o[1], pa[2] - o[2], 0,
+			pb[0] - o[0], pb[1] - o[1], pb[2] - o[2], 0,
+			0, 0, 1, 0,
+			o[0], o[1], o[2], 1,
+		};
+		instance.tint = tint;
+	};
+	if (split_ns) {
+		add(W, S, N);
+		add(E, N, S);
+	} else {
+		add(N, W, E);
+		add(S, E, W);
+	}
 }
 
 /**
@@ -1845,13 +1996,13 @@ void BuildTerrainChunkMesh(uint chunk_x, uint chunk_y, GroundTextures &textures,
 					break;
 			}
 
-			/* The selection of a build tool is drawn on the ground, so the ground of selected tiles comes from the 2D game too. */
-			bool selected = !collect && HasTileSelection(TileXY(x, y));
+			/* The selection of a build tool, the catchment area of a station and such are marked on top of the ground. */
+			TileMark mark = GetTileMark(tile);
 
 			TileGround ground;
-			if (collect || selected) {
+			if (collect) {
 				int low = std::min({hn, hw, he, hs});
-				ground = AddTileSprites(x, y, {static_cast<uint8_t>(hn - low), static_cast<uint8_t>(hw - low), static_cast<uint8_t>(he - low), static_cast<uint8_t>(hs - low)}, textures, atlas, pack, mesh, selected);
+				ground = AddTileSprites(x, y, {static_cast<uint8_t>(hn - low), static_cast<uint8_t>(hw - low), static_cast<uint8_t>(he - low), static_cast<uint8_t>(hs - low)}, textures, atlas, pack, mesh);
 			} else {
 				ground = GetTileGround(tile, x, y, pack_ground);
 			}
@@ -1872,8 +2023,12 @@ void BuildTerrainChunkMesh(uint chunk_x, uint chunk_y, GroundTextures &textures,
 				/* Walls from the flat top of the foundation down to the ground around it. */
 				static constexpr TerrainColour STONE{0xa8, 0xa0, 0x90};
 				int top = std::max({hn, hw, he, hs});
-				auto wall = [&](uint ax, uint ay, int ha, uint bx, uint by, int hb, float nx, float ny) {
-					if ((ha == top && hb == top) || mesh.vertices.size() / 4 >= MAX_CHUNK_QUADS - 1) return;
+				/* An inclined foundation has its raised corners at the top, the others one level lower. */
+				Slope fs_slope = ground.foundation_slope;
+				auto top_of = [&](Slope corner) { return fs_slope == SLOPE_FLAT || (fs_slope & corner) != 0 ? top : top - 1; };
+				int tn = top_of(SLOPE_N), tw = top_of(SLOPE_W), te = top_of(SLOPE_E), ts = top_of(SLOPE_S);
+				auto wall = [&](uint ax, uint ay, int ha, int ta, uint bx, uint by, int hb, int tb, float nx, float ny) {
+					if ((ha >= ta && hb >= tb) || mesh.vertices.size() / 4 >= MAX_CHUNK_QUADS - 1) return;
 					float wall_light = (AMBIENT + DIFFUSE * std::max(0.0f, nx * SUN_X + ny * SUN_Y)) * 0.5f;
 					uint8_t wr = static_cast<uint8_t>(std::clamp(STONE.r * wall_light, 0.0f, 255.0f));
 					uint8_t wg = static_cast<uint8_t>(std::clamp(STONE.g * wall_light, 0.0f, 255.0f));
@@ -1881,13 +2036,16 @@ void BuildTerrainChunkMesh(uint chunk_x, uint chunk_y, GroundTextures &textures,
 					auto corner = [&](uint vx, uint vy, int h) {
 						return TerrainVertex{static_cast<float>(vx), static_cast<float>(vy), static_cast<float>(h), wr, wg, wb, 0, static_cast<float>(GROUND_TEXTURE_NONE), 0.0f, 0.0f};
 					};
-					mesh.vertices.insert(mesh.vertices.end(), {corner(ax, ay, top), corner(bx, by, top), corner(ax, ay, ha), corner(bx, by, hb)});
+					mesh.vertices.insert(mesh.vertices.end(), {corner(ax, ay, ta), corner(bx, by, tb), corner(ax, ay, std::min(ha, ta)), corner(bx, by, std::min(hb, tb))});
 				};
-				wall(x, y, hn, x + 1, y, hw, 0, -1);
-				wall(x + 1, y, hw, x + 1, y + 1, hs, 1, 0);
-				wall(x + 1, y + 1, hs, x, y + 1, he, 0, 1);
-				wall(x, y + 1, he, x, y, hn, -1, 0);
-				hn = hw = he = hs = top;
+				wall(x, y, hn, tn, x + 1, y, hw, tw, 0, -1);
+				wall(x + 1, y, hw, tw, x + 1, y + 1, hs, ts, 1, 0);
+				wall(x + 1, y + 1, hs, ts, x, y + 1, he, te, 0, 1);
+				wall(x, y + 1, he, te, x, y, hn, tn, -1, 0);
+				hn = tn;
+				hw = tw;
+				he = te;
+				hs = ts;
 			}
 			/* A tunnel portal stands on flat ground at the foot of the slope; its wing walls close the sides. */
 			if (pack != nullptr && !pack->IsEmpty() && HasTunnelModel(tile, *pack)) {
@@ -1920,6 +2078,8 @@ void BuildTerrainChunkMesh(uint chunk_x, uint chunk_y, GroundTextures &textures,
 			} else {
 				mesh.vertices.insert(mesh.vertices.end(), {vn, ve, vw, vs});
 			}
+
+			if (mark != TileMark::None) AddTileMark(mark, x, y, {static_cast<float>(fn), static_cast<float>(fw), static_cast<float>(fe), static_cast<float>(fs)}, split_ns, pack, mesh);
 
 			if (shore && std::min({fn, fw, fe, fs}) < 0 && (mesh.vertices.size() + mesh.water.size()) / 4 < MAX_CHUNK_QUADS) {
 				/* The water over the land, at sea level. Each corner knows how deep the land is below it;

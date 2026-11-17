@@ -123,7 +123,7 @@ With that scale the 3D view at the default angle has the proportions of the 2D g
 
 To build in the 3D view, the window finds the spot on the ground below the cursor by following the line of sight through the cursor until it goes below the terrain.
 `GetTileBelowCursor()`, which all build tools of the game use, asks the 3D view first when the cursor is over it, so tools, dragging and the tile selection work without changes to the tools.
-The selection itself is drawn by the 2D game on the ground of a tile, so it arrives in the 3D view as part of the ground texture of that tile.
+What the 2D game draws on the ground to mark a tile (the selection of a tool, the catchment area and tiles of a highlighted station, the reach of a town, a failed build) is left out of the ground; `GetTileMark()` in `viewport.cpp` asks `DrawTileSelection()` what it would draw and the 3D view lays a see-through plate on the tile instead, white, blue or red like the 2D marks (`AddTileMark()`, `interface` model 5, two halves that follow the ground).
 
 Names of towns and stations and signs stand in the world: each is a board on a post (`interface` model 0), facing the camera, above the spot it belongs to (`AddLabels()` in `view3d_gui.cpp`). The 2D game makes the list and draws each board's picture (`GetView3DLabels()`, `DrawView3DLabel()` in `viewport.cpp`; town names get a dark board), which goes into rows at the bottom of the sprite atlas that start afresh when they are full (`SpriteAtlas::GetLabel()`). Boards keep about the size of the 2D views at the spot the camera looks at, so nearer ones are larger and further ones smaller; hills hide them, and they are neither shaded nor hazed (the sprite shaders tell them by a nearness of 1000 or more). Clicking a board opens its window.
 
@@ -175,11 +175,13 @@ Parts of a model with a material named `company` take the colour of the owner. P
 A building with a model is part of the terrain chunk it stands on (`AddTileModel()` in `terrain_mesh.cpp`): the sprites the tile draws for the building are left out and the model is put on the highest corner of the footprint, turned to face the way the building faces.
 Besides houses, industry tiles, rail stations, road stops and objects, models can replace airport tiles, docks, buoys and train, road and ship depots; depots and docks face the way their entrance does, and a ship depot has one model for both its tiles.
 Houses and industries take the colour the game picked for them, stations, stops and objects that of their owner.
-A tile with a foundation is drawn flat at the top of the foundation, with stone walls down to the terrain around it, so that a model stands on level ground; half-tile foundations still use the sprites.
+A tile with a foundation is drawn flat at the top of the foundation, with stone walls down to the terrain around it, so that a model stands on level ground; an inclined foundation, as under track and road that go up over a single raised corner, slopes along the way up like the vehicles do. Half-tile foundations still use the sprites.
+Rail stations and waypoints and road stops of the base game have the same 3D track (`AddStationTrack()`) and the same ballast or road ground as plain track and road, with the platforms, shelters and canopies as models.
+Where straight track meets diagonal track on the next tile, a joint that bends by 45 degrees (`track` models 6 to 8) closes the gap between the rails of the two pieces.
 
 The existing game is touched in a few small places:
 
-* `MarkTileDirtyByTile()` in `viewport.cpp` tells the 3D view which tile changed, `SetSelectionTilesDirty()` tells it where the selection changed, `GetTileBelowCursor()` asks it for the tile below the cursor, and `CollectTileSprites()`, `HasTileSelection()`, `GetView3DLabels()`, `DrawView3DLabel()` and `HandleView3DClicked()` at the end of that file tell it what a tile draws, make the names and pass on clicks; `Window::DrawViewport()` lets it draw the views of other windows.
+* `MarkTileDirtyByTile()` in `viewport.cpp` tells the 3D view which tile changed, `SetSelectionTilesDirty()` tells it where the selection changed, `GetTileBelowCursor()` asks it for the tile below the cursor, and `CollectTileSprites()`, `GetTileMark()`, `GetView3DLabels()`, `DrawView3DLabel()` and `HandleView3DClicked()` at the end of that file tell it what a tile draws, make the names and pass on clicks; `Window::DrawViewport()` lets it draw the views of other windows.
 * `console_cmds.cpp` has the `view3d` command.
 * `window_type.h` has the new window class.
 * `lang/english.txt` has the strings of the window.
@@ -198,7 +200,7 @@ The existing game is touched in a few small places:
 * Transparency options of the 2D game are followed, but see-through sprites are left out rather than drawn see-through.
 * Tiles with animations that have no model (some industries with NewGRF graphics) rebuild their whole chunk of 64x64 tiles for every animation step; building one chunk takes about 1.5 ms.
 * Sprites far away flicker a little because they have no smaller versions yet.
-* The ground of stations, industries, level crossings, depots and other buildings is still made from the sprites of the 2D game where it is not plain landscape, so it looks coarser than roads and the landscape.
+* The ground of industries, level crossings, depots, NewGRF stations and other buildings is still made from the sprites of the 2D game where it is not plain landscape, so it looks coarser than roads and the landscape.
 * 3D models have colours per material but no textures yet, vehicles with a model turn in steps of 45 degrees like the sprites do, and liveries other than the company colour are not followed.
 * It has been run on Linux with Mesa's software Vulkan and OpenGL drivers, and on Windows with the Direct3D 11 video driver.
 

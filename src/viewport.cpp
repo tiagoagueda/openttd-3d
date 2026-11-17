@@ -906,8 +906,23 @@ static std::string &AddStringToDraw(int x, int y, Colours colour, ViewportString
  * @param extra_offs_x Pixel X offset for the sprite position.
  * @param extra_offs_y Pixel Y offset for the sprite position.
  */
+#ifdef WITH_VIEWPORT3D
+/** When set, selection sprites are not drawn; GetTileMark() learns from it what would have been drawn. */
+static struct TileMarkCapture {
+	bool any; ///< Whether a selection sprite would have been drawn.
+	PaletteID pal; ///< The palette of the last one.
+} *_tile_mark_capture = nullptr;
+#endif /* WITH_VIEWPORT3D */
+
 static void DrawSelectionSprite(SpriteID image, PaletteID pal, const TileInfo *ti, int z_offset, FoundationPart foundation_part, int extra_offs_x = 0, int extra_offs_y = 0)
 {
+#ifdef WITH_VIEWPORT3D
+	if (_tile_mark_capture != nullptr) {
+		/* The dot of a tool that works on one point is left to the cursor of the 3D view. */
+		if (image != SPR_DOT) *_tile_mark_capture = {true, pal};
+		return;
+	}
+#endif /* WITH_VIEWPORT3D */
 	if (_vd.foundation[foundation_part] == -1) {
 		/* draw on real ground */
 		AddTileSpriteToDraw(image, pal, ti->x, ti->y, ti->z + z_offset, nullptr, extra_offs_x, extra_offs_y);
@@ -3930,8 +3945,8 @@ void CollectTileSprites(TileIndex tile, TileSprites &sprites)
 	_cur_ti.x = TileX(tile) * TILE_SIZE;
 	_cur_ti.y = TileY(tile) * TILE_SIZE;
 	std::tie(_cur_ti.tileh, _cur_ti.z) = GetTilePixelSlope(tile);
+	/* The selection is left out; the 3D view marks the tiles itself (GetTileMark()). */
 	_tile_type_procs[GetTileType(tile)]->draw_tile_proc(&_cur_ti);
-	if (_cur_ti.tile != INVALID_TILE) DrawTileSelection(&_cur_ti);
 
 	Point origin = RemapCoords(_cur_ti.x, _cur_ti.y, _cur_ti.z);
 	auto part = [&](SpriteID image, PaletteID pal, const SubSprite *sub, int x, int y) {
@@ -3982,30 +3997,31 @@ void CollectTileSprites(TileIndex tile, TileSprites &sprites)
 }
 
 /**
- * Test whether the 2D game draws a selection or highlight on a tile, like the area a build tool is about to build on.
+ * Find how the 2D game marks a tile, like the area a build tool is about to build on or the catchment area of a station.
  * @param tile The tile.
- * @return Whether something is drawn on top of the tile.
+ * @return The mark, if any.
  */
-bool HasTileSelection(TileIndex tile)
+TileMark GetTileMark(TileIndex tile)
 {
-	if (!_vd.tile_sprites_to_draw.empty() || !_vd.parent_sprites_to_draw.empty() || !_vd.child_screen_sprites_to_draw.empty()) return false;
-
-	_vd.foundation_part = FoundationPart::None;
-	_vd.foundation[FoundationPart::Normal] = -1;
-	_vd.foundation[FoundationPart::Halftile] = -1;
-
 	TileInfo ti;
 	ti.tile = tile;
 	ti.x = TileX(tile) * TILE_SIZE;
 	ti.y = TileY(tile) * TILE_SIZE;
 	std::tie(ti.tileh, ti.z) = GetTilePixelSlope(tile);
-	DrawTileSelection(&ti);
 
-	bool result = !_vd.tile_sprites_to_draw.empty() || !_vd.parent_sprites_to_draw.empty() || !_vd.child_screen_sprites_to_draw.empty();
-	_vd.tile_sprites_to_draw.clear();
-	_vd.parent_sprites_to_draw.clear();
-	_vd.child_screen_sprites_to_draw.clear();
-	return result;
+	TileMarkCapture capture{false, PAL_NONE};
+	_tile_mark_capture = &capture;
+	DrawTileSelection(&ti);
+	_tile_mark_capture = nullptr;
+
+	if (!capture.any) return TileMark::None;
+	switch (capture.pal) {
+		case PALETTE_SEL_TILE_BLUE: return TileMark::Blue;
+		case PALETTE_SEL_TILE_RED:
+		case PALETTE_TILE_RED_PULSATING: return TileMark::Red;
+		case PALETTE_CRASH: return TileMark::Authority;
+		default: return TileMark::White;
+	}
 }
 
 /** The town names, station names and signs that the 3D view shows, with the place of the middle of their top edge in the 3D image. */
