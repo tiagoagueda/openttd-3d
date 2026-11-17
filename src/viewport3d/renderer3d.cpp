@@ -9,12 +9,16 @@
 
 #include "../stdafx.h"
 #include "renderer3d.h"
+#include "model_pack.h"
 #include "../core/math_func.hpp"
 #include "../debug.h"
 #include "../string_func.h"
 #include "../tile_type.h"
 
 #include <bgfx/bgfx.h>
+#include <bx/math.h>
+
+#include <chrono>
 
 #include "shaders/vs_terrain.bin.h"
 #include "shaders/fs_terrain.bin.h"
@@ -27,6 +31,8 @@
 #include "shaders/fs_sprite_shadow.bin.h"
 #include "shaders/vs_model_instanced.bin.h"
 #include "shaders/vs_shadow_instanced.bin.h"
+#include "shaders/vs_sky.bin.h"
+#include "shaders/fs_sky.bin.h"
 
 #include "../safeguards.h"
 
@@ -85,6 +91,7 @@ struct Renderer3D::Impl {
 	bgfx::ProgramHandle sprite_shadow_program = BGFX_INVALID_HANDLE; ///< Draws sprites, turned towards the sun, into the shadow map.
 	bgfx::ProgramHandle model_instanced_program = BGFX_INVALID_HANDLE; ///< Draws many copies of one model at once.
 	bgfx::ProgramHandle shadow_instanced_program = BGFX_INVALID_HANDLE; ///< Draws many copies of one model into the shadow map.
+	std::vector<uint> far; ///< For each model, what to draw when it is far away; see ModelPack::GetFarModel().
 	std::vector<std::vector<std::array<float, 20>>> batches; ///< For each model, the copies to draw this frame: model matrix and tint.
 	bgfx::FrameBufferHandle shadow_map = BGFX_INVALID_HANDLE; ///< Depth of what casts shadows, seen from the sun.
 	bgfx::UniformHandle shadow_sampler = BGFX_INVALID_HANDLE;
@@ -103,6 +110,15 @@ struct Renderer3D::Impl {
 	bgfx::TextureHandle sprite_atlas = BGFX_INVALID_HANDLE; ///< The sprites of the 2D game that are in use.
 	bgfx::UniformHandle ground_sampler = BGFX_INVALID_HANDLE;
 	bgfx::TextureHandle ground_textures = BGFX_INVALID_HANDLE; ///< Texture array with one layer per #GroundTexture.
+	bgfx::UniformHandle haze_colour = BGFX_INVALID_HANDLE; ///< Colour of the haze in the distance, and of the sky at the horizon.
+	bgfx::UniformHandle haze_params = BGFX_INVALID_HANDLE; ///< Where the haze starts and how thick it gets.
+	bgfx::UniformHandle water = BGFX_INVALID_HANDLE; ///< Which ground textures are water, and the time for the waves.
+	bgfx::UniformHandle sky_matrix = BGFX_INVALID_HANDLE; ///< From the screen back to the world, for the sky.
+	bgfx::UniformHandle sky_colour = BGFX_INVALID_HANDLE; ///< Colour of the sky high up.
+	bgfx::ProgramHandle sky_program = BGFX_INVALID_HANDLE; ///< Draws the sky behind everything.
+	bgfx::VertexLayout sky_layout;
+	bgfx::VertexBufferHandle sky_vertices = BGFX_INVALID_HANDLE; ///< One triangle that covers the screen.
+	std::chrono::steady_clock::time_point start = std::chrono::steady_clock::now(); ///< When the renderer started; things move with the time since.
 	bgfx::IndexBufferHandle quad_indices = BGFX_INVALID_HANDLE; ///< Indices for a full chunk of quads, shared by all chunks.
 	bgfx::FrameBufferHandle framebuffer = BGFX_INVALID_HANDLE;
 	bgfx::TextureHandle readback = BGFX_INVALID_HANDLE;
@@ -230,6 +246,15 @@ static bgfx::ShaderHandle CreateShader(const ShaderVariants &variants)
 	impl.sprite_atlas = bgfx::createTexture2D(SpriteAtlas::WIDTH, SpriteAtlas::HEIGHT, false, 1, bgfx::TextureFormat::BGRA8, BGFX_SAMPLER_U_CLAMP | BGFX_SAMPLER_V_CLAMP);
 
 	impl.ground_sampler = bgfx::createUniform("s_ground", bgfx::UniformType::Sampler);
+	impl.haze_colour = bgfx::createUniform("u_hazeColour", bgfx::UniformType::Vec4);
+	impl.haze_params = bgfx::createUniform("u_hazeParams", bgfx::UniformType::Vec4);
+	impl.water = bgfx::createUniform("u_water", bgfx::UniformType::Vec4);
+	impl.sky_matrix = bgfx::createUniform("u_skyInvViewProj", bgfx::UniformType::Mat4);
+	impl.sky_colour = bgfx::createUniform("u_skyColour", bgfx::UniformType::Vec4);
+	impl.sky_program = bgfx::createProgram(CreateShader(SHADER_VARIANTS(vs_sky)), CreateShader(SHADER_VARIANTS(fs_sky)), true);
+	impl.sky_layout.begin().add(bgfx::Attrib::Position, 2, bgfx::AttribType::Float).end();
+	static const float SKY_TRIANGLE[] = {-1, -1, 3, -1, -1, 3};
+	impl.sky_vertices = bgfx::createVertexBuffer(bgfx::makeRef(SKY_TRIANGLE, sizeof(SKY_TRIANGLE)), impl.sky_layout);
 
 	/* The shadow map; without a depth format that can be compared when sampling, there are no shadows, but the shaders still need a map. */
 	impl.shadow_program = bgfx::createProgram(CreateShader(SHADER_VARIANTS(vs_shadow)), CreateShader(SHADER_VARIANTS(fs_shadow)), true);
@@ -301,6 +326,11 @@ Renderer3D::~Renderer3D()
 	if (bgfx::isValid(impl.sprite_sampler)) bgfx::destroy(impl.sprite_sampler);
 	if (bgfx::isValid(impl.sprite_program)) bgfx::destroy(impl.sprite_program);
 	if (bgfx::isValid(impl.ground_textures)) bgfx::destroy(impl.ground_textures);
+	for (bgfx::UniformHandle handle : {impl.haze_colour, impl.haze_params, impl.water, impl.sky_matrix, impl.sky_colour}) {
+		if (bgfx::isValid(handle)) bgfx::destroy(handle);
+	}
+	if (bgfx::isValid(impl.sky_program)) bgfx::destroy(impl.sky_program);
+	if (bgfx::isValid(impl.sky_vertices)) bgfx::destroy(impl.sky_vertices);
 	if (bgfx::isValid(impl.ground_sampler)) bgfx::destroy(impl.ground_sampler);
 	if (bgfx::isValid(impl.program)) bgfx::destroy(impl.program);
 	bgfx::shutdown();
@@ -390,6 +420,18 @@ void Renderer3D::UpdateSpriteAtlas(SpriteAtlas &atlas)
  * @param id Number of the model, chosen by the caller; ModelInstance::model refers to it.
  * @param model The model.
  */
+/**
+ * Tell what to draw in place of a model when it is far from the camera.
+ * @param id Number of the model.
+ * @param far Number of a simpler model, ModelPack::FAR_SAME to draw the model itself, or ModelPack::FAR_HIDDEN to leave it out.
+ */
+void Renderer3D::SetFarModel(uint id, uint far)
+{
+	Impl &impl = *this->impl;
+	if (id >= impl.far.size()) impl.far.resize(id + 1, ModelPack::FAR_SAME);
+	impl.far[id] = far;
+}
+
 void Renderer3D::SetModel(uint id, const Model3D &model)
 {
 	Impl &impl = *this->impl;
@@ -571,7 +613,7 @@ void Renderer3D::Render(uint width, uint height, const Camera3D &camera, std::sp
 
 	bgfx::setViewFrameBuffer(VIEW_SCENE, impl.framebuffer);
 	bgfx::setViewRect(VIEW_SCENE, 0, 0, static_cast<uint16_t>(width), static_cast<uint16_t>(height));
-	bgfx::setViewClear(VIEW_SCENE, BGFX_CLEAR_COLOR | BGFX_CLEAR_DEPTH, 0x8fb8e0ff, 1.0f, 0);
+	bgfx::setViewClear(VIEW_SCENE, BGFX_CLEAR_COLOR | BGFX_CLEAR_DEPTH, 0xccdbebff, 1.0f, 0);
 	bgfx::setViewTransform(VIEW_SCENE, view.m.data(), proj.m.data());
 	bgfx::touch(VIEW_SCENE);
 
@@ -633,16 +675,50 @@ void Renderer3D::Render(uint width, uint height, const Camera3D &camera, std::sp
 	const float sprite_nearer[4] = {(eye.x - camera.target.x) / eye_distance, (eye.y - camera.target.y) / eye_distance, (eye.z - camera.target.z) / eye_distance,
 		WORLD_Z_SCALE / std::max(0.35f, std::sin(camera.pitch))};
 
+	/* Far away things fade into the colour of the sky at the horizon; the sky gets deeper blue above it. */
+	static constexpr float HAZE_COLOUR[4] = {0.80f, 0.86f, 0.92f, 1};
+	static constexpr float SKY_COLOUR[4] = {0.40f, 0.60f, 0.86f, 1};
+	const float haze_params[4] = {std::max(250.0f, eye_distance * 1.4f), 1.0f / std::max(800.0f, eye_distance * 5.0f), 0.85f, 0};
+	bgfx::setUniform(impl.haze_colour, HAZE_COLOUR);
+	bgfx::setUniform(impl.haze_params, haze_params);
+	const float water[4] = {static_cast<float>(GROUND_TEXTURE_WATER), static_cast<float>(GROUND_TEXTURE_SHORE), static_cast<float>(GROUND_TEXTURE_SHORE + 18),
+		std::fmod(std::chrono::duration<float>(std::chrono::steady_clock::now() - impl.start).count(), 3600.0f)};
+	bgfx::setUniform(impl.water, water);
+
+	Matrix4 view_proj = proj * view;
+	Matrix4 inverse;
+	bx::mtxInverse(inverse.m.data(), view_proj.m.data());
+	bgfx::setUniform(impl.sky_matrix, inverse.m.data());
+	bgfx::setUniform(impl.sky_colour, SKY_COLOUR);
+	bgfx::setVertexBuffer(0, impl.sky_vertices);
+	bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_DEPTH_TEST_LEQUAL);
+	bgfx::submit(VIEW_SCENE, impl.sky_program);
+
 	/* The same light as the terrain gets in BuildTerrainChunkMesh(). */
 	static constexpr float MODEL_LIGHT[4] = {0.45f, 0.80f, 0, 0};
 	/* Copies of the same model are drawn together when the GPU can, which matters for the thousands of trees in a forest. */
 	const bool instancing = bgfx::isValid(impl.model_instanced_program) && bgfx::isValid(impl.shadow_instanced_program);
 	if (impl.batches.size() < impl.models.size()) impl.batches.resize(impl.models.size());
-	auto draw_model = [&](const ModelInstance &instance) {
+	/* Beyond this distance models may be drawn simpler, or not at all when they are small details. */
+	const float far_distance = std::max(320.0f, eye_distance * 1.6f);
+	const float far_squared = far_distance * far_distance;
+	auto draw_model = [&](const ModelInstance &original) {
+		ModelInstance instance = original;
+		if (instance.model < impl.far.size() && impl.far[instance.model] != ModelPack::FAR_SAME) {
+			float dx = instance.transform.m[12] - eye.x;
+			float dy = instance.transform.m[13] - eye.y;
+			float dz = instance.transform.m[14] - eye.z;
+			if (dx * dx + dy * dy + dz * dz > far_squared) {
+				if (impl.far[instance.model] == ModelPack::FAR_HIDDEN) return;
+				instance.model = impl.far[instance.model];
+			}
+		}
 		if (instance.model >= impl.models.size()) return;
 		const GpuModel &gpu = impl.models[instance.model];
 		if (!bgfx::isValid(gpu.vertices)) return;
-		const bool batched = instancing && gpu.num_fixed_indices != 0;
+		/* See-through models, such as puffs of smoke, are blended over what is behind them and cast no shadow. */
+		const bool see_through = instance.tint[3] < 1.0f;
+		const bool batched = instancing && gpu.num_fixed_indices != 0 && !see_through;
 		if (batched) {
 			auto &copy = impl.batches[instance.model].emplace_back();
 			std::copy_n(instance.transform.m.data(), 16, copy.data());
@@ -658,6 +734,11 @@ void Renderer3D::Render(uint width, uint height, const Camera3D &camera, std::sp
 			bgfx::setUniform(impl.model_sun, MODEL_SUN);
 			bgfx::setUniform(impl.model_light, MODEL_LIGHT);
 			set_shadow();
+			if (see_through) {
+				bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_DEPTH_TEST_LESS | BGFX_STATE_BLEND_ALPHA);
+				bgfx::submit(VIEW_SCENE, impl.model_program);
+				return;
+			}
 			bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A | BGFX_STATE_WRITE_Z | BGFX_STATE_DEPTH_TEST_LESS);
 			bgfx::submit(VIEW_SCENE, impl.model_program);
 

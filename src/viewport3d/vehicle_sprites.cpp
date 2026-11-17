@@ -10,6 +10,7 @@
 #include "../stdafx.h"
 #include "vehicle_sprites.h"
 #include "../effectvehicle_base.h"
+#include "../effectvehicle_func.h"
 #include "../transparency.h"
 #include "../vehicle_base.h"
 #include "../vehicle_func.h"
@@ -32,6 +33,7 @@ struct SmoothVehicle {
 	float yaw; ///< Direction the model points to, in radians from the x axis.
 	float rotor_angle; ///< How far the main rotor of a helicopter has turned.
 	uint32_t seen; ///< The last image the vehicle was in.
+	float age = 0; ///< Seconds the vehicle has been in view; used for puffs of smoke.
 };
 
 static std::map<VehicleID, SmoothVehicle> _smooth_vehicles; ///< Vehicles that were in the last images.
@@ -215,6 +217,63 @@ static bool AddVehicleModel(const Vehicle *v, const ModelPack *pack, std::vector
 }
 
 /**
+ * Draw smoke, steam and sparks as soft 3D puffs that grow and fade, when the package has a model for them.
+ * @param v The effect vehicle.
+ * @param pack The package of 3D models, or \c nullptr.
+ * @param models The 3D models to draw, to add to.
+ * @return Whether the effect has a model.
+ */
+static bool AddEffectModel(const Vehicle *v, const ModelPack *pack, std::vector<ModelInstance> &models)
+{
+	struct Puff {
+		std::array<float, 4> colour; ///< Colour, and how opaque it starts.
+		float size; ///< Size when it appears.
+		float growth; ///< How much bigger it gets per second.
+		float life; ///< Seconds until it has faded the most and stops growing.
+	};
+	static const std::map<uint8_t, Puff> PUFFS = {
+		{EV_CHIMNEY_SMOKE, {{0.78f, 0.78f, 0.80f, 0.75f}, 0.8f, 0.45f, 4.0f}},
+		{EV_STEAM_SMOKE, {{0.96f, 0.96f, 0.97f, 0.8f}, 0.6f, 0.9f, 1.8f}},
+		{EV_DIESEL_SMOKE, {{0.32f, 0.32f, 0.33f, 0.55f}, 0.45f, 0.6f, 1.4f}},
+		{EV_ELECTRIC_SPARK, {{1.0f, 0.95f, 0.6f, 0.95f}, 0.35f, 0.0f, 0.4f}},
+		{EV_CRASH_SMOKE, {{0.22f, 0.21f, 0.20f, 0.75f}, 1.2f, 0.3f, 6.0f}},
+		{EV_BREAKDOWN_SMOKE, {{0.30f, 0.30f, 0.30f, 0.7f}, 0.8f, 0.4f, 3.0f}},
+		{EV_BREAKDOWN_SMOKE_AIRCRAFT, {{0.30f, 0.30f, 0.30f, 0.7f}, 0.8f, 0.4f, 3.0f}},
+		{EV_COPPER_MINE_SMOKE, {{0.62f, 0.52f, 0.46f, 0.75f}, 0.8f, 0.4f, 3.0f}},
+	};
+	if (pack == nullptr) return false;
+	auto puff = PUFFS.find(v->subtype);
+	if (puff == PUFFS.end()) return false;
+	const ModelPack::Entry *entry = pack->Find(ModelKind::Effect, 0, v->subtype);
+	if (entry == nullptr) return false;
+
+	auto [smooth, inserted] = _smooth_vehicles.try_emplace(v->index, SmoothVehicle{0, 0, 0});
+	if (!inserted && smooth->second.seen + 1 == _smooth_image) smooth->second.age += _smooth_seconds;
+	smooth->second.seen = _smooth_image;
+
+	const Puff &p = puff->second;
+	float t = std::min(smooth->second.age, p.life);
+	float s = entry->scale * (p.size + p.growth * t);
+	/* Each puff turns its own way, so a trail of them does not look like copies. */
+	float yaw = (v->index.base() * 2654435761U >> 20) / 4096.0f * 6.2831853f;
+	float c = std::cos(yaw) * s;
+	float n = std::sin(yaw) * s;
+
+	ModelInstance &instance = models.emplace_back();
+	instance.model = entry->model;
+	instance.transform.m = {
+		c, n, 0, 0,
+		-n, c, 0, 0,
+		0, 0, s, 0,
+		static_cast<float>(v->x_pos), static_cast<float>(v->y_pos), v->z_pos * WORLD_Z_SCALE, 1,
+	};
+	instance.tint = p.colour;
+	instance.tint[3] = p.colour[3] * (1.0f - 0.7f * t / p.life);
+	instance.load = 0;
+	return true;
+}
+
+/**
  * Make the sprites of all vehicles that are in view.
  * Vehicles are sprites that stand upright and face the camera, like buildings. The 2D game has
  * sprites of a vehicle for eight directions; the one that is used is the one that fits how the
@@ -288,7 +347,8 @@ void BuildVehicleSprites(const Camera3D &camera, const Frustum3D &frustum, Sprit
 		float nearer = (v->bounds.extent.x + v->bounds.extent.y) * 0.5f + 2.0f;
 		const AtlasSprite &sprite = atlas.Get(parts);
 		/* The sprite still tells where the vehicle can be clicked when a model is drawn in its place. */
-		if (!AddVehicleModel(v, pack, models)) AddUprightSprite(sprite, x, y, z, nearer, vertices);
+		bool modelled = v->type == VehicleType::Effect ? AddEffectModel(v, pack, models) : AddVehicleModel(v, pack, models);
+		if (!modelled) AddUprightSprite(sprite, x, y, z, nearer, vertices);
 		if (sprite.valid && !v->vehstatus.Test(VehState::Unclickable)) {
 			places.push_back({v->index, x, y, z, static_cast<float>(sprite.left), static_cast<float>(sprite.top), static_cast<float>(sprite.width), static_cast<float>(sprite.height)});
 		}

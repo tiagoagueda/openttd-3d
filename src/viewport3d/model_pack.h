@@ -40,6 +40,7 @@ enum class ModelKind : uint8_t {
 	Field, ///< A farm field, by its state from ploughed (0) to harvested with hay (8).
 	Rough, ///< Rough land, by version; the game picks one for each tile.
 	Rocks, ///< Rocky land, by version; the game picks one for each tile.
+	Effect, ///< Smoke, steam and sparks, by effect vehicle type.
 };
 
 /**
@@ -78,6 +79,16 @@ public:
 	/** All models of the package. */
 	std::span<const Model3D> GetModels() const { return this->models; }
 
+	static constexpr uint FAR_SAME = UINT_MAX; ///< GetFarModel(): the model looks the same from far away.
+	static constexpr uint FAR_HIDDEN = UINT_MAX - 1; ///< GetFarModel(): the model is too small to draw from far away.
+
+	/**
+	 * What to draw in place of a model when it is far from the camera.
+	 * @param model Index into GetModels().
+	 * @return Index into GetModels() of a simpler version, #FAR_SAME or #FAR_HIDDEN.
+	 */
+	uint GetFarModel(uint model) const { return model < this->far.size() ? this->far[model] : FAR_SAME; }
+
 	/** Whether the package has any model at all. */
 	bool IsEmpty() const { return this->entries.empty(); }
 
@@ -96,6 +107,7 @@ private:
 
 	std::string name; ///< Name of the package.
 	std::vector<Model3D> models; ///< The models.
+	std::vector<uint> far; ///< For each model, what to draw far away; see GetFarModel().
 	std::map<Key, Entry> entries; ///< What has a model.
 };
 

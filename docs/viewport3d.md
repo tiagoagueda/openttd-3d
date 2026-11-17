@@ -107,6 +107,12 @@ A rail vehicle model lies along the line between the vehicles in front of and be
 
 Models cast shadows from the sun, which comes from the same direction as the light on the terrain. Each image first draws the models, as depth only, into a shadow map that looks from the sun at the area around the point the camera looks at (`GetShadowView()` in `renderer3d.cpp`); terrain, models and sprites are then darker where the map holds something between them and the sun (`shaders/shadow.sh`). Aircraft in the air cast their shadow this way too. Terrain and sprites, such as trees, cast shadows too: terrain from a little further away from the sun, and sprites turned to face the sun. Shadows fade out towards the edge of the map, so a camera far away sees none in the distance. After changing a shader, run `shaders/compile_shaders.sh`.
 
+Smoke, steam and sparks (effect vehicles) are drawn as see-through 3D puffs (`effect` in the index) that grow and fade while they are in view (`AddEffectModel()` in `vehicle_sprites.cpp`); see-through models are blended over what is behind them and cast no shadow. Other effects keep their sprites.
+
+The sky is one triangle behind everything (`vs_sky`, `fs_sky`), pale at the horizon and deeper blue above; terrain, sprites and models fade into the colour of the horizon with distance (`shaders/haze.sh`). Water moves with small waves, and foam washes along the edge of the water on coast tiles (`fs_terrain.sc`; `u_water` tells which ground textures are water and the time).
+
+Models can have a simpler version for far away (`far` in the index), or be left out there, like the stones of rough land. The renderer picks it per copy by the distance to the camera.
+
 Copies of the same model are drawn in one go with GPU instancing (`vs_model_instanced`, `vs_shadow_instanced`), which keeps forests of 3D trees fast; the load of a vehicle is still drawn one by one.
 
 Trees, farm fields, rough land and rocks have models too (`tree`, `field`, `rough` and `rocks` in the index). Trees stand where the 2D game puts their sprites, grow from small to full size, and keep their sprites when the package has no model for their type; fields, rough land and rocks are tilted along the slope of their tile (`AddTreeModels()` and `AddClearModel()` in `terrain_mesh.cpp`).

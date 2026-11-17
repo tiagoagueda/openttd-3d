@@ -50,3 +50,5 @@ compile fs_shadow fragment
 compile fs_sprite_shadow fragment
 compile vs_model_instanced vertex
 compile vs_shadow_instanced vertex
+compile vs_sky vertex
+compile fs_sky fragment

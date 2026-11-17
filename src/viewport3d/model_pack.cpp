@@ -113,6 +113,16 @@ void ModelPack::ReadEntries(const nlohmann::json &list, std::initializer_list<st
 			if (entry.contains("rotor_at")) rotor_at = entry.at("rotor_at").get<std::array<float, 3>>();
 		}
 
+		/* A simpler version to draw far from the camera; an empty name leaves the model out there. */
+		if (entry.contains("far")) {
+			std::string far_name = entry.at("far").get<std::string>();
+			uint far = far_name.empty() ? FAR_HIDDEN : this->LoadModel(far_name, loaded);
+			if (far != UINT_MAX || far_name.empty()) {
+				if (this->far.size() <= model) this->far.resize(model + 1, FAR_SAME);
+				this->far[model] = far;
+			}
+		}
+
 		/* The version for the sub-arctic climate, such as a forest with snow on its trees. */
 		uint snow = entry.contains("snow") ? this->LoadModel(entry.at("snow").get<std::string>(), loaded) : UINT_MAX;
 
@@ -169,7 +179,7 @@ ModelPack::ModelPack()
 				{"road_stop", ModelKind::RoadStop}, {"object", ModelKind::Object}, {"airport_tile", ModelKind::AirportTile},
 				{"dock", ModelKind::Dock}, {"buoy", ModelKind::Buoy}, {"rail_depot", ModelKind::RailDepot},
 				{"road_depot", ModelKind::RoadDepot}, {"ship_depot", ModelKind::ShipDepot},
-				{"tree", ModelKind::Tree}, {"field", ModelKind::Field}, {"rough", ModelKind::Rough}, {"rocks", ModelKind::Rocks},
+				{"tree", ModelKind::Tree}, {"field", ModelKind::Field}, {"rough", ModelKind::Rough}, {"rocks", ModelKind::Rocks}, {"effect", ModelKind::Effect},
 			}, loaded);
 		}
 

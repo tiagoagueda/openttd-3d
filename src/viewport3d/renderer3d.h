@@ -44,6 +44,7 @@ public:
 	void UpdateSpriteAtlas(SpriteAtlas &atlas);
 
 	void SetModel(uint id, const Model3D &model);
+	void SetFarModel(uint id, uint far);
 	void SetChunk(ChunkID id, const TerrainChunkMesh &mesh);
 	void ClearChunks();
 

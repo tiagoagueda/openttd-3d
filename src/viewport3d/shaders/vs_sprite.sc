@@ -1,5 +1,5 @@
 $input a_position, a_texcoord0, a_texcoord1
-$output v_texcoord0, v_texcoord1
+$output v_texcoord0, v_texcoord1, v_haze
 
 /*
  * Vertex shader for sprites of the 2D game that stand on the map of the OpenTTD 3D viewport.
@@ -10,6 +10,7 @@ $output v_texcoord0, v_texcoord1
  */
 
 #include <bgfx_shader.sh>
+#include "haze.sh"
 
 /* xyz: world units to the right of the camera per pixel. w: world units of height per pixel. */
 uniform vec4 u_spriteAxes;
@@ -28,4 +29,5 @@ void main()
 	gl_Position.z = nearer.z / nearer.w * gl_Position.w;
 	v_texcoord0 = vec3(a_texcoord0.zw, 0.0);
 	v_texcoord1 = mul(u_shadowMtx, world);
+	v_haze = vec2(HazeAmount(world), 0.0);
 }

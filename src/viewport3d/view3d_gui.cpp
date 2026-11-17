@@ -311,7 +311,10 @@ public:
 				this->atlas = std::make_unique<SpriteAtlas>();
 				this->model_pack = std::make_unique<ModelPack>();
 				uint id = 0;
-				for (const Model3D &model : this->model_pack->GetModels()) this->renderer->SetModel(id++, model);
+				for (const Model3D &model : this->model_pack->GetModels()) {
+					this->renderer->SetFarModel(id, this->model_pack->GetFarModel(id));
+					this->renderer->SetModel(id++, model);
+				}
 			}
 			this->SetDirty();
 		}

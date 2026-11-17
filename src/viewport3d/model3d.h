@@ -35,7 +35,7 @@ struct Model3D {
 struct ModelInstance {
 	uint model; ///< Which model, as given to Renderer3D::SetModel().
 	Matrix4 transform; ///< From the frame of the model to world units.
-	std::array<float, 4> tint; ///< Colour of the owner, each channel from 0 to 1.
+	std::array<float, 4> tint; ///< Colour of the owner, each channel from 0 to 1; alpha below 1 makes the whole model see-through.
 	float load = 1; ///< How full the vehicle is, from 0 (the load is not drawn) to 1.
 
 	bool operator==(const ModelInstance &other) const = default;
