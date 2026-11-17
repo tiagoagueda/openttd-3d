@@ -20,6 +20,8 @@
 #include "core/geometry_func.hpp"
 #include "settings_type.h"
 #include "querystring_gui.h"
+#include "blitter/factory.hpp"
+#include "palette_func.h"
 
 #include "table/sprites.h"
 #include "table/strings.h"
@@ -305,8 +307,121 @@ WidgetID GetWidgetFromPos(const Window *w, int x, int y)
  * @param colour Colour table to use. @see Colours
  * @param flags  Flags controlling how to draw the frame. @see FrameFlags
  */
+/**
+ * Whether frames are drawn in the 3D style: shaded like real raised and pressed buttons.
+ * That needs the 3D main view and its setting, and a 32bpp blitter.
+ */
+static bool UseFrames3D()
+{
+#ifdef WITH_VIEWPORT3D
+	if (!_settings_client.gui.view3d_main || !_settings_client.gui.view3d_interface) return false;
+	Blitter *blitter = BlitterFactory::GetCurrentBlitter();
+	return blitter != nullptr && blitter->GetScreenDepth() == 32;
+#else
+	return false;
+#endif
+}
+
+/**
+ * Mix two colours.
+ * @param a The first colour.
+ * @param b The second colour.
+ * @param t How much of the second colour, from 0 to 1.
+ * @return The mix, fully opaque.
+ */
+static Colour MixColour(Colour a, Colour b, float t)
+{
+	auto mix = [t](uint8_t x, uint8_t y) { return static_cast<uint8_t>(std::clamp(x + (y - x) * t + 0.5f, 0.0f, 255.0f)); };
+	return Colour(mix(a.r, b.r), mix(a.g, b.g), mix(a.b, b.b));
+}
+
+/**
+ * Make a colour lighter or darker.
+ * @param c The colour.
+ * @param f How much: above 1 lighter, below 1 darker.
+ * @return The changed colour.
+ */
+static Colour ScaleColour(Colour c, float f)
+{
+	auto scale = [f](uint8_t x) { return static_cast<uint8_t>(std::clamp(x * f + 0.5f, 0.0f, 255.0f)); };
+	return Colour(scale(c.r), scale(c.g), scale(c.b));
+}
+
+/**
+ * Draw a frame in the 3D style: a raised frame is lit from above, with a soft sheen on its upper half
+ * and a dark edge below; a lowered frame is shaded from above, like a hollow.
+ * @param outer The frame.
+ * @param colour Colour of the frame.
+ * @param flags Its flags; not \c FrameFlag::Transparent.
+ */
+static void DrawFrameRect3D(const Rect &outer, Colours colour, FrameFlags flags)
+{
+	const DrawPixelInfo *dpi = _cur_dpi;
+	int left = std::max(outer.left, dpi->left);
+	int top = std::max(outer.top, dpi->top);
+	int right = std::min(outer.right, dpi->left + dpi->width - 1);
+	int bottom = std::min(outer.bottom, dpi->top + dpi->height - 1);
+	if (left > right || top > bottom) return;
+
+	/* Blitters with an animation buffer take a pixel's colour from the palette unless its index there is 0. */
+	if (!_screen_disable_anim) GfxFillRect(left, top, right, bottom, PixelColour{0});
+
+	auto palette = [colour](Shade shade) { return _cur_palette.palette[GetColourGradient(colour, shade).p]; };
+	const Colour darkest = palette(Shade::Darker);
+	const Colour dark = palette(Shade::Dark);
+	const Colour medium_dark = palette(Shade::Light);
+	const Colour medium_light = palette(Shade::Lighter);
+	const Colour light = palette(Shade::Lightest);
+
+	bool lowered = flags.Test(FrameFlag::Lowered);
+	Rect inner = outer.Shrink(WidgetDimensions::scaled.bevel);
+	int height = outer.bottom - outer.top + 1;
+	/* Tall panels get only a hint of the shading, or their bottom would be very dark. */
+	float strength = std::clamp(48.0f / height, 0.25f, 1.0f);
+
+	Colour top_colour, bottom_colour;
+	if (lowered) {
+		Colour base = flags.Test(FrameFlag::Darkened) ? medium_dark : medium_light;
+		top_colour = MixColour(base, dark, 0.45f * strength);
+		bottom_colour = MixColour(base, light, 0.25f * strength);
+	} else {
+		top_colour = MixColour(medium_dark, light, 0.55f * strength);
+		bottom_colour = MixColour(medium_dark, dark, 0.45f * strength);
+	}
+	const Colour edge_lit = lowered ? darkest : MixColour(light, Colour(255, 255, 255), 0.35f);
+	const Colour edge_shaded = lowered ? light : darkest;
+
+	for (int y = top; y <= bottom; y++) {
+		Colour *row = reinterpret_cast<Colour *>(dpi->dst_ptr) + static_cast<ptrdiff_t>(y - dpi->top) * dpi->pitch - dpi->left;
+		float t = height > 1 ? static_cast<float>(y - outer.top) / (height - 1) : 0.0f;
+		Colour fill = MixColour(top_colour, bottom_colour, t);
+		/* A sheen on the upper half of raised buttons. */
+		if (!lowered && t < 0.5f) fill = ScaleColour(fill, 1.0f + 0.10f * strength * (1.0f - t * 2.0f));
+		for (int x = left; x <= right; x++) {
+			bool in_left = x < inner.left, in_right = x > inner.right;
+			bool in_top = y < inner.top, in_bottom = y > inner.bottom;
+			Colour c;
+			if (in_left || in_top) {
+				/* The lit edges; where they meet the shaded ones, the corner takes the shaded colour. */
+				c = (in_right || in_bottom) ? MixColour(edge_lit, edge_shaded, 0.5f) : edge_lit;
+			} else if (in_right || in_bottom) {
+				c = edge_shaded;
+			} else if (flags.Test(FrameFlag::BorderOnly)) {
+				continue;
+			} else {
+				c = fill;
+			}
+			row[x] = c;
+		}
+	}
+}
+
 void DrawFrameRect(int left, int top, int right, int bottom, Colours colour, FrameFlags flags)
 {
+	if (!flags.Test(FrameFlag::Transparent) && colour < Colours::End && UseFrames3D()) {
+		DrawFrameRect3D({left, top, right, bottom}, colour, flags);
+		return;
+	}
 	if (flags.Test(FrameFlag::Transparent)) {
 		GfxFillRect(left, top, right, bottom, PALETTE_TO_TRANSPARENT, FillRectMode::Recolour);
 	} else {
