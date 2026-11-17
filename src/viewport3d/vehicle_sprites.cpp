@@ -57,11 +57,25 @@ static bool AddVehicleModel(const Vehicle *v, const ModelPack *pack, std::vector
 	Vec3 left{-heading[1], heading[0], 0};
 	Vec3 up = Cross(front, left);
 
+	/* How much longer or shorter than usual the vehicle is drawn. */
+	float stretch = 1;
+	if (v->type == VehicleType::Train) {
+		const Train *t = Train::From(v);
+		stretch = t->gcache.cached_veh_length / static_cast<float>(VEHICLE_LENGTH);
+		/* On diagonal track each step goes one along both x and y, so the vehicles of a train are further apart. */
+		if (!IsDiagonalDirection(v->direction)) stretch *= 1.41421356f;
+		/* Some vehicles are put in the train the other way around. */
+		if (t->flags.Test(VehicleRailFlag::Flipped) && !EngInfo(v->engine_type)->misc_flags.Test(EngineMiscFlag::RailFlips)) {
+			front = {-front.x, -front.y, -front.z};
+			left = {-left.x, -left.y, -left.z};
+		}
+	}
+
 	ModelInstance &instance = models.emplace_back();
 	instance.model = model->model;
 	float s = model->scale;
 	instance.transform.m = {
-		front.x * s, front.y * s, front.z * s, 0,
+		front.x * s * stretch, front.y * s * stretch, front.z * s * stretch, 0,
 		left.x * s, left.y * s, left.z * s, 0,
 		up.x * s, up.y * s, up.z * s, 0,
 		static_cast<float>(v->x_pos), static_cast<float>(v->y_pos), v->z_pos * WORLD_Z_SCALE, 1,

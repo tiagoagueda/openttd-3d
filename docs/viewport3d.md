@@ -9,7 +9,7 @@ The ground, tracks and roads lie on the terrain. Trees, buildings, stations, ind
 From the viewing angle of the 2D game that looks the same as there; from other angles it shows that they are not real 3D models.
 
 Real 3D models come from a package called OpenGFX3D, a separate repository (https://source.tiagoagueda.com/tiagoagueda/OpenGFX3D) included as a git submodule at `bin/opengfx3d/` (see its README). What has a model there is drawn with it, everything else keeps its sprites.
-For now the package has simple sample models: a bus and a lorry, the common houses, flats, offices, shops and church of the base game's temperate towns, the factory, rail station platforms, buildings and roofs, and bus and lorry stops.
+For now the package has simple sample models: a bus and a lorry, steam, diesel and electric engines, a railcar and the common carriages and wagons of the base game's normal railway, the common houses, flats, offices, shops and church of the base game's temperate towns, the factory, rail station platforms, buildings and roofs, and bus and lorry stops.
 
 After cloning, fetch the package with `git submodule update --init`. Without it the game builds and runs, but everything is drawn with sprites.
 
@@ -103,6 +103,7 @@ A click first looks for a vehicle of which the sprite is below the cursor, then 
 
 3D models are read from binary glTF files (`model3d.cpp`) listed in the index of the OpenGFX3D package (`model_pack.cpp`).
 A vehicle with a model is put on the map at its position, turned to its direction of travel and tilted on slopes, and lit with the same light as the terrain.
+A rail vehicle model is stretched to the length of the vehicle in the train (`cached_veh_length`), and on diagonal track a little more, because there the vehicles of a train are further apart; vehicles that are flipped in the train are turned around.
 Parts of a model with a material named `company` take the colour of the owner.
 
 A building with a model is part of the terrain chunk it stands on (`AddTileModel()` in `terrain_mesh.cpp`): the sprites the tile draws for the building are left out and the model is put on the highest corner of the footprint, turned to face the way the building faces.
