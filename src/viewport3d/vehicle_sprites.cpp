@@ -21,7 +21,83 @@
 #include "../palette_func.h"
 #include "../roadveh.h"
 #include "../train.h"
+
+#include <chrono>
+#include <map>
+
 #include "../safeguards.h"
+
+/** What is remembered of a vehicle between images, so that it can move smoothly. */
+struct SmoothVehicle {
+	float yaw; ///< Direction the model points to, in radians from the x axis.
+	float rotor_angle; ///< How far the main rotor of a helicopter has turned.
+	uint32_t seen; ///< The last image the vehicle was in.
+};
+
+static std::map<VehicleID, SmoothVehicle> _smooth_vehicles; ///< Vehicles that were in the last images.
+static uint32_t _smooth_image = 0; ///< Number of the image that is being made.
+static float _smooth_seconds = 0; ///< Seconds since the previous image.
+
+/**
+ * Get the place of a vehicle on the map, without its height.
+ * @param v The vehicle.
+ * @return Its place in world units.
+ */
+static inline Vec3 FlatPosition(const Vehicle *v)
+{
+	return {static_cast<float>(v->x_pos), static_cast<float>(v->y_pos), 0};
+}
+
+/**
+ * Bring an angle between minus and plus half a turn.
+ * @param angle The angle in radians.
+ * @return The same direction.
+ */
+static float WrapAngle(float angle)
+{
+	static constexpr float PI = 3.14159265f;
+	while (angle > PI) angle -= 2 * PI;
+	while (angle < -PI) angle += 2 * PI;
+	return angle;
+}
+
+/**
+ * Find which way a wagon of a train points and how much it is stretched, from the wagons in front of and behind it.
+ * The game moves trains in steps of 45 degrees; a wagon lying along the line between its neighbours bends with the
+ * track through curves instead.
+ * @param t The wagon.
+ * @param heading Which way the wagon goes on the map, as the game says.
+ * @param[out] direction Unit vector along the wagon, in the way it goes.
+ * @param[out] stretch How much longer than its model the wagon is drawn.
+ * @return Whether the wagon had neighbours to go by.
+ */
+static bool GetTrainShape(const Train *t, Vec3 heading, Vec3 &direction, float &stretch)
+{
+	auto usable = [](const Train *u) { return u != nullptr && !u->vehstatus.Test(VehState::Hidden); };
+	const Train *prev = t->Previous();
+	const Train *next = t->Next();
+	if (!usable(prev)) prev = nullptr;
+	if (!usable(next)) next = nullptr;
+	if (prev == nullptr && next == nullptr) return false;
+
+	float length = t->gcache.cached_veh_length;
+	Vec3 front = prev != nullptr ? FlatPosition(prev) : FlatPosition(t);
+	Vec3 back = next != nullptr ? FlatPosition(next) : FlatPosition(t);
+	/* Steps along the track between the middles of the neighbours. */
+	float steps = 0;
+	if (prev != nullptr) steps += (prev->gcache.cached_veh_length + length) / 2;
+	if (next != nullptr) steps += (next->gcache.cached_veh_length + length) / 2;
+
+	Vec3 along = front - back;
+	float distance = std::sqrt(Dot(along, along));
+	if (distance < 1.0f || steps <= 0) return false;
+
+	direction = along * (1.0f / distance);
+	if (Dot(direction, heading) < 0) direction = direction * -1.0f;
+	/* A step along straight track is one world unit; along diagonal track it is longer. */
+	stretch = length / VEHICLE_LENGTH * std::clamp(distance / steps, 0.7f, 1.5f);
+	return true;
+}
 
 /**
  * Draw a vehicle with a 3D model, if the package has one for it.
@@ -33,8 +109,12 @@
 static bool AddVehicleModel(const Vehicle *v, const ModelPack *pack, std::vector<ModelInstance> &models)
 {
 	if (pack == nullptr || !IsCompanyBuildableVehicleType(v) || v->direction >= Direction::End) return false;
-	/* The rotors of helicopters are vehicles of their own. */
-	if (v->type == VehicleType::Aircraft && !Aircraft::From(v)->IsNormalAircraft()) return false;
+	/* The rotors of helicopters are vehicles of their own; the model of the helicopter may have one that turns. */
+	if (v->type == VehicleType::Aircraft && !Aircraft::From(v)->IsNormalAircraft()) {
+		if (v->subtype != AIR_ROTOR) return false;
+		const ModelPack::VehicleModel *helicopter = pack->FindVehicle(Engine::GetIfValid(v->First()->engine_type));
+		return helicopter != nullptr && helicopter->rotor != UINT_MAX;
+	}
 	const ModelPack::VehicleModel *model = pack->FindVehicle(Engine::GetIfValid(v->engine_type));
 	if (model == nullptr) return false;
 
@@ -44,6 +124,37 @@ static bool AddVehicleModel(const Vehicle *v, const ModelPack *pack, std::vector
 		{-D, -D}, {-1, 0}, {-D, D}, {0, 1}, {D, D}, {1, 0}, {D, -D}, {0, -1},
 	};
 	const float *heading = HEADINGS[to_underlying(v->direction)];
+	Vec3 direction{heading[0], heading[1], 0};
+
+	auto [smooth, inserted] = _smooth_vehicles.try_emplace(v->index, SmoothVehicle{std::atan2(heading[1], heading[0]), 0, 0});
+	bool continued = !inserted && smooth->second.seen + 1 == _smooth_image;
+	smooth->second.seen = _smooth_image;
+
+	/* How much longer or shorter than usual the vehicle is drawn. */
+	float stretch = 1;
+	bool flip = false;
+	if (v->type == VehicleType::Train) {
+		const Train *t = Train::From(v);
+		if (!GetTrainShape(t, direction, direction, stretch)) {
+			stretch = t->gcache.cached_veh_length / static_cast<float>(VEHICLE_LENGTH);
+			/* On diagonal track each step goes one along both x and y, so the vehicles of a train are further apart. */
+			if (!IsDiagonalDirection(v->direction)) stretch *= 1.41421356f;
+		}
+		/* Some vehicles are put in the train the other way around. */
+		flip = t->flags.Test(VehicleRailFlag::Flipped) && !EngInfo(v->engine_type)->misc_flags.Test(EngineMiscFlag::RailFlips);
+	} else {
+		/* Other vehicles turn towards the way they go, a little later than the game turns them. */
+		float target = std::atan2(heading[1], heading[0]);
+		float &yaw = smooth->second.yaw;
+		float turn = WrapAngle(target - yaw);
+		float delay = v->type == VehicleType::Road ? 0.08f : (v->type == VehicleType::Ship ? 0.3f : 0.2f);
+		if (!continued || std::abs(turn) < 0.002f) {
+			yaw = target;
+		} else {
+			yaw = WrapAngle(yaw + turn * (1 - std::exp(-_smooth_seconds / delay)));
+		}
+		direction = {std::cos(yaw), std::sin(yaw), 0};
+	}
 
 	/* Nose up or down on slopes: one height level per tile. */
 	float climb = 0;
@@ -53,22 +164,12 @@ static bool AddVehicleModel(const Vehicle *v, const ModelPack *pack, std::vector
 		if (flags.Test(GroundVehicleFlag::GoingDown)) climb = -HEIGHT_LEVEL_SIZE / TILE_SIZE;
 	}
 	float length = std::sqrt(1 + climb * climb);
-	Vec3 front{heading[0] / length, heading[1] / length, climb / length};
-	Vec3 left{-heading[1], heading[0], 0};
+	Vec3 front{direction.x / length, direction.y / length, climb / length};
+	Vec3 left{-direction.y, direction.x, 0};
 	Vec3 up = Cross(front, left);
-
-	/* How much longer or shorter than usual the vehicle is drawn. */
-	float stretch = 1;
-	if (v->type == VehicleType::Train) {
-		const Train *t = Train::From(v);
-		stretch = t->gcache.cached_veh_length / static_cast<float>(VEHICLE_LENGTH);
-		/* On diagonal track each step goes one along both x and y, so the vehicles of a train are further apart. */
-		if (!IsDiagonalDirection(v->direction)) stretch *= 1.41421356f;
-		/* Some vehicles are put in the train the other way around. */
-		if (t->flags.Test(VehicleRailFlag::Flipped) && !EngInfo(v->engine_type)->misc_flags.Test(EngineMiscFlag::RailFlips)) {
-			front = {-front.x, -front.y, -front.z};
-			left = {-left.x, -left.y, -left.z};
-		}
+	if (flip) {
+		front = front * -1.0f;
+		left = left * -1.0f;
 	}
 
 	ModelInstance &instance = models.emplace_back();
@@ -89,6 +190,26 @@ static bool AddVehicleModel(const Vehicle *v, const ModelPack *pack, std::vector
 	instance.tint = {1, 1, 1, 1};
 	if (v->owner < MAX_COMPANIES) {
 		instance.tint = ModelPack::GetTint(_company_colours[v->owner]);
+	}
+
+	/* The main rotor of a helicopter turns as fast as the game turns its sprites. */
+	const Vehicle *rotor = v->type == VehicleType::Aircraft && v->Next() != nullptr ? v->Next()->Next() : nullptr;
+	if (model->rotor != UINT_MAX && rotor != nullptr && rotor->subtype == AIR_ROTOR) {
+		uint ticks_per_step = rotor->cur_speed >> 4;
+		if (ticks_per_step != 0) smooth->second.rotor_angle = WrapAngle(smooth->second.rotor_angle + _smooth_seconds * 40.0f / ticks_per_step);
+		float c = std::cos(smooth->second.rotor_angle);
+		float sn = std::sin(smooth->second.rotor_angle);
+		Matrix4 local;
+		local.m = {
+			c, sn, 0, 0,
+			-sn, c, 0, 0,
+			0, 0, 1, 0,
+			model->rotor_at[0], model->rotor_at[1], model->rotor_at[2], 1,
+		};
+		ModelInstance &blades = models.emplace_back();
+		blades.model = model->rotor;
+		blades.transform = models[models.size() - 2].transform * local;
+		blades.tint = models[models.size() - 2].tint;
 	}
 	return true;
 }
@@ -111,6 +232,11 @@ static bool AddVehicleModel(const Vehicle *v, const ModelPack *pack, std::vector
 void BuildVehicleSprites(const Camera3D &camera, const Frustum3D &frustum, SpriteAtlas &atlas, const ModelPack *pack, std::vector<SpriteVertex> &vertices, std::vector<VehicleSpritePlace> &places, std::vector<ModelInstance> &models)
 {
 	static std::vector<SpritePart> parts;
+	static std::chrono::steady_clock::time_point last_image;
+	auto now = std::chrono::steady_clock::now();
+	_smooth_seconds = std::clamp(std::chrono::duration<float>(now - last_image).count(), 0.0f, 0.25f);
+	last_image = now;
+	_smooth_image++;
 	vertices.clear();
 	places.clear();
 	models.clear();
@@ -167,4 +293,7 @@ void BuildVehicleSprites(const Camera3D &camera, const Frustum3D &frustum, Sprit
 			places.push_back({v->index, x, y, z, static_cast<float>(sprite.left), static_cast<float>(sprite.top), static_cast<float>(sprite.width), static_cast<float>(sprite.height)});
 		}
 	}
+
+	/* Forget vehicles that went out of view. */
+	std::erase_if(_smooth_vehicles, [](const auto &item) { return item.second.seen != _smooth_image; });
 }

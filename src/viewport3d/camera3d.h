@@ -20,6 +20,8 @@
 struct Matrix4 {
 	std::array<float, 16> m{};
 
+	bool operator==(const Matrix4 &other) const = default;
+
 	/** Matrix product: (*this) * other. */
 	Matrix4 operator*(const Matrix4 &o) const
 	{

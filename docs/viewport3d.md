@@ -103,7 +103,9 @@ A click first looks for a vehicle of which the sprite is below the cursor, then 
 
 3D models are read from binary glTF files (`model3d.cpp`) listed in the index of the OpenGFX3D package (`model_pack.cpp`).
 A vehicle with a model is put on the map at its position, turned to its direction of travel and tilted on slopes, and lit with the same light as the terrain.
-A rail vehicle model is stretched to the length of the vehicle in the train (`cached_veh_length`), and on diagonal track a little more, because there the vehicles of a train are further apart; vehicles that are flipped in the train are turned around.
+A rail vehicle model lies along the line between the vehicles in front of and behind it, so a train bends through curves instead of turning in steps of 45 degrees; it is stretched to the distance between those neighbours, which is longer on diagonal track. Vehicles that are flipped in the train are turned around. Road vehicles, ships and aircraft turn towards the way they go a little later than the game turns them, so they turn smoothly (`vehicle_sprites.cpp` remembers their direction between images). The main rotor of a helicopter is a model of its own that turns while the game turns the rotor sprites.
+
+Models of buildings can have parts that move (`parts` in the index), such as the beams of pump jacks; they are drawn anew for every image, from the chunks in view. Tiles that are drawn with a model are not rebuilt when the game marks them dirty without changing what model they get (animated tiles do so for every frame of their animation); `MarkTileDirty()` remembers the models of such tiles to tell.
 Parts of a model with a material named `company` take the colour of the owner. Parts with a material named `load` are the cargo: they are drawn only when the vehicle is loaded, lower down the emptier it is.
 
 A building with a model is part of the terrain chunk it stands on (`AddTileModel()` in `terrain_mesh.cpp`): the sprites the tile draws for the building are left out and the model is put on the highest corner of the footprint, turned to face the way the building faces.

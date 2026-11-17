@@ -37,6 +37,8 @@ struct ModelInstance {
 	Matrix4 transform; ///< From the frame of the model to world units.
 	std::array<float, 4> tint; ///< Colour of the owner, each channel from 0 to 1.
 	float load = 1; ///< How full the vehicle is, from 0 (the load is not drawn) to 1.
+
+	bool operator==(const ModelInstance &other) const = default;
 };
 
 bool LoadGlbModel(std::span<const uint8_t> data, Model3D &model, std::string &error);

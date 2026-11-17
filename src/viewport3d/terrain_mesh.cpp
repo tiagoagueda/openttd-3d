@@ -268,6 +268,38 @@ static void AddFences(Tile tile, uint x, uint y, SpriteAtlas &atlas, TerrainChun
  * @param tint The colour of the parts of the model named "company".
  * @param models The models to add to.
  */
+static std::vector<AnimatedPart> *_tile_parts = nullptr; ///< Where PlaceModel() puts the moving parts of models, if anywhere.
+
+/**
+ * Place a moving part at its place for some moment.
+ * @param seconds The moment, in seconds since some start.
+ * @return The part.
+ */
+ModelInstance AnimatedPart::Place(float seconds) const
+{
+	float t = seconds + this->phase;
+	float angle = this->spin * t;
+	if (this->swing != 0) angle += this->swing * std::sin(t * 6.2831853f / this->period);
+
+	/* Turn around the axis (Rodrigues), then move to where the part belongs. */
+	Vec3 k = Normalise(Vec3{this->axis[0], this->axis[1], this->axis[2]});
+	float c = std::cos(angle);
+	float s = std::sin(angle);
+	float v = 1 - c;
+	Matrix4 local;
+	local.m = {
+		c + k.x * k.x * v, k.y * k.x * v + k.z * s, k.z * k.x * v - k.y * s, 0,
+		k.x * k.y * v - k.z * s, c + k.y * k.y * v, k.z * k.y * v + k.x * s, 0,
+		k.x * k.z * v + k.y * s, k.y * k.z * v - k.x * s, c + k.z * k.z * v, 0,
+		this->at[0], this->at[1], this->at[2], 1,
+	};
+	ModelInstance instance;
+	instance.model = this->model;
+	instance.transform = this->transform * local;
+	instance.tint = this->tint;
+	return instance;
+}
+
 static void PlaceModel(const ModelPack::Entry &entry, TileIndex tile, uint size_x, uint size_y, DiagDirection front, const std::array<float, 4> &tint, std::vector<ModelInstance> &models)
 {
 	/* Which way each direction points on the map. */
@@ -293,6 +325,13 @@ static void PlaceModel(const ModelPack::Entry &entry, TileIndex tile, uint size_
 		(TileX(tile) + size_x * 0.5f) * TILE_SIZE, (TileY(tile) + size_y * 0.5f) * TILE_SIZE, z * WORLD_Z_SCALE, 1,
 	};
 	instance.tint = tint;
+
+	if (_tile_parts == nullptr) return;
+	/* Parts of neighbouring buildings move a little out of step, as the 2D game does too. */
+	float phase = (tile.base() * 2654435761U >> 20) / 4096.0f * 4.0f;
+	for (const ModelPack::ModelPart &part : entry.parts) {
+		_tile_parts->push_back({instance.transform, tint, part.model, part.at, part.axis, part.spin, part.swing, part.period, phase});
+	}
 }
 
 /**
@@ -429,6 +468,25 @@ static bool AddTileModel(TileIndex tile, const ModelPack &pack, std::vector<Mode
 }
 
 /**
+ * Get the 3D models a tile is drawn with, to tell whether a change to the tile changes what is drawn.
+ * @param tile The tile.
+ * @param pack The package of 3D models.
+ * @param[out] models The models; previous contents are discarded.
+ * @param[out] parts Their moving parts; previous contents are discarded.
+ * @return Whether the tile has a model in place of its sprites.
+ */
+bool GetTileModels(TileIndex tile, const ModelPack &pack, std::vector<ModelInstance> &models, std::vector<AnimatedPart> &parts)
+{
+	models.clear();
+	parts.clear();
+	if (pack.IsEmpty()) return false;
+	_tile_parts = &parts;
+	bool replaced = AddTileModel(tile, pack, models);
+	_tile_parts = nullptr;
+	return replaced;
+}
+
+/**
  * Add what the 2D game draws for a tile that has more on it than landscape, such as tracks, roads and buildings.
  * Sprites that the 2D game draws flat on the ground become the ground texture of the tile.
  * Everything else becomes sprites that stand upright at the front of their bounding box.
@@ -451,7 +509,9 @@ static TileGround AddTileSprites(uint x, uint y, const std::array<uint8_t, 4> &h
 	CollectTileSprites(tile, sprites);
 
 	/* A building with a 3D model keeps its ground and foundation, but not its other sprites. */
+	_tile_parts = &mesh.parts;
 	bool replaced = !ground_only && pack != nullptr && !pack->IsEmpty() && AddTileModel(tile, *pack, mesh.models);
+	_tile_parts = nullptr;
 
 	int tile_x = x * TILE_SIZE;
 	int tile_y = y * TILE_SIZE;
@@ -532,6 +592,7 @@ void BuildTerrainChunkMesh(uint chunk_x, uint chunk_y, GroundTextures &textures,
 	mesh.vertices.clear();
 	mesh.sprites.clear();
 	mesh.models.clear();
+	mesh.parts.clear();
 	mesh.vertices.reserve(TERRAIN_CHUNK_SIZE * TERRAIN_CHUNK_SIZE * 4);
 	mesh.min_height = UINT_MAX;
 	mesh.max_height = 0;

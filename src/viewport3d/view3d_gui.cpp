@@ -30,6 +30,8 @@
 
 #include "table/strings.h"
 
+#include <map>
+
 #include "../safeguards.h"
 
 /** Widgets of the #View3DWindow class. */
@@ -52,7 +54,16 @@ class View3DWindow : public Window {
 		uint64_t hash = 0; ///< Hash of the geometry on the GPU.
 		uint min_height = 0; ///< Lowest height level in the chunk; only valid when built.
 		uint max_height = 0; ///< Highest height level in the chunk; only valid when built.
+		std::vector<AnimatedPart> parts; ///< Parts of models in the chunk that move.
 	};
+
+	/** What a tile with a 3D model was last drawn with. */
+	struct TileModels {
+		std::vector<ModelInstance> models; ///< The models.
+		std::vector<AnimatedPart> parts; ///< Their moving parts.
+	};
+	std::map<TileIndex, TileModels> tile_models; ///< Tiles with a model that changed since the 3D view opened.
+	std::chrono::steady_clock::time_point opened = std::chrono::steady_clock::now(); ///< When the view opened; moving parts move by the time since.
 
 	std::unique_ptr<Renderer3D> renderer; ///< The GPU renderer; created on the first frame.
 	bool renderer_tried = false; ///< Whether creating the renderer has been attempted.
@@ -106,6 +117,21 @@ public:
 	 */
 	void MarkTileDirty(TileIndex tile)
 	{
+		/* Animated buildings tell about every frame of their animation. When they are drawn with a model that stays
+		 * the same, nothing needs to be rebuilt; the moving parts of models move by themselves. */
+		if (this->model_pack != nullptr && !this->model_pack->IsEmpty() && IsValidTile(tile)) {
+			static TileModels now;
+			if (GetTileModels(tile, *this->model_pack, now.models, now.parts)) {
+				auto [it, inserted] = this->tile_models.try_emplace(tile, now);
+				if (!inserted) {
+					if (it->second.models == now.models && it->second.parts == now.parts) return;
+					it->second = now;
+				}
+			} else {
+				this->tile_models.erase(tile);
+			}
+		}
+
 		uint x = TileX(tile);
 		uint y = TileY(tile);
 		/* The height of a tile is the height of its northern corner, which is shared with three neighbours. */
@@ -312,6 +338,11 @@ public:
 		/* Vehicles move all the time, so they are looked up for every image. */
 		Matrix4 view_proj = this->camera.GetProjectionMatrix(static_cast<float>(view->current_x) / view->current_y, this->renderer->HomogeneousDepth()) * this->camera.GetViewMatrix();
 		BuildVehicleSprites(this->camera, Frustum3D(view_proj), *this->atlas, this->model_pack.get(), this->vehicle_sprites, this->vehicle_places, this->vehicle_models);
+		/* Moving parts of buildings are drawn anew for every image, like vehicles. */
+		float seconds = std::chrono::duration<float>(now - this->opened).count();
+		for (Renderer3D::ChunkID id : this->visible_chunks) {
+			for (const AnimatedPart &part : this->chunks[id].parts) this->vehicle_models.push_back(part.Place(seconds));
+		}
 		uint64_t hash = 0xcbf29ce484222325ULL;
 		const uint8_t *data = reinterpret_cast<const uint8_t *>(this->vehicle_sprites.data());
 		for (size_t i = 0; i < this->vehicle_sprites.size() * sizeof(SpriteVertex); i++) {
@@ -543,6 +574,7 @@ private:
 					chunk.hash = this->scratch_mesh.hash;
 					chunk.min_height = this->scratch_mesh.min_height;
 					chunk.max_height = this->scratch_mesh.max_height;
+					chunk.parts = this->scratch_mesh.parts;
 
 					if (std::chrono::steady_clock::now() - start > BUILD_BUDGET) out_of_time = true;
 				}

@@ -44,10 +44,23 @@ enum class ModelKind : uint8_t {
  */
 class ModelPack {
 public:
+	/** A part of a model that moves, such as the beam of a pump jack. */
+	struct ModelPart {
+		uint model; ///< Index into GetModels().
+		std::array<float, 3> at{}; ///< Where the part turns around, in the frame of the model it belongs to.
+		std::array<float, 3> axis{0, 0, 1}; ///< Around which axis it turns, in that frame.
+		float spin = 0; ///< Radians per second it keeps turning by.
+		float swing = 0; ///< Radians it swings to either side, back and forth.
+		float period = 1; ///< Seconds for one swing back and forth.
+	};
+
 	/** A model for something on the map. */
 	struct VehicleModel {
 		uint model; ///< Index into GetModels().
 		float scale; ///< World units per unit of the model.
+		uint rotor = UINT_MAX; ///< Index into GetModels() of the main rotor of a helicopter, or \c UINT_MAX.
+		std::array<float, 3> rotor_at{}; ///< Where the hub of the rotor is, in the frame of the model.
+		std::vector<ModelPart> parts; ///< Parts that move all the time.
 	};
 	using Entry = VehicleModel;
 
@@ -70,6 +83,7 @@ public:
 	static uint32_t GetGrfIDNumber(GrfID grfid);
 
 private:
+	uint LoadModel(const std::string &filename, std::map<std::string, uint> &loaded);
 	void ReadEntries(const nlohmann::json &list, std::initializer_list<std::pair<std::string_view, ModelKind>> kinds, std::map<std::string, uint> &loaded);
 
 	using Key = std::tuple<ModelKind, uint32_t, uint16_t>; ///< What is replaced, the NewGRF it is from (0 for the base game) and its number within the NewGRF.

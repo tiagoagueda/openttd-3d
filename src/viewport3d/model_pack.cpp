@@ -58,6 +58,35 @@ static std::optional<std::vector<uint8_t>> ReadPackFile(std::string_view filenam
 }
 
 /**
+ * Load a model of the package, once.
+ * @param filename Its file name.
+ * @param loaded Models that were already read, by file name.
+ * @return Its index in #models, or \c UINT_MAX when it cannot be used.
+ */
+uint ModelPack::LoadModel(const std::string &filename, std::map<std::string, uint> &loaded)
+{
+	/* File names stay within the package. */
+	if (filename.empty() || filename.find_first_of("/\\:") != std::string::npos || filename.starts_with(".")) {
+		Debug(Facility::Misc, Severity::Error, "[viewport3d] {}: bad file name '{}'", PACK_INDEX, filename);
+		return UINT_MAX;
+	}
+
+	auto [it, inserted] = loaded.try_emplace(filename, UINT_MAX);
+	if (inserted) {
+		auto data = ReadPackFile(filename);
+		Model3D model;
+		std::string error = "file not found";
+		if (data.has_value() && LoadGlbModel(*data, model, error)) {
+			it->second = static_cast<uint>(this->models.size());
+			this->models.push_back(std::move(model));
+		} else {
+			Debug(Facility::Misc, Severity::Error, "[viewport3d] cannot use model '{}': {}", filename, error);
+		}
+	}
+	return it->second;
+}
+
+/**
  * Read the entries of one list of the index.
  * @param list The list.
  * @param kinds The words that the entries may use for "type", and what they mean.
@@ -73,26 +102,32 @@ void ModelPack::ReadEntries(const nlohmann::json &list, std::initializer_list<st
 			continue;
 		}
 
-		/* File names stay within the package. */
-		std::string filename = entry.at("model").get<std::string>();
-		if (filename.empty() || filename.find_first_of("/\\:") != std::string::npos || filename.starts_with(".")) {
-			Debug(Facility::Misc, Severity::Error, "[viewport3d] {}: bad file name '{}'", PACK_INDEX, filename);
-			continue;
+		uint model = this->LoadModel(entry.at("model").get<std::string>(), loaded);
+		if (model == UINT_MAX) continue;
+
+		/* Helicopters have a main rotor that turns. */
+		uint rotor = UINT_MAX;
+		std::array<float, 3> rotor_at{};
+		if (entry.contains("rotor")) {
+			rotor = this->LoadModel(entry.at("rotor").get<std::string>(), loaded);
+			if (entry.contains("rotor_at")) rotor_at = entry.at("rotor_at").get<std::array<float, 3>>();
 		}
 
-		auto [it, inserted] = loaded.try_emplace(filename, UINT_MAX);
-		if (inserted) {
-			auto data = ReadPackFile(filename);
-			Model3D model;
-			std::string error = "file not found";
-			if (data.has_value() && LoadGlbModel(*data, model, error)) {
-				it->second = static_cast<uint>(this->models.size());
-				this->models.push_back(std::move(model));
-			} else {
-				Debug(Facility::Misc, Severity::Error, "[viewport3d] cannot use model '{}': {}", filename, error);
+		/* Parts that move. */
+		std::vector<ModelPart> parts;
+		if (entry.contains("parts")) {
+			for (const auto &item : entry.at("parts")) {
+				ModelPart part;
+				part.model = this->LoadModel(item.at("model").get<std::string>(), loaded);
+				if (part.model == UINT_MAX) continue;
+				if (item.contains("at")) part.at = item.at("at").get<std::array<float, 3>>();
+				if (item.contains("axis")) part.axis = item.at("axis").get<std::array<float, 3>>();
+				part.spin = item.value("spin", 0.0f);
+				part.swing = item.value("swing", 0.0f);
+				part.period = std::max(0.05f, item.value("period", 1.0f));
+				parts.push_back(part);
 			}
 		}
-		if (it->second == UINT_MAX) continue;
 
 		uint32_t grfid = 0;
 		std::string grfid_text = entry.value("grfid", std::string{"0"});
@@ -104,7 +139,7 @@ void ModelPack::ReadEntries(const nlohmann::json &list, std::initializer_list<st
 
 		float scale = entry.value("scale", 1.0f);
 		for (const auto &id : entry.at("ids")) {
-			this->entries[{kind->second, grfid, id.get<uint16_t>()}] = {it->second, scale};
+			this->entries[{kind->second, grfid, id.get<uint16_t>()}] = {model, scale, rotor, rotor_at, parts};
 		}
 	}
 }

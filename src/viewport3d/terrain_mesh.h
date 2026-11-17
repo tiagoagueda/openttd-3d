@@ -11,6 +11,7 @@
 #define VIEWPORT3D_TERRAIN_MESH_H
 
 #include "model3d.h"
+#include "../tile_type.h"
 
 /** Number of tiles along one side of a terrain chunk. */
 static constexpr uint TERRAIN_CHUNK_SIZE = 64;
@@ -46,6 +47,22 @@ static_assert(sizeof(SpriteVertex) == 32);
 /** Most quads, of terrain or of sprites, that a chunk can have; limited by the 16 bit indices. */
 static constexpr uint MAX_CHUNK_QUADS = 16384;
 
+/** A part of a building model that moves, placed on the map. */
+struct AnimatedPart {
+	Matrix4 transform; ///< From the frame of the building's model to world units.
+	std::array<float, 4> tint; ///< Colour of the building.
+	uint model; ///< Model of the part.
+	std::array<float, 3> at; ///< Where the part turns around, in the frame of the building's model.
+	std::array<float, 3> axis; ///< Around which axis it turns, in that frame.
+	float spin; ///< Radians per second it keeps turning by.
+	float swing; ///< Radians it swings to either side.
+	float period; ///< Seconds for one swing back and forth.
+	float phase; ///< Seconds the part is ahead of others, so that neighbours do not all move together.
+
+	bool operator==(const AnimatedPart &other) const = default;
+	ModelInstance Place(float seconds) const;
+};
+
 /**
  * Geometry of one chunk of terrain.
  * Every tile is a quad of four vertices, of which vertex 1 and 2 are on the diagonal
@@ -58,6 +75,7 @@ struct TerrainChunkMesh {
 	uint min_height = 0; ///< Lowest height level in the chunk.
 	uint max_height = 0; ///< Highest height level in the chunk.
 	std::vector<ModelInstance> models; ///< 3D models standing on the terrain, in place of sprites.
+	std::vector<AnimatedPart> parts; ///< Parts of those models that move.
 	uint64_t hash = 0; ///< Hash over the vertices, to detect whether a rebuild changed anything.
 };
 
@@ -66,6 +84,7 @@ class ModelPack;
 class SpriteAtlas;
 struct AtlasSprite;
 
+bool GetTileModels(TileIndex tile, const ModelPack &pack, std::vector<ModelInstance> &models, std::vector<AnimatedPart> &parts);
 void AddUprightSprite(const AtlasSprite &sprite, float x, float y, float z, float nearer, std::vector<SpriteVertex> &vertices);
 
 void BuildTerrainChunkMesh(uint chunk_x, uint chunk_y, GroundTextures &textures, SpriteAtlas &atlas, const ModelPack *pack, TerrainChunkMesh &mesh);
