@@ -107,6 +107,7 @@ A rail vehicle model is stretched to the length of the vehicle in the train (`ca
 Parts of a model with a material named `company` take the colour of the owner. Parts with a material named `load` are the cargo: they are drawn only when the vehicle is loaded, lower down the emptier it is.
 
 A building with a model is part of the terrain chunk it stands on (`AddTileModel()` in `terrain_mesh.cpp`): the sprites the tile draws for the building are left out and the model is put on the highest corner of the footprint, turned to face the way the building faces.
+Besides houses, industry tiles, rail stations, road stops and objects, models can replace airport tiles, docks, buoys and train, road and ship depots; depots and docks face the way their entrance does, and a ship depot has one model for both its tiles.
 Houses and industries take the colour the game picked for them, stations, stops and objects that of their owner.
 A tile with a foundation is drawn flat at the top of the foundation, with stone walls down to the terrain around it, so that a model stands on level ground; half-tile foundations still use the sprites.
 

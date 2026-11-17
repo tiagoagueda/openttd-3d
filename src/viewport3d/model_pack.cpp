@@ -127,7 +127,9 @@ ModelPack::ModelPack()
 		if (json.contains("buildings")) {
 			this->ReadEntries(json.at("buildings"), {
 				{"house", ModelKind::House}, {"industry_tile", ModelKind::IndustryTile}, {"rail_station", ModelKind::RailStation},
-				{"road_stop", ModelKind::RoadStop}, {"object", ModelKind::Object},
+				{"road_stop", ModelKind::RoadStop}, {"object", ModelKind::Object}, {"airport_tile", ModelKind::AirportTile},
+				{"dock", ModelKind::Dock}, {"buoy", ModelKind::Buoy}, {"rail_depot", ModelKind::RailDepot},
+				{"road_depot", ModelKind::RoadDepot}, {"ship_depot", ModelKind::ShipDepot},
 			}, loaded);
 		}
 

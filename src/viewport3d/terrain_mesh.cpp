@@ -38,6 +38,8 @@
 #include "../newgrf_station.h"
 #include "../object_base.h"
 #include "../object_map.h"
+#include "../rail_map.h"
+#include "../road_map.h"
 #include "../station_map.h"
 #include "../town.h"
 #include "../town_map.h"
@@ -357,9 +359,55 @@ static bool AddTileModel(TileIndex tile, const ModelPack &pack, std::vector<Mode
 				entry = spec != nullptr ? pack.Find(ModelKind::RoadStop, spec->grf_prop, 0) : pack.Find(ModelKind::RoadStop, 0, id);
 				/* The front of a bay faces the road. */
 				front = drive_through ? (GetDriveThroughStopAxis(tile) == Axis::X ? DiagDirection::SW : DiagDirection::NW) : GetBayRoadStopDir(tile);
+			} else if (IsAirport(tile)) {
+				entry = pack.Find(ModelKind::AirportTile, 0, GetAirportGfx(tile));
+				front = DiagDirection::SW;
+			} else if (IsDock(tile)) {
+				if (IsDockWaterPart(tile)) {
+					/* The water part points away from the shore part next to it. */
+					Axis axis = static_cast<Axis>(GetStationGfx(tile) - GFX_DOCK_BASE_WATER_PART);
+					front = AxisToDiagDir(axis);
+					TileIndex shore = TileAddByDiagDir(tile, ReverseDiagDir(front));
+					if (shore == INVALID_TILE || !IsDockTile(shore) || IsDockWaterPart(shore)) front = ReverseDiagDir(front);
+					entry = pack.Find(ModelKind::Dock, 0, 1);
+				} else {
+					front = GetDockDirection(tile);
+					entry = pack.Find(ModelKind::Dock, 0, 0);
+				}
+			} else if (IsBuoy(tile)) {
+				entry = pack.Find(ModelKind::Buoy, 0, 0);
+				front = DiagDirection::SW;
 			}
 			if (entry == nullptr) return false;
-			PlaceModel(*entry, tile, 1, 1, front, GetOwnerTint(GetTileOwner(tile)), models);
+			PlaceModel(*entry, tile, 1, 1, front, GetOwnerTint(IsBuoy(tile) ? OWNER_NONE : GetTileOwner(tile)), models);
+			return true;
+		}
+
+		case TileType::Railway: {
+			if (!IsRailDepot(tile)) return false;
+			const ModelPack::Entry *entry = pack.Find(ModelKind::RailDepot, 0, 0);
+			if (entry == nullptr) return false;
+			PlaceModel(*entry, tile, 1, 1, GetRailDepotDirection(tile), GetOwnerTint(GetTileOwner(tile)), models);
+			return true;
+		}
+
+		case TileType::Road: {
+			if (!IsRoadDepot(tile)) return false;
+			const ModelPack::Entry *entry = pack.Find(ModelKind::RoadDepot, 0, 0);
+			if (entry == nullptr) return false;
+			PlaceModel(*entry, tile, 1, 1, GetRoadDepotDirection(tile), GetOwnerTint(GetTileOwner(tile)), models);
+			return true;
+		}
+
+		case TileType::Water: {
+			if (!IsShipDepot(tile)) return false;
+			const ModelPack::Entry *entry = pack.Find(ModelKind::ShipDepot, 0, 0);
+			if (entry == nullptr) return false;
+			/* One model for both tiles, on the northern one. */
+			if (GetShipDepotPart(tile) == DepotPart::North) {
+				bool along_x = GetShipDepotAxis(tile) == Axis::X;
+				PlaceModel(*entry, tile, along_x ? 2 : 1, along_x ? 1 : 2, along_x ? DiagDirection::SW : DiagDirection::SE, GetOwnerTint(GetTileOwner(tile)), models);
+			}
 			return true;
 		}
 

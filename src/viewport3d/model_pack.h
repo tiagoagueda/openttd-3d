@@ -30,6 +30,12 @@ enum class ModelKind : uint8_t {
 	RailStation, ///< Tiles of railway stations, by station type.
 	RoadStop, ///< Bus and lorry stops, by stop type.
 	Object, ///< Objects such as transmitters and company headquarters, by object type.
+	AirportTile, ///< Tiles of airports, by airport tile type.
+	Dock, ///< Docks: 0 the part on the shore, 1 the part on the water.
+	Buoy, ///< Buoys.
+	RailDepot, ///< Train depots.
+	RoadDepot, ///< Road vehicle depots.
+	ShipDepot, ///< Ship depots, both tiles together.
 };
 
 /**
