@@ -13,7 +13,7 @@
 #include "model3d.h"
 #include "../vehicle_type.h"
 
-struct Engine;
+class Engine;
 
 /**
  * The OpenGFX3D package: 3D models, and which vehicles they are for.
