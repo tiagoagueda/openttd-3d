@@ -47,6 +47,7 @@ enum class ModelKind : uint8_t {
 	Bridge, ///< Bridges: bridge type * 4 + 0 deck, 1 ramp, 2 pillar; 64 the road on road bridges.
 	Tunnel, ///< Tunnel portals: 0.
 	Crossing, ///< Level crossings: 0 open, 1 closed.
+	Roadside, ///< Along roads: 0 street lamp, 1 roadside tree, 2 pavement, 3 pavement corner, 4 tram rails.
 	Fence, ///< Fences: 0 along railways, 1 to 6 the edges of fields by fence type.
 };
 

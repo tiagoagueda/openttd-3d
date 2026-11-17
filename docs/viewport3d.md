@@ -117,6 +117,17 @@ Copies of the same model are drawn in one go with GPU instancing (`vs_model_inst
 
 Trees, farm fields, rough land and rocks have models too (`tree`, `field`, `rough` and `rocks` in the index). Trees stand where the 2D game puts their sprites, grow from small to full size, and keep their sprites when the package has no model for their type; fields, rough land and rocks are tilted along the slope of their tile (`AddTreeModels()` and `AddClearModel()` in `terrain_mesh.cpp`).
 
+Infrastructure has models too (the functions are in `terrain_mesh.cpp`):
+
+* Track (`track`): one piece per track of plain rail tiles, tilted along slopes, for rail, monorail and maglev (`AddTrackModels()`).
+* Signals (`signal`, by type, variant and state): they stand where the 2D game puts its signal sprites, face the trains they are for, and are mirrored when signals are on the left (`AddSignalModels()`). Their sprites are left out by their place on the tile.
+* Overhead wires (`catenary`): wires above each track, and pylons where the 2D game puts its pylon sprites (`AddWireModels()`, `AddPylonModel()`). This and the rail fences are used only with the base set's sprites, not with NewGRF rail types that draw their own.
+* Fences (`fence`): along rail tiles and the edges of farm fields (hedges, wooden fences, stone walls), stretched and sheared along each edge (`AddRailFenceModels()`, `AddFences()`).
+* Bridges (`bridge`): a deck piece above each tile under a bridge, a pillar stretched down to open land or water, and a ramp on each head, carrying track, wires or road (`AddBridgeMiddleModel()`, `AddBridgeRampModel()`). `DrawBridgeMiddle()` calls `MarkBridgeMiddleSprites()` so `CollectTileSprites()` can tell which sprites of a tile belong to the bridge above it. Aqueducts keep their sprites.
+* Tunnels (`tunnel`): a portal on the entrance tile, which the terrain then draws flat at the foot of the slope; wing walls close the sides (`AddTunnelModel()`).
+* Level crossings (`crossing`, open and closed) with their track (`AddCrossingModel()`).
+* Along roads (`roadside`): pavements with kerbs on town roads, tram rails, and street lamps and trees where the 2D game puts their sprites (`AddRoadModels()`, `AddRoadDetailModel()`).
+
 Models of buildings can have parts that move (`parts` in the index), such as the beams of pump jacks, the winding wheels of mines and the press of the toy factory; they are drawn anew for every image, from the chunks in view. Tiles that are drawn with a model are not rebuilt when the game marks them dirty without changing what model they get (animated tiles do so for every frame of their animation); `MarkTileDirty()` remembers the models of such tiles to tell.
 Parts of a model with a material named `company` take the colour of the owner. Parts with a material named `load` are the cargo: they are drawn only when the vehicle is loaded, lower down the emptier it is.
 

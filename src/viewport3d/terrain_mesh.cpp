@@ -430,6 +430,106 @@ static void AddPylonModel(const TileSpriteGroup &group, uint offset, const Model
 	instance.tint = {1, 1, 1, 1};
 }
 
+static void AddEdgeModel(const ModelPack::Entry &entry, const std::array<float, 3> &a, const std::array<float, 3> &b, TerrainChunkMesh &mesh);
+
+/**
+ * Add 3D pavements and tram rails on a road tile.
+ * @param tile The tile, a normal road tile.
+ * @param x X coordinate of the tile.
+ * @param y Y coordinate of the tile.
+ * @param heights Heights of the northern, western, eastern and southern corner, in height levels.
+ * @param pack The package of 3D models.
+ * @param mesh The mesh to add to.
+ */
+static void AddRoadModels(Tile tile, uint x, uint y, const std::array<int, 4> &heights, const ModelPack &pack, TerrainChunkMesh &mesh)
+{
+	enum : uint { N, W, E, S };
+	static constexpr float CORNERS[4][2] = {{0, 0}, {TILE_SIZE, 0}, {0, TILE_SIZE}, {TILE_SIZE, TILE_SIZE}};
+	RoadBits road = GetRoadBits(tile, RoadTramType::Road);
+	RoadBits tram = GetRoadBits(tile, RoadTramType::Tram);
+	RoadBits all = road | tram;
+	float tx = x * TILE_SIZE, ty = y * TILE_SIZE;
+	auto corner = [&](uint c) { return std::array<float, 3>{tx + CORNERS[c][0], ty + CORNERS[c][1], heights[c] * HEIGHT_LEVEL_SIZE}; };
+
+	Roadside roadside = GetRoadside(tile);
+	bool paved = roadside == Roadside::Paved || roadside == Roadside::StreetLights || roadside == Roadside::Trees || roadside == Roadside::PavedRoadWorks;
+	const ModelPack::Entry *strip = pack.Find(ModelKind::Roadside, 0, 2);
+	const ModelPack::Entry *square = pack.Find(ModelKind::Roadside, 0, 3);
+	if (paved && road.Any() && strip != nullptr && square != nullptr) {
+		static constexpr float HALF = 1.3f;
+		/* Each side of the tile: the road bit that leads there, its corners in the order that has the inside of the
+		 * tile on the left, and the direction towards the inside. */
+		struct Side { RoadBit bit; uint a, b; float ix, iy; };
+		static constexpr Side SIDES[4] = {
+			{RoadBit::NW, N, W, 0, 1}, {RoadBit::NE, E, N, 1, 0}, {RoadBit::SW, W, S, -1, 0}, {RoadBit::SE, S, E, 0, -1},
+		};
+		for (const Side &side : SIDES) {
+			if (all.Test(side.bit)) continue;
+			std::array<float, 3> a = corner(side.a), b = corner(side.b);
+			a[0] += side.ix * HALF; a[1] += side.iy * HALF;
+			b[0] += side.ix * HALF; b[1] += side.iy * HALF;
+			AddEdgeModel(*strip, a, b, mesh);
+		}
+		/* Corners between two sides that both lead on along the road. */
+		struct Corner2 { uint c; RoadBit one, two; float ix, iy; };
+		static constexpr Corner2 CORNER_SQUARES[4] = {
+			{N, RoadBit::NW, RoadBit::NE, 1, 1}, {W, RoadBit::NW, RoadBit::SW, -1, 1},
+			{E, RoadBit::NE, RoadBit::SE, 1, -1}, {S, RoadBit::SW, RoadBit::SE, -1, -1},
+		};
+		for (const Corner2 &c : CORNER_SQUARES) {
+			if (!all.Test(c.one) || !all.Test(c.two)) continue;
+			std::array<float, 3> p = corner(c.c);
+			float s = square->scale;
+			ModelInstance &instance = mesh.models.emplace_back();
+			instance.model = square->model;
+			instance.transform.m = {s, 0, 0, 0, 0, s, 0, 0, 0, 0, s, 0, p[0] + c.ix * HALF, p[1] + c.iy * HALF, p[2], 1};
+			instance.tint = {1, 1, 1, 1};
+		}
+	}
+
+	const ModelPack::Entry *rails = pack.Find(ModelKind::Roadside, 0, 4);
+	if (tram.Any() && rails != nullptr) {
+		/* From the middle of the tile towards the edge each tram bit leads to. */
+		static constexpr std::pair<RoadBit, std::array<float, 2>> BITS[4] = {
+			{RoadBit::NW, {0, -1}}, {RoadBit::SW, {1, 0}}, {RoadBit::SE, {0, 1}}, {RoadBit::NE, {-1, 0}},
+		};
+		for (const auto &[bit, dir] : BITS) {
+			if (tram.Test(bit)) AddPieceModel(*rails, x, y, heights, TILE_SIZE * 0.5f, TILE_SIZE * 0.5f, dir[0], dir[1], mesh);
+		}
+	}
+}
+
+/**
+ * Add a 3D street lamp or roadside tree where the 2D game draws its sprite.
+ * @param group The sprite group.
+ * @param tree Whether it is a tree, rather than a lamp.
+ * @param pack The package of 3D models.
+ * @param mesh The mesh to add to.
+ * @return Whether the package has a model for it.
+ */
+static bool AddRoadDetailModel(const TileSpriteGroup &group, bool tree, const ModelPack &pack, TerrainChunkMesh &mesh)
+{
+	const ModelPack::Entry *entry = pack.Find(ModelKind::Roadside, 0, tree ? 1 : 0);
+	if (entry == nullptr) return false;
+	float px = group.xmin + 1.0f, py = group.ymin + 1.0f;
+	/* Lamps reach towards the middle of the tile. */
+	float dx = 1, dy = 0;
+	int fx = (group.xmin & 0xF) + 1 - 8, fy = (group.ymin & 0xF) + 1 - 8;
+	if (std::abs(fx) >= std::abs(fy)) {
+		dx = fx > 0 ? -1.0f : 1.0f;
+		dy = 0;
+	} else {
+		dx = 0;
+		dy = fy > 0 ? -1.0f : 1.0f;
+	}
+	float s = entry->scale;
+	ModelInstance &instance = mesh.models.emplace_back();
+	instance.model = entry->model;
+	instance.transform.m = {dx * s, dy * s, 0, 0, -dy * s, dx * s, 0, 0, 0, 0, s, 0, px, py, group.zmin * WORLD_Z_SCALE, 1};
+	instance.tint = {1, 1, 1, 1};
+	return true;
+}
+
 /**
  * Add the 3D model of the landscape of a clear tile: the crop of a field, rough land or rocks.
  * @param tile The tile, which must be a clear tile.
@@ -1204,6 +1304,7 @@ static TileGround AddTileSprites(uint x, uint y, const std::array<uint8_t, 4> &h
 	if (ground_only || bridge_first == UINT_MAX || pack == nullptr || pack->IsEmpty() || !AddBridgeMiddleModel(tile, *pack, mesh)) bridge_first = UINT_MAX;
 
 	bool catenary = !ground_only && pack != nullptr && !pack->IsEmpty() && IsTileType(tile, TileType::Railway) && IsPlainRail(tile) && HasCatenaryModels(Tile(tile), *pack);
+	bool road_details = !ground_only && !replaced && pack != nullptr && !pack->IsEmpty() && IsTileType(tile, TileType::Road) && IsNormalRoad(tile);
 	bool rail_fences = !ground_only && pack != nullptr && !pack->IsEmpty() && pack->Find(ModelKind::Fence, 0, 0) != nullptr && IsTileType(tile, TileType::Railway) && IsPlainRail(tile);
 
 	int tile_x = x * TILE_SIZE;
@@ -1235,6 +1336,10 @@ static TileGround AddTileSprites(uint x, uint y, const std::array<uint8_t, 4> &h
 		}
 		if (ground_only || (replaced && !group.foundation)) continue;
 		if (rail_fences && IsRailFenceSprite(sprites.parts[group.first].sprite)) continue;
+		if (road_details) {
+			SpriteID sprite = sprites.parts[group.first].sprite & SPRITE_MASK;
+			if ((sprite == 0x57E || sprite == 0x57F || sprite == 0x1212) && AddRoadDetailModel(group, sprite == 0x1212, *pack, mesh)) continue;
+		}
 		if (catenary) {
 			SpriteID sprite = sprites.parts[group.first].sprite & SPRITE_MASK;
 			if (sprite >= SPR_WIRE_BASE && sprite < SPR_PYLON_BASE) continue;
@@ -1410,6 +1515,9 @@ void BuildTerrainChunkMesh(uint chunk_x, uint chunk_y, GroundTextures &textures,
 				AddTrackModels(tile, x, y, {hn, hw, he, hs}, *pack, mesh);
 				AddRailFenceModels(tile, x, y, {hn, hw, he, hs}, *pack, mesh);
 				AddWireModels(tile, x, y, {hn, hw, he, hs}, *pack, mesh);
+			}
+			if (collect && models && IsTileType(tile, TileType::Road) && IsNormalRoad(tile)) {
+				AddRoadModels(tile, x, y, {hn, hw, he, hs}, *pack, mesh);
 			}
 			if (!collect) {
 				if (IsTileType(tile, TileType::Trees) && !(models && AddTreeModels(tile, x, y, *pack, mesh))) AddTrees(tile, x, y, atlas, mesh);
