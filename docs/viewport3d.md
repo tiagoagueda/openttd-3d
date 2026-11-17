@@ -88,7 +88,17 @@ Sharing the GPU context with the video driver is a later optimisation.
 A ground texture is the sprite of a flat tile, a diamond of 64x31 pixels at normal zoom, pulled straight into a square that covers one tile.
 Slopes use the same texture as flat land and get their shading from the lighting instead of from the slope sprites.
 Coasts are the exception: there the sprite of each slope is pulled straight, because it is the sprite that says where the water ends.
-All textures are layers of one texture array; each tile names its layer in the alpha channel of its vertices.
+These textures are layers of one texture array; each tile names its layer in its vertices.
+
+When the model package has ground textures (`ground` in its index), the landscape uses those instead: grass, bare land, rough land, rocks, snow, desert and water.
+They are larger images that are each spread over several tiles, in a second texture array (`s_terrain`), so single tiles do not show; the shader also makes whole regions a little lighter or darker to hide the repetition.
+`GroundTextures::MakeTerrainTextures()` tints each one to the average colour of the ground sprite that the 2D game draws for that kind of ground, so the colours still follow the climate and the base graphics, and tracks, roads and other things whose ground is made from sprites do not stand out more than needed.
+Grass that grows over bare land, and snow or desert that takes over from grass, are blends of two textures through a mask.
+Reading the textures needs libpng; a build without it keeps the ground made from sprites.
+
+With those textures a coast is no longer a sprite. The corners of coast tiles that have only sea around them are drawn below sea level (`IsSeaCorner()` in `terrain_mesh.cpp`), so the land goes down under the water: sand near the water, grass from some way up.
+A second quad at sea level is the water over it (`TerrainChunkMesh::water`). Its vertices hold the height of the ground below, from which the shader knows the depth: no water where the ground is above sea level, clear water over the sand, foam along the edge and solid water further out. It is drawn after everything else, blended.
+Rivers that run down into the sea are handled the same way, and the open sea is drawn shallow in corners where it meets land or anything built.
 
 Plain landscape tiles are handled directly. For every other tile, `CollectTileSprites()` lets the tile draw itself the way it does for a 2D viewport and keeps the list of sprites instead of drawing them.
 The sprites the 2D game draws flat on the ground, such as tracks and roads, are pulled straight into a ground texture for that combination of sprites; these textures are made on demand, up to 1024 of them.
@@ -121,7 +131,7 @@ Models cast shadows from the sun, which comes from the same direction as the lig
 
 Smoke, steam and sparks (effect vehicles) are drawn as see-through 3D puffs (`effect` in the index) that grow and fade while they are in view (`AddEffectModel()` in `vehicle_sprites.cpp`); see-through models are blended over what is behind them and cast no shadow. Other effects keep their sprites.
 
-The sky is one triangle behind everything (`vs_sky`, `fs_sky`), pale at the horizon and deeper blue above; terrain, sprites and models fade into the colour of the horizon with distance (`shaders/haze.sh`). Water moves with small waves, and foam washes along the edge of the water on coast tiles (`fs_terrain.sc`; `u_water` tells which ground textures are water and the time).
+The sky is one triangle behind everything (`vs_sky`, `fs_sky`), pale at the horizon and deeper blue above; terrain, sprites and models fade into the colour of the horizon with distance (`shaders/haze.sh`). Water moves with small waves, and foam washes along the edge of the water on coast tiles (`fs_terrain.sc`; `u_water` tells which ground textures are water and the time, `u_terrain` how the ground textures of the model package are used).
 
 Models can have a simpler version for far away (`far` in the index), or be left out there, like the stones of rough land. The renderer picks it per copy by the distance to the camera.
 
@@ -172,13 +182,14 @@ The existing game is touched in a few small places:
 * Buildings without a model that are made of several sprites or cover several tiles can come apart when the camera is rotated, and tiles on half-tile foundations draw their ground as an upright sprite too.
 * Transparency options of the 2D game are followed, but see-through sprites are left out rather than drawn see-through.
 * Tiles with animations that have no model (some industries with NewGRF graphics) rebuild their whole chunk of 64x64 tiles for every animation step; building one chunk takes about 1.5 ms.
-* Water is not animated, and sprites far away flicker a little because they have no smaller versions yet.
+* Sprites far away flicker a little because they have no smaller versions yet.
+* The ground of tiles with tracks, roads, buildings and other things on them is still made from the sprites of the 2D game, so it looks coarser than the landscape around it.
 * 3D models have colours per material but no textures yet, vehicles with a model turn in steps of 45 degrees like the sprites do, and liveries other than the company colour are not followed.
 * It has been run on Linux with Mesa's software Vulkan and OpenGL drivers, and on Windows with the Direct3D 11 video driver.
 
 ## Roadmap
 
-Next, in this order unless plans change: textures for the 3D models, day and night (light that follows the time of day, lit windows and lamps), and weather and seasons (snow, rain, autumn colours).
+Textures for the landscape, the coast and the water are in. Next, in this order unless plans change: textures for the ground under tracks, roads and buildings and for the 3D models, day and night (light that follows the time of day, lit windows and lamps), and weather and seasons (snow, rain, autumn colours).
 
 ## Changing the shaders
 

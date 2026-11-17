@@ -12,6 +12,7 @@
 #include "../core/backup_type.hpp"
 #include "../core/math_func.hpp"
 #include "../gfx_func.h"
+#include "../landscape_type.h"
 #include "../settings_type.h"
 #include "../slope_func.h"
 #include "../zoom_func.h"
@@ -26,12 +27,12 @@
  * diamond pulled straight: the texture's u axis runs along the tile's x axis and v along its y axis.
  * On a slope the diamond is bent; the heights of the corners tell how.
  *
- * @param layer The layer of the texture array to make.
  * @param sprites The ground sprites, in the order the 2D game draws them, relative to where it draws the northern corner of the tile.
  * @param heights Heights of the northern, western, eastern and southern corner, in height levels above the lowest.
+ * @param[out] texture The pixels of the texture.
  * @return Whether the sprites could be used.
  */
-bool GroundTextures::Build(uint layer, std::span<const SpritePart> sprites, const std::array<uint8_t, 4> &heights)
+bool GroundTextures::Render(std::span<const SpritePart> sprites, const std::array<uint8_t, 4> &heights, std::vector<uint32_t> &texture)
 {
 	const ZoomLevel zoom = this->zoom;
 	const uint size = this->size;
@@ -102,7 +103,7 @@ bool GroundTextures::Build(uint layer, std::span<const SpritePart> sprites, cons
 		return false;
 	};
 
-	std::vector<uint32_t> texture(static_cast<size_t>(size) * size);
+	texture.assign(static_cast<size_t>(size) * size, 0);
 	for (uint ty = 0; ty < size; ty++) {
 		for (uint tx = 0; tx < size; tx++) {
 			/* Average four samples per pixel; the diamond has fewer pixels than the texture along one diagonal and more along the other. */
@@ -116,8 +117,150 @@ bool GroundTextures::Build(uint layer, std::span<const SpritePart> sprites, cons
 			texture[static_cast<size_t>(ty) * size + tx] = 0xFF000000 | ((r / count) << 16) | ((g / count) << 8) | (b / count);
 		}
 	}
+	return true;
+}
+
+/**
+ * Make a ground texture from sprites.
+ * @param layer The layer of the texture array to make.
+ * @param sprites The ground sprites, in the order the 2D game draws them, relative to where it draws the northern corner of the tile.
+ * @param heights Heights of the northern, western, eastern and southern corner, in height levels above the lowest.
+ * @return Whether the sprites could be used.
+ */
+bool GroundTextures::Build(uint layer, std::span<const SpritePart> sprites, const std::array<uint8_t, 4> &heights)
+{
+	std::vector<uint32_t> texture;
+	if (!this->Render(sprites, heights, texture)) return false;
 	this->pending.push_back({layer, std::move(texture)});
 	return true;
+}
+
+/** A colour with fractions, for working on textures. */
+struct TextureColour {
+	float r, g, b;
+};
+
+/** The average colour of an image. */
+static TextureColour GetAverageColour(std::span<const uint32_t> pixels)
+{
+	uint64_t r = 0, g = 0, b = 0;
+	for (uint32_t pixel : pixels) {
+		r += (pixel >> 16) & 0xFF;
+		g += (pixel >> 8) & 0xFF;
+		b += pixel & 0xFF;
+	}
+	float count = std::max<size_t>(1, pixels.size());
+	return {r / count, g / count, b / count};
+}
+
+/** Lighten or darken the colour channels of an image so that its average colour becomes \a target. */
+static void TintTo(std::vector<uint32_t> &pixels, const TextureColour &target)
+{
+	TextureColour average = GetAverageColour(pixels);
+	float fr = target.r / std::max(1.0f, average.r), fg = target.g / std::max(1.0f, average.g), fb = target.b / std::max(1.0f, average.b);
+	for (uint32_t &pixel : pixels) {
+		uint r = std::min(255u, static_cast<uint>(((pixel >> 16) & 0xFF) * fr + 0.5f));
+		uint g = std::min(255u, static_cast<uint>(((pixel >> 8) & 0xFF) * fg + 0.5f));
+		uint b = std::min(255u, static_cast<uint>((pixel & 0xFF) * fb + 0.5f));
+		pixel = 0xFF000000 | (r << 16) | (g << 8) | b;
+	}
+}
+
+/**
+ * Let one kind of ground take over from another, in patches.
+ * @param from The ground that is there to start with.
+ * @param to The ground that takes over.
+ * @param mask Where \a to comes first (dark) and last (light).
+ * @param amount How far the change has gone, 0 to 1.
+ * @return The mix.
+ */
+static std::vector<uint32_t> BlendGround(std::span<const uint32_t> from, std::span<const uint32_t> to, std::span<const uint32_t> mask, float amount)
+{
+	/* The patches have slightly soft edges. */
+	static constexpr float EDGE = 0.06f;
+
+	std::vector<uint32_t> result(from.size());
+	for (size_t i = 0; i < from.size(); i++) {
+		float m = (mask[i] & 0xFF) / 255.0f;
+		float t = std::clamp((amount * (1.0f + 2 * EDGE) - EDGE - m) / EDGE * 0.5f + 0.5f, 0.0f, 1.0f);
+		uint32_t pixel = 0xFF000000;
+		for (uint shift = 0; shift < 24; shift += 8) {
+			float a = (from[i] >> shift) & 0xFF, b = (to[i] >> shift) & 0xFF;
+			pixel |= static_cast<uint>(a + (b - a) * t + 0.5f) << shift;
+		}
+		result[i] = pixel;
+	}
+	return result;
+}
+
+/**
+ * Make the textures of the landscape from the ground textures of the model package.
+ * Each is tinted to the average colour of the ground sprite that the 2D game draws for that kind of ground,
+ * so the 3D view keeps the colours of the climate and of the graphics in use.
+ * @param pack The model package; it must have ground textures.
+ * @return The textures, for the layers up to #GROUND_TEXTURE_TERRAIN_END.
+ */
+std::vector<GroundTextures::Pending> GroundTextures::MakeTerrainTextures(const ModelPack &pack)
+{
+	assert(pack.HasGround());
+
+	auto image = [&](std::string_view name, std::string_view otherwise) -> const std::vector<uint32_t> & {
+		const ModelPack::GroundImage *found = pack.GetGroundImage(name);
+		if (found == nullptr) found = pack.GetGroundImage(otherwise);
+		return found->pixels;
+	};
+	const std::vector<uint32_t> &grass = image("grass", "grass");
+	const std::vector<uint32_t> &soil = image("soil", "soil");
+	const std::vector<uint32_t> &mask = image("mask", "mask");
+	const std::vector<uint32_t> &rough = image("rough", "grass");
+	const std::vector<uint32_t> &rocks = image("rocks", "grass");
+
+	/* The average colour of ground sprites; nothing when the sprites cannot be used. */
+	std::vector<uint32_t> rendered;
+	auto colour_of = [&](SpriteID sprite) -> std::optional<TextureColour> {
+		SpritePart part{.sprite = sprite, .pal = PAL_NONE};
+		if (!this->Render(std::span<const SpritePart>(&part, 1), std::array<uint8_t, 4>{}, rendered)) return std::nullopt;
+		return GetAverageColour(rendered);
+	};
+	auto tinted = [&](const std::vector<uint32_t> &pixels, SpriteID sprite) {
+		std::vector<uint32_t> result = pixels;
+		if (auto colour = colour_of(sprite); colour.has_value()) TintTo(result, *colour);
+		return result;
+	};
+
+	std::vector<Pending> layers;
+	layers.push_back({GROUND_TEXTURE_NONE, std::vector<uint32_t>(grass.size(), 0xFFFFFFFF)});
+
+	/* Bare land that grass grows over. */
+	static constexpr SpriteID GRASS[] = {SPR_FLAT_BARE_LAND, SPR_FLAT_1_THIRD_GRASS_TILE, SPR_FLAT_2_THIRD_GRASS_TILE, SPR_FLAT_GRASS_TILE};
+	std::vector<uint32_t> bare = tinted(soil, SPR_FLAT_BARE_LAND);
+	std::vector<uint32_t> full = tinted(grass, SPR_FLAT_GRASS_TILE);
+	for (uint i = 0; i < std::size(GRASS); i++) {
+		layers.push_back({GROUND_TEXTURE_GRASS + i, BlendGround(bare, full, mask, i / 3.0f)});
+	}
+
+	static constexpr SpriteID ROUGH[] = {SPR_FLAT_ROUGH_LAND, SPR_FLAT_ROUGH_LAND_1, SPR_FLAT_ROUGH_LAND_2, SPR_FLAT_ROUGH_LAND_3, SPR_FLAT_ROUGH_LAND_4};
+	for (uint i = 0; i < std::size(ROUGH); i++) layers.push_back({GROUND_TEXTURE_ROUGH + i, tinted(rough, ROUGH[i])});
+	layers.push_back({GROUND_TEXTURE_ROCKS, tinted(rocks, SPR_FLAT_ROCKY_LAND_1)});
+
+	/* Farm fields are ploughed earth in the colour of the crop. */
+	for (uint i = 0; i < 9; i++) layers.push_back({GROUND_TEXTURE_FIELDS + i, tinted(soil, SPR_FARMLAND_BARE + i * 19)});
+
+	/* Snow in the sub-arctic climate and desert in the sub-tropical one cover the grass bit by bit. */
+	const std::vector<uint32_t> &cover_image = _settings_game.game_creation.landscape == LandscapeType::Tropic ? image("desert", "sand") : image("snow", "sand");
+	std::vector<uint32_t> cover = tinted(cover_image, SPR_FLAT_SNOW_DESERT_TILE);
+	std::vector<uint32_t> stony = tinted(rocks, SPR_FLAT_ROCKY_LAND_1);
+	for (uint i = 0; i < 4; i++) {
+		float amount = (i + 1) / 4.0f;
+		layers.push_back({GROUND_TEXTURE_SNOW_DESERT + i, BlendGround(full, cover, mask, amount)});
+		layers.push_back({GROUND_TEXTURE_SNOWY_ROCKS + i, BlendGround(stony, cover, mask, amount)});
+		layers.push_back({GROUND_TEXTURE_DESERT_ROCKS + i, BlendGround(stony, cover, mask, amount)});
+	}
+
+	layers.push_back({GROUND_TEXTURE_WATER, tinted(image("water", "water"), SPR_FLAT_WATER_TILE)});
+	/* The beach has its own colour; the 2D game has no sprite of only sand to take it from. */
+	layers.push_back({GROUND_TEXTURE_BEACH, image("sand", "sand")});
+	return layers;
 }
 
 /**

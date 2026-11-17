@@ -24,7 +24,7 @@ struct TerrainVertex {
 	float y; ///< Position along the y axis in tiles.
 	float z; ///< Height in height levels.
 	uint8_t r, g, b; ///< Colour to multiply the texture with, including the lighting, at half brightness.
-	uint8_t unused; ///< Not used.
+	uint8_t depth; ///< For water: the height of the ground below it, as (height levels + 1) * 64; 0 is deep water. Not used for land.
 	float texture; ///< The layer of the tile's ground texture.
 	float u; ///< Position within the tile along the x axis, 0 to 1.
 	float v; ///< Position within the tile along the y axis, 0 to 1.
@@ -76,6 +76,7 @@ struct AnimatedPart {
  */
 struct TerrainChunkMesh {
 	std::vector<TerrainVertex> vertices; ///< Four vertices per tile.
+	std::vector<TerrainVertex> water; ///< Four vertices per tile of a coast, for the water over its land; see-through, so drawn after everything else.
 	std::vector<SpriteVertex> sprites; ///< Four vertices per sprite standing on the terrain, in the same order as for tiles.
 	uint min_height = 0; ///< Lowest height level in the chunk.
 	uint max_height = 0; ///< Highest height level in the chunk.

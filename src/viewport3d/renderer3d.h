@@ -41,6 +41,7 @@ public:
 
 	uint GetMaxGroundTextures() const;
 	void UpdateGroundTextures(GroundTextures &textures);
+	void SetTerrainTextures(uint size, uint tiles, std::vector<GroundTextures::Pending> &&textures);
 	void UpdateSpriteAtlas(SpriteAtlas &atlas);
 
 	void SetModel(uint id, const Model3D &model);

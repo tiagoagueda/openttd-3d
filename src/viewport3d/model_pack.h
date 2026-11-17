@@ -111,11 +111,35 @@ public:
 	const Entry *Find(ModelKind kind, const GRFFilePropsBase &props, uint16_t base_game_id) const;
 	const VehicleModel *FindVehicle(const Engine *e) const;
 
+	/** A ground texture of the package: a square image that repeats in both directions. */
+	struct GroundImage {
+		uint size = 0; ///< Width and height in pixels; a power of two.
+		std::vector<uint32_t> pixels; ///< The pixels, in the format of 32bpp blitters.
+	};
+
+	/** Whether the package has textures for the ground; without them the ground is made from the sprites of the 2D game. */
+	bool HasGround() const { return !this->ground.empty(); }
+
+	/** Along how many tiles one ground texture is spread. */
+	uint GetGroundTiles() const { return this->ground_tiles; }
+
+	/**
+	 * A ground texture of the package.
+	 * @param name Its name in the index, such as "grass".
+	 * @return The image, or \c nullptr when the package has none of that name.
+	 */
+	const GroundImage *GetGroundImage(std::string_view name) const
+	{
+		auto it = this->ground.find(name);
+		return it == this->ground.end() ? nullptr : &it->second;
+	}
+
 	static std::array<float, 4> GetTint(Colours colour);
 	static uint32_t GetGrfIDNumber(GrfID grfid);
 
 private:
 	uint LoadModel(const std::string &filename, std::map<std::string, uint> &loaded);
+	void ReadGround(const nlohmann::json &ground);
 	void ReadEntries(const nlohmann::json &list, std::initializer_list<std::pair<std::string_view, ModelKind>> kinds, std::map<std::string, uint> &loaded);
 
 	using Key = std::tuple<ModelKind, uint32_t, uint16_t>; ///< What is replaced, the NewGRF it is from (0 for the base game) and its number within the NewGRF.
@@ -125,6 +149,8 @@ private:
 	std::vector<std::array<float, 6>> bounds; ///< For each model, the box around it; see GetBounds().
 	std::vector<uint> far; ///< For each model, what to draw far away; see GetFarModel().
 	std::map<Key, Entry> entries; ///< What has a model.
+	std::map<std::string, GroundImage, std::less<>> ground; ///< The ground textures, by name; either all that are needed or none.
+	uint ground_tiles = 1; ///< Along how many tiles one ground texture is spread.
 };
 
 #endif /* VIEWPORT3D_MODEL_PACK_H */

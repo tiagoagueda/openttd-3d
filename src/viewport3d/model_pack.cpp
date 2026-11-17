@@ -10,6 +10,7 @@
 #include "../stdafx.h"
 #include "model_pack.h"
 #include "../debug.h"
+#include "../core/math_func.hpp"
 #include "../engine_base.h"
 #include "../fileio_func.h"
 #include "../newgrf_commons.h"
@@ -17,6 +18,10 @@
 #include "../palette_func.h"
 #include "../gfx_func.h"
 #include "../3rdparty/nlohmann/json.hpp"
+
+#ifdef WITH_PNG
+#	include <png.h>
+#endif /* WITH_PNG */
 
 #include "../safeguards.h"
 
@@ -55,6 +60,52 @@ static std::optional<std::vector<uint8_t>> ReadPackFile(std::string_view filenam
 	std::vector<uint8_t> data(size);
 	if (size != 0 && fread(data.data(), 1, size, *file) != size) return std::nullopt;
 	return data;
+}
+
+/**
+ * Read the ground textures of the package.
+ * They are used only when all the ones the game cannot do without are there and of the same size.
+ * @param ground The "ground" part of the index: { "tiles": 4, "textures": { "grass": "ground_grass.png", ... } }.
+ */
+void ModelPack::ReadGround([[maybe_unused]] const nlohmann::json &ground)
+{
+#if defined(WITH_PNG) && defined(PNG_SIMPLIFIED_READ_SUPPORTED)
+	static constexpr uint MAX_SIZE = 2048;
+
+	uint size = 0;
+	for (const auto &[name, filename] : ground.at("textures").items()) {
+		auto data = ReadPackFile(filename.get<std::string>());
+		if (!data.has_value()) continue;
+
+		png_image png{};
+		png.version = PNG_IMAGE_VERSION;
+		if (png_image_begin_read_from_memory(&png, data->data(), data->size()) == 0) continue;
+		if (png.width != png.height || !HasExactlyOneBit(png.width) || png.width > MAX_SIZE || (size != 0 && png.width != size)) {
+			Debug(Facility::Misc, Severity::Error, "[viewport3d] ground texture {} is not a square with sides of the same power of two as the others", filename.get<std::string>());
+			png_image_free(&png);
+			continue;
+		}
+		/* The byte order of 32bpp blitters. */
+		png.format = PNG_FORMAT_BGRA;
+		GroundImage image;
+		image.size = png.width;
+		image.pixels.resize(static_cast<size_t>(png.width) * png.height);
+		if (png_image_finish_read(&png, nullptr, image.pixels.data(), 0, nullptr) == 0) {
+			png_image_free(&png);
+			continue;
+		}
+		size = image.size;
+		this->ground[name] = std::move(image);
+	}
+
+	for (std::string_view needed : {"grass", "soil", "sand", "water", "mask"}) {
+		if (this->ground.find(needed) != this->ground.end()) continue;
+		if (!this->ground.empty()) Debug(Facility::Misc, Severity::Error, "[viewport3d] the ground texture '{}' is missing; using the ground sprites of the 2D game", needed);
+		this->ground.clear();
+		return;
+	}
+	this->ground_tiles = Clamp(ground.value("tiles", 4), 1, 16);
+#endif /* WITH_PNG && PNG_SIMPLIFIED_READ_SUPPORTED */
 }
 
 /**
@@ -191,6 +242,15 @@ ModelPack::ModelPack()
 				{"road_depot", ModelKind::RoadDepot}, {"ship_depot", ModelKind::ShipDepot},
 				{"tree", ModelKind::Tree}, {"field", ModelKind::Field}, {"rough", ModelKind::Rough}, {"rocks", ModelKind::Rocks}, {"effect", ModelKind::Effect}, {"track", ModelKind::Track}, {"signal", ModelKind::Signal}, {"fence", ModelKind::Fence}, {"catenary", ModelKind::Catenary}, {"bridge", ModelKind::Bridge}, {"tunnel", ModelKind::Tunnel}, {"crossing", ModelKind::Crossing}, {"roadside", ModelKind::Roadside},
 			}, loaded);
+		}
+
+		if (json.contains("ground")) {
+			try {
+				this->ReadGround(json.at("ground"));
+			} catch (const std::exception &e) {
+				Debug(Facility::Misc, Severity::Error, "[viewport3d] cannot read the ground textures: {}", e.what());
+				this->ground.clear();
+			}
 		}
 
 		this->name = json.value("name", std::string{"OpenGFX3D"});

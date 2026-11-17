@@ -66,6 +66,7 @@ struct Renderer3DCallback : public bgfx::CallbackI {
 struct GpuChunk {
 	bgfx::VertexBufferHandle vertices = BGFX_INVALID_HANDLE; ///< The terrain.
 	uint32_t num_quads = 0; ///< Number of tiles of terrain.
+	uint32_t num_water = 0; ///< Number of quads of see-through water, which follow the terrain in #vertices.
 	bgfx::VertexBufferHandle sprites = BGFX_INVALID_HANDLE; ///< The sprites standing on the terrain.
 	uint32_t num_sprites = 0; ///< Number of sprites.
 	std::vector<ModelInstance> models; ///< 3D models standing on the terrain.
@@ -110,6 +111,10 @@ struct Renderer3D::Impl {
 	bgfx::TextureHandle sprite_atlas = BGFX_INVALID_HANDLE; ///< The sprites of the 2D game that are in use.
 	bgfx::UniformHandle ground_sampler = BGFX_INVALID_HANDLE;
 	bgfx::TextureHandle ground_textures = BGFX_INVALID_HANDLE; ///< Texture array with one layer per #GroundTexture.
+	bgfx::UniformHandle terrain_sampler = BGFX_INVALID_HANDLE;
+	bgfx::TextureHandle terrain_textures = BGFX_INVALID_HANDLE; ///< Texture array with the ground textures of the model package, if it has them.
+	bgfx::UniformHandle terrain = BGFX_INVALID_HANDLE; ///< How the ground textures of the model package are used.
+	float terrain_tiles = 0; ///< Along how many tiles each of those is spread; 0 when there are none.
 	bgfx::UniformHandle haze_colour = BGFX_INVALID_HANDLE; ///< Colour of the haze in the distance, and of the sky at the horizon.
 	bgfx::UniformHandle haze_params = BGFX_INVALID_HANDLE; ///< Where the haze starts and how thick it gets.
 	bgfx::UniformHandle water = BGFX_INVALID_HANDLE; ///< Which ground textures are water, and the time for the waves.
@@ -249,6 +254,8 @@ static bgfx::ShaderHandle CreateShader(const ShaderVariants &variants)
 	impl.haze_colour = bgfx::createUniform("u_hazeColour", bgfx::UniformType::Vec4);
 	impl.haze_params = bgfx::createUniform("u_hazeParams", bgfx::UniformType::Vec4);
 	impl.water = bgfx::createUniform("u_water", bgfx::UniformType::Vec4);
+	impl.terrain_sampler = bgfx::createUniform("s_terrain", bgfx::UniformType::Sampler);
+	impl.terrain = bgfx::createUniform("u_terrain", bgfx::UniformType::Vec4);
 	impl.sky_matrix = bgfx::createUniform("u_skyInvViewProj", bgfx::UniformType::Mat4);
 	impl.sky_colour = bgfx::createUniform("u_skyColour", bgfx::UniformType::Vec4);
 	impl.sky_program = bgfx::createProgram(CreateShader(SHADER_VARIANTS(vs_sky)), CreateShader(SHADER_VARIANTS(fs_sky)), true);
@@ -326,7 +333,8 @@ Renderer3D::~Renderer3D()
 	if (bgfx::isValid(impl.sprite_sampler)) bgfx::destroy(impl.sprite_sampler);
 	if (bgfx::isValid(impl.sprite_program)) bgfx::destroy(impl.sprite_program);
 	if (bgfx::isValid(impl.ground_textures)) bgfx::destroy(impl.ground_textures);
-	for (bgfx::UniformHandle handle : {impl.haze_colour, impl.haze_params, impl.water, impl.sky_matrix, impl.sky_colour}) {
+	if (bgfx::isValid(impl.terrain_textures)) bgfx::destroy(impl.terrain_textures);
+	for (bgfx::UniformHandle handle : {impl.haze_colour, impl.haze_params, impl.water, impl.sky_matrix, impl.sky_colour, impl.terrain, impl.terrain_sampler}) {
 		if (bgfx::isValid(handle)) bgfx::destroy(handle);
 	}
 	if (bgfx::isValid(impl.sky_program)) bgfx::destroy(impl.sky_program);
@@ -357,6 +365,40 @@ uint Renderer3D::GetMaxGroundTextures() const
 }
 
 /**
+ * Send one layer of a texture array to the GPU, with all its smaller versions.
+ * @param texture The texture array.
+ * @param texture_size Width and height of the layer.
+ * @param layer Which layer.
+ * @param level The pixels; changed while making the smaller versions.
+ */
+static void UploadTextureLayer(bgfx::TextureHandle texture, uint texture_size, uint layer, std::vector<uint32_t> &level)
+{
+	std::vector<uint32_t> smaller;
+	uint8_t mip = 0;
+	for (uint size = texture_size; ; size /= 2, mip++) {
+		bgfx::updateTexture2D(texture, static_cast<uint16_t>(layer), mip, 0, 0, static_cast<uint16_t>(size), static_cast<uint16_t>(size),
+			bgfx::copy(level.data(), static_cast<uint32_t>(level.size() * sizeof(uint32_t))));
+		if (size == 1) break;
+
+		/* The next level is half the size, each pixel the average of four. */
+		uint half = size / 2;
+		smaller.resize(static_cast<size_t>(half) * half);
+		for (uint y = 0; y < half; y++) {
+			for (uint x = 0; x < half; x++) {
+				const uint32_t *src = &level[static_cast<size_t>(y) * 2 * size + x * 2];
+				uint32_t result = 0;
+				for (uint shift = 0; shift < 32; shift += 8) {
+					uint sum = ((src[0] >> shift) & 0xFF) + ((src[1] >> shift) & 0xFF) + ((src[size] >> shift) & 0xFF) + ((src[size + 1] >> shift) & 0xFF);
+					result |= ((sum + 2) / 4) << shift;
+				}
+				smaller[static_cast<size_t>(y) * half + x] = result;
+			}
+		}
+		std::swap(level, smaller);
+	}
+}
+
+/**
  * Send the ground textures that were made since the last call to the GPU.
  * @param textures The ground textures.
  */
@@ -371,34 +413,32 @@ void Renderer3D::UpdateGroundTextures(GroundTextures &textures)
 			bgfx::TextureFormat::BGRA8, BGFX_SAMPLER_MIN_ANISOTROPIC | BGFX_SAMPLER_MAG_ANISOTROPIC);
 	}
 
-	std::vector<uint32_t> smaller;
 	for (GroundTextures::Pending &pending : textures.TakePending()) {
-		std::vector<uint32_t> &level = pending.pixels;
-		assert(level.size() == static_cast<size_t>(texture_size) * texture_size);
-
-		uint8_t mip = 0;
-		for (uint size = texture_size; ; size /= 2, mip++) {
-			bgfx::updateTexture2D(impl.ground_textures, static_cast<uint16_t>(pending.layer), mip, 0, 0, static_cast<uint16_t>(size), static_cast<uint16_t>(size),
-				bgfx::copy(level.data(), static_cast<uint32_t>(level.size() * sizeof(uint32_t))));
-			if (size == 1) break;
-
-			/* The next level is half the size, each pixel the average of four. */
-			uint half = size / 2;
-			smaller.resize(static_cast<size_t>(half) * half);
-			for (uint y = 0; y < half; y++) {
-				for (uint x = 0; x < half; x++) {
-					const uint32_t *src = &level[static_cast<size_t>(y) * 2 * size + x * 2];
-					uint32_t result = 0;
-					for (uint shift = 0; shift < 32; shift += 8) {
-						uint sum = ((src[0] >> shift) & 0xFF) + ((src[1] >> shift) & 0xFF) + ((src[size] >> shift) & 0xFF) + ((src[size + 1] >> shift) & 0xFF);
-						result |= ((sum + 2) / 4) << shift;
-					}
-					smaller[static_cast<size_t>(y) * half + x] = result;
-				}
-			}
-			std::swap(level, smaller);
-		}
+		assert(pending.pixels.size() == static_cast<size_t>(texture_size) * texture_size);
+		UploadTextureLayer(impl.ground_textures, texture_size, pending.layer, pending.pixels);
 	}
+}
+
+/**
+ * Use the ground textures of the model package for the landscape.
+ * @param size Width and height of each texture; a power of two.
+ * @param tiles Along how many tiles each texture is spread.
+ * @param textures The textures, for the layers below #GROUND_TEXTURE_TERRAIN_END.
+ */
+void Renderer3D::SetTerrainTextures(uint size, uint tiles, std::vector<GroundTextures::Pending> &&textures)
+{
+	Impl &impl = *this->impl;
+	assert(HasExactlyOneBit(size));
+	if (bgfx::getCaps()->limits.maxTextureLayers < GROUND_TEXTURE_TERRAIN_END) return;
+
+	if (bgfx::isValid(impl.terrain_textures)) bgfx::destroy(impl.terrain_textures);
+	impl.terrain_textures = bgfx::createTexture2D(static_cast<uint16_t>(size), static_cast<uint16_t>(size), true, GROUND_TEXTURE_TERRAIN_END,
+		bgfx::TextureFormat::BGRA8, BGFX_SAMPLER_MIN_ANISOTROPIC | BGFX_SAMPLER_MAG_ANISOTROPIC);
+	for (GroundTextures::Pending &pending : textures) {
+		assert(pending.layer < GROUND_TEXTURE_TERRAIN_END && pending.pixels.size() == static_cast<size_t>(size) * size);
+		UploadTextureLayer(impl.terrain_textures, size, pending.layer, pending.pixels);
+	}
+	impl.terrain_tiles = static_cast<float>(tiles);
 }
 
 /**
@@ -463,10 +503,13 @@ void Renderer3D::SetChunk(ChunkID id, const TerrainChunkMesh &mesh)
 	chunk.sprites = BGFX_INVALID_HANDLE;
 
 	chunk.num_quads = static_cast<uint32_t>(mesh.vertices.size() / 4);
-	if (chunk.num_quads != 0) {
-		chunk.vertices = bgfx::createVertexBuffer(
-			bgfx::copy(mesh.vertices.data(), static_cast<uint32_t>(mesh.vertices.size() * sizeof(TerrainVertex))),
-			this->impl->layout);
+	chunk.num_water = static_cast<uint32_t>(mesh.water.size() / 4);
+	if (chunk.num_quads + chunk.num_water != 0) {
+		/* One buffer, with the water after the terrain. */
+		const bgfx::Memory *memory = bgfx::alloc(static_cast<uint32_t>((mesh.vertices.size() + mesh.water.size()) * sizeof(TerrainVertex)));
+		std::copy_n(reinterpret_cast<const uint8_t *>(mesh.vertices.data()), mesh.vertices.size() * sizeof(TerrainVertex), memory->data);
+		std::copy_n(reinterpret_cast<const uint8_t *>(mesh.water.data()), mesh.water.size() * sizeof(TerrainVertex), memory->data + mesh.vertices.size() * sizeof(TerrainVertex));
+		chunk.vertices = bgfx::createVertexBuffer(memory, this->impl->layout);
 	}
 
 	chunk.models = mesh.models;
@@ -692,6 +735,11 @@ void Renderer3D::Render(uint width, uint height, const Camera3D &camera, std::sp
 	const float water[4] = {static_cast<float>(GROUND_TEXTURE_WATER), static_cast<float>(GROUND_TEXTURE_SHORE), static_cast<float>(GROUND_TEXTURE_SHORE + 18),
 		std::fmod(std::chrono::duration<float>(std::chrono::steady_clock::now() - impl.start).count(), 3600.0f)};
 	bgfx::setUniform(impl.water, water);
+	/* x: number of layers that come from the model package. y: tiles per texture. z: layer of the beach. w: layer of the water over coasts. */
+	const bool terrain_textures = bgfx::isValid(impl.terrain_textures);
+	const float terrain[4] = {terrain_textures ? static_cast<float>(GROUND_TEXTURE_TERRAIN_END) : 0.0f, terrain_textures ? 1.0f / impl.terrain_tiles : 1.0f,
+		static_cast<float>(GROUND_TEXTURE_BEACH), static_cast<float>(GROUND_TEXTURE_SHALLOWS)};
+	bgfx::setUniform(impl.terrain, terrain);
 
 	Matrix4 view_proj = proj * view;
 	Matrix4 inverse;
@@ -772,10 +820,23 @@ void Renderer3D::Render(uint width, uint height, const Camera3D &camera, std::sp
 		if (it == impl.chunks.end()) continue;
 		const GpuChunk &chunk = it->second;
 
-		if (bgfx::isValid(chunk.vertices)) {
+		if (bgfx::isValid(chunk.vertices) && chunk.num_water != 0) {
+			/* See-through water over the land of coasts; bgfx draws what blends after everything else of the view. */
 			bgfx::setTransform(model.m.data());
-			bgfx::setVertexBuffer(0, chunk.vertices);
+			bgfx::setVertexBuffer(0, chunk.vertices, chunk.num_quads * 4, chunk.num_water * 4);
 			bgfx::setTexture(0, impl.ground_sampler, impl.ground_textures);
+			bgfx::setTexture(2, impl.terrain_sampler, terrain_textures ? impl.terrain_textures : impl.ground_textures);
+			bgfx::setIndexBuffer(impl.quad_indices, 0, chunk.num_water * 6);
+			set_shadow();
+			bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_DEPTH_TEST_LESS | BGFX_STATE_BLEND_FUNC_SEPARATE(BGFX_STATE_BLEND_SRC_ALPHA, BGFX_STATE_BLEND_INV_SRC_ALPHA, BGFX_STATE_BLEND_ZERO, BGFX_STATE_BLEND_ONE));
+			bgfx::submit(VIEW_SCENE, impl.program);
+		}
+
+		if (bgfx::isValid(chunk.vertices) && chunk.num_quads != 0) {
+			bgfx::setTransform(model.m.data());
+			bgfx::setVertexBuffer(0, chunk.vertices, 0, chunk.num_quads * 4);
+			bgfx::setTexture(0, impl.ground_sampler, impl.ground_textures);
+			bgfx::setTexture(2, impl.terrain_sampler, terrain_textures ? impl.terrain_textures : impl.ground_textures);
 			bgfx::setIndexBuffer(impl.quad_indices, 0, chunk.num_quads * 6);
 			set_shadow();
 			bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A | BGFX_STATE_WRITE_Z | BGFX_STATE_DEPTH_TEST_LESS);
@@ -783,7 +844,7 @@ void Renderer3D::Render(uint width, uint height, const Camera3D &camera, std::sp
 
 			if (impl.shadows) {
 				bgfx::setTransform(terrain_caster.m.data());
-				bgfx::setVertexBuffer(0, chunk.vertices);
+				bgfx::setVertexBuffer(0, chunk.vertices, 0, chunk.num_quads * 4);
 				bgfx::setIndexBuffer(impl.quad_indices, 0, chunk.num_quads * 6);
 				bgfx::setState(BGFX_STATE_WRITE_Z | BGFX_STATE_DEPTH_TEST_LESS);
 				bgfx::submit(VIEW_SHADOW, impl.shadow_program);

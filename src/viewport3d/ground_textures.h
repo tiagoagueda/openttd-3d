@@ -11,6 +11,7 @@
 #define VIEWPORT3D_GROUND_TEXTURES_H
 
 #include "tile_sprites.h"
+#include "model_pack.h"
 #include "../zoom_type.h"
 
 /**
@@ -28,7 +29,12 @@ enum GroundTexture : uint8_t {
 	GROUND_TEXTURE_DESERT_ROCKS = GROUND_TEXTURE_SNOWY_ROCKS + 4, ///< Rocks in the desert; 4 densities.
 	GROUND_TEXTURE_WATER = GROUND_TEXTURE_DESERT_ROCKS + 4, ///< Water.
 	GROUND_TEXTURE_SHORE, ///< Coasts; 18 shapes, in the order of the shore sprites.
-	GROUND_TEXTURE_END = GROUND_TEXTURE_SHORE + 18, ///< Number of ground textures that are always there. ///< Number of ground textures.
+	GROUND_TEXTURE_END = GROUND_TEXTURE_SHORE + 18, ///< Number of ground textures that are always there.
+
+	/* With ground textures from the model package the shape of a coast comes from the terrain, not from sprites. */
+	GROUND_TEXTURE_BEACH = GROUND_TEXTURE_SHORE, ///< The land of a coast: sand near the water, grass higher up.
+	GROUND_TEXTURE_SHALLOWS, ///< The water over the land of a coast; see-through where it is shallow.
+	GROUND_TEXTURE_TERRAIN_END = GROUND_TEXTURE_BEACH + 1, ///< Number of ground textures that come from the model package.
 };
 
 /**
@@ -52,6 +58,8 @@ public:
 
 	uint Get(std::span<const SpritePart> sprites, const std::array<uint8_t, 4> &heights);
 
+	std::vector<Pending> MakeTerrainTextures(const ModelPack &pack);
+
 	/** Whether there is no room left for more textures. */
 	bool IsFull() const { return this->next_layer >= this->max_layers; }
 
@@ -66,6 +74,7 @@ public:
 private:
 	using Key = std::pair<std::array<uint8_t, 4>, std::vector<SpritePart>>;
 
+	bool Render(std::span<const SpritePart> sprites, const std::array<uint8_t, 4> &heights, std::vector<uint32_t> &texture);
 	bool Build(uint layer, std::span<const SpritePart> sprites, const std::array<uint8_t, 4> &heights);
 
 	ZoomLevel zoom; ///< Zoom level of the sprites to make the textures from.

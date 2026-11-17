@@ -647,6 +647,9 @@ public:
 				this->ground_textures = std::make_unique<GroundTextures>(this->renderer->GetMaxGroundTextures());
 				this->atlas = std::make_unique<SpriteAtlas>();
 				this->model_pack = std::make_unique<ModelPack>();
+				if (this->model_pack->HasGround()) {
+					this->renderer->SetTerrainTextures(this->model_pack->GetGroundImage("grass")->size, this->model_pack->GetGroundTiles(), this->ground_textures->MakeTerrainTextures(*this->model_pack));
+				}
 				uint id = 0;
 				for (const Model3D &model : this->model_pack->GetModels()) {
 					this->renderer->SetFarModel(id, this->model_pack->GetFarModel(id));

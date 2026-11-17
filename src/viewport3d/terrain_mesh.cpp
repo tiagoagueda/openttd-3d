@@ -80,12 +80,59 @@ static GroundTexture GetRoughTexture(uint x, uint y)
 	return static_cast<GroundTexture>(GROUND_TEXTURE_ROUGH + VARIANTS[GB(TileHash(x * TILE_SIZE, y * TILE_SIZE), 0, 3)]);
 }
 
+/** How far below the water the corners of a coast that lie in the sea are drawn, in height levels. */
+static constexpr float SEABED_DEPTH = 0.75f;
+
+/**
+ * Whether a tile slopes into the sea: a coast, or a river that runs down into it.
+ * With ground textures from the model package such a tile is drawn as ground that goes down
+ * below the water, with see-through water over it, and not with the shore sprites.
+ */
+static bool IsShoreSlope(Tile tile, uint x, uint y)
+{
+	if (IsTileType(tile, TileType::Water)) {
+		if (!IsCoast(tile) && !IsWater(tile)) return false;
+	} else if (IsTileType(tile, TileType::Trees)) {
+		if (GetTreeGround(tile) != TreeGround::Shore) return false;
+	} else {
+		return false;
+	}
+	auto [slope, z] = GetTileSlopeZ(TileXY(x, y));
+	return slope != SLOPE_FLAT && z == 0;
+}
+
+/**
+ * Whether there is sea on a tile, right up to its edges at sea level: flat water, whatever stands in it, or a coast.
+ * Outside the map counts as sea.
+ */
+static bool IsSeaTile(uint x, uint y)
+{
+	if (x >= Map::SizeX() || y >= Map::SizeY()) return true;
+	Tile tile(TileXY(x, y));
+	if (IsTileType(tile, TileType::Void)) return true;
+	if (IsShoreSlope(tile, x, y)) return true;
+	if (!HasTileWaterClass(tile) || !IsTileOnWater(tile)) return false;
+	auto [slope, z] = GetTileSlopeZ(TileXY(x, y));
+	return slope == SLOPE_FLAT && z == 0;
+}
+
+/**
+ * Whether a corner of the map lies in the sea, with nothing but sea around it.
+ * Coasts go down below the water at these corners, so that the edge of the water crosses the tile.
+ * @param x, y The tile of which it is the northern corner.
+ */
+static bool IsSeaCorner(uint x, uint y)
+{
+	if (x < Map::SizeX() && y < Map::SizeY() && TileHeight(TileXY(x, y)) != 0) return false;
+	return IsSeaTile(x - 1, y - 1) && IsSeaTile(x, y - 1) && IsSeaTile(x - 1, y) && IsSeaTile(x, y);
+}
+
 /**
  * Get the texture and colour to draw the ground of a tile with.
  * Follows what the 2D game draws as ground sprite. Tiles of which the contents cannot be
  * drawn yet, such as tracks and buildings, get a flat colour as stand-in.
  */
-static TileGround GetTileGround(Tile tile, uint x, uint y)
+static TileGround GetTileGround(Tile tile, uint x, uint y, bool beach)
 {
 	/* The textures of coasts are made from the shore sprites, of which there is one per slope. Same table as in DrawShoreTile(). */
 	static constexpr SlopeIndexArray<uint8_t> SLOPE_TO_SHORE = {
@@ -95,6 +142,7 @@ static TileGround GetTileGround(Tile tile, uint x, uint y)
 	auto shore = [&]() {
 		Slope slope = GetTileSlope(TileXY(x, y));
 		if (slope == SLOPE_FLAT || IsHalftileSlope(slope)) return TileGround{GROUND_TEXTURE_WATER, COLOUR_WHITE};
+		if (beach) return TileGround{GROUND_TEXTURE_BEACH, COLOUR_WHITE};
 		return TileGround{static_cast<uint>(GROUND_TEXTURE_SHORE + SLOPE_TO_SHORE[slope]), COLOUR_WHITE, true};
 	};
 
@@ -1602,7 +1650,7 @@ static TileGround AddTileSprites(uint x, uint y, const std::array<uint8_t, 4> &h
 
 	TileGround result;
 	if (ground.empty()) {
-		result = ground_only ? GetTileGround(Tile(tile), x, y) : TileGround{GROUND_TEXTURE_GRASS, COLOUR_WHITE};
+		result = ground_only ? GetTileGround(Tile(tile), x, y, false) : TileGround{GROUND_TEXTURE_GRASS, COLOUR_WHITE};
 	} else {
 		uint texture = textures.Get(ground, flat_foundation ? std::array<uint8_t, 4>{} : heights);
 		result = texture == GROUND_TEXTURE_NONE ? TileGround{GROUND_TEXTURE_NONE, TerrainColour{0x80, 0x80, 0x80}} : TileGround{texture, COLOUR_WHITE, true};
@@ -1630,7 +1678,11 @@ void BuildTerrainChunkMesh(uint chunk_x, uint chunk_y, GroundTextures &textures,
 	static constexpr float SLOPE_SCALE = 1.5f * TILE_HEIGHT / TILE_SIZE; // a little more than the true slope, as the 2D ground sprites shade slopes strongly
 
 	mesh.vertices.clear();
+	mesh.water.clear();
 	mesh.sprites.clear();
+
+	/* With ground textures in the model package, coasts are land that goes down into the water. */
+	const bool pack_ground = pack != nullptr && pack->HasGround();
 	mesh.models.clear();
 	mesh.parts.clear();
 	mesh.live.clear();
@@ -1656,7 +1708,18 @@ void BuildTerrainChunkMesh(uint chunk_x, uint chunk_y, GroundTextures &textures,
 			mesh.min_height = std::min<uint>(mesh.min_height, std::min({hn, hw, he, hs}));
 			mesh.max_height = std::max<uint>(mesh.max_height, std::max({hn, hw, he, hs}));
 
-			/* Light the tile as one flat surface, using the average slope in both directions. */
+			/* Where a coast is drawn as land that goes down into the water, its corners in the sea lie below the water. */
+			float fn = hn, fw = hw, fe = he, fs = hs;
+			bool shore = pack_ground && IsShoreSlope(tile, x, y);
+			if (shore) {
+				if (IsSeaCorner(x, y)) fn = -SEABED_DEPTH;
+				if (IsSeaCorner(x + 1, y)) fw = -SEABED_DEPTH;
+				if (IsSeaCorner(x, y + 1)) fe = -SEABED_DEPTH;
+				if (IsSeaCorner(x + 1, y + 1)) fs = -SEABED_DEPTH;
+			}
+
+			/* Light the tile as one flat surface, using the average slope in both directions.
+			 * A coast is lit as the slope it is on the map: the steeper drop below the water would make it too dark or too bright. */
 			float nx = -((hw + hs) - (hn + he)) * 0.5f * SLOPE_SCALE;
 			float ny = -((he + hs) - (hn + hw)) * 0.5f * SLOPE_SCALE;
 			float light = (nx * SUN_X + ny * SUN_Y + SUN_Z) / std::sqrt(nx * nx + ny * ny + 1.0f);
@@ -1684,7 +1747,7 @@ void BuildTerrainChunkMesh(uint chunk_x, uint chunk_y, GroundTextures &textures,
 				int low = std::min({hn, hw, he, hs});
 				ground = AddTileSprites(x, y, {static_cast<uint8_t>(hn - low), static_cast<uint8_t>(hw - low), static_cast<uint8_t>(he - low), static_cast<uint8_t>(hs - low)}, textures, atlas, pack, mesh, selected);
 			} else {
-				ground = GetTileGround(tile, x, y);
+				ground = GetTileGround(tile, x, y, pack_ground);
 			}
 			if (ground.shaded) light = AMBIENT + DIFFUSE * SUN_Z;
 			/* A slight checkerboard keeps individual tiles recognisable where there is no texture. */
@@ -1696,8 +1759,8 @@ void BuildTerrainChunkMesh(uint chunk_x, uint chunk_y, GroundTextures &textures,
 			uint8_t g = static_cast<uint8_t>(std::clamp(ground.colour.g * light, 0.0f, 255.0f));
 			uint8_t b = static_cast<uint8_t>(std::clamp(ground.colour.b * light, 0.0f, 255.0f));
 
-			auto vertex = [&](uint vx, uint vy, int h) {
-				return TerrainVertex{static_cast<float>(vx), static_cast<float>(vy), static_cast<float>(h), r, g, b, 0, static_cast<float>(ground.texture), static_cast<float>(vx - x), static_cast<float>(vy - y)};
+			auto vertex = [&](uint vx, uint vy, float h) {
+				return TerrainVertex{static_cast<float>(vx), static_cast<float>(vy), h, r, g, b, 0, static_cast<float>(ground.texture), static_cast<float>(vx - x), static_cast<float>(vy - y)};
 			};
 			if (ground.foundation) {
 				/* Walls from the flat top of the foundation down to the ground around it. */
@@ -1725,17 +1788,47 @@ void BuildTerrainChunkMesh(uint chunk_x, uint chunk_y, GroundTextures &textures,
 				hn = hw = he = hs = std::min({hn, hw, he, hs});
 			}
 
-			TerrainVertex vn = vertex(x, y, hn);
-			TerrainVertex vw = vertex(x + 1, y, hw);
-			TerrainVertex ve = vertex(x, y + 1, he);
-			TerrainVertex vs = vertex(x + 1, y + 1, hs);
+			if (!shore) {
+				/* Foundations and tunnels may have changed the heights. */
+				fn = hn; fw = hw; fe = he; fs = hs;
+			}
+			TerrainVertex vn = vertex(x, y, fn);
+			TerrainVertex vw = vertex(x + 1, y, fw);
+			TerrainVertex ve = vertex(x, y + 1, fe);
+			TerrainVertex vs = vertex(x + 1, y + 1, fs);
+
+			if (pack_ground && ground.texture == GROUND_TEXTURE_WATER && IsTileType(tile, TileType::Water) && GetWaterClass(tile) == WaterClass::Sea && std::max({hn, hw, he, hs}) == 0) {
+				/* The sea is shallow in corners where it meets something other than sea or coast, to go with the water over the coasts next to it. */
+				static constexpr uint8_t SHALLOW = static_cast<uint8_t>((1.0f - 0.1f) * 64.0f);
+				if (!IsSeaCorner(x, y)) vn.depth = SHALLOW;
+				if (!IsSeaCorner(x + 1, y)) vw.depth = SHALLOW;
+				if (!IsSeaCorner(x, y + 1)) ve.depth = SHALLOW;
+				if (!IsSeaCorner(x + 1, y + 1)) vs.depth = SHALLOW;
+			}
 
 			/* Split the tile along the diagonal with the smallest height difference,
 			 * so a single raised or lowered corner gives one flat and one sloped half. */
-			if (abs(hn - hs) <= abs(hw - he)) {
+			bool split_ns = std::abs(fn - fs) <= std::abs(fw - fe);
+			if (split_ns) {
 				mesh.vertices.insert(mesh.vertices.end(), {vw, vn, vs, ve});
 			} else {
 				mesh.vertices.insert(mesh.vertices.end(), {vn, ve, vw, vs});
+			}
+
+			if (shore && std::min({fn, fw, fe, fs}) < 0 && (mesh.vertices.size() + mesh.water.size()) / 4 < MAX_CHUNK_QUADS) {
+				/* The water over the land, at sea level. Each corner knows how deep the land is below it;
+				 * the quad is split like the land, so that the depth in between is right as well. */
+				uint8_t lit = static_cast<uint8_t>(std::clamp(255.0f * (AMBIENT + DIFFUSE * SUN_Z) * 0.5f, 0.0f, 255.0f));
+				auto surface = [&](uint vx, uint vy, float h) {
+					uint8_t depth = static_cast<uint8_t>(std::clamp((h + 1.0f) * 64.0f, 0.0f, 255.0f));
+					return TerrainVertex{static_cast<float>(vx), static_cast<float>(vy), 0.0f, lit, lit, lit, depth, static_cast<float>(GROUND_TEXTURE_SHALLOWS), static_cast<float>(vx - x), static_cast<float>(vy - y)};
+				};
+				TerrainVertex wn = surface(x, y, fn), ww = surface(x + 1, y, fw), we = surface(x, y + 1, fe), ws = surface(x + 1, y + 1, fs);
+				if (split_ns) {
+					mesh.water.insert(mesh.water.end(), {ww, wn, ws, we});
+				} else {
+					mesh.water.insert(mesh.water.end(), {wn, we, ww, ws});
+				}
 			}
 
 			bool models = pack != nullptr && !pack->IsEmpty();
@@ -1765,6 +1858,10 @@ void BuildTerrainChunkMesh(uint chunk_x, uint chunk_y, GroundTextures &textures,
 	uint64_t hash = 0xcbf29ce484222325ULL;
 	const uint8_t *data = reinterpret_cast<const uint8_t *>(mesh.vertices.data());
 	for (size_t i = 0; i < mesh.vertices.size() * sizeof(TerrainVertex); i++) {
+		hash = (hash ^ data[i]) * 0x100000001b3ULL;
+	}
+	data = reinterpret_cast<const uint8_t *>(mesh.water.data());
+	for (size_t i = 0; i < mesh.water.size() * sizeof(TerrainVertex); i++) {
 		hash = (hash ^ data[i]) * 0x100000001b3ULL;
 	}
 	data = reinterpret_cast<const uint8_t *>(mesh.sprites.data());
