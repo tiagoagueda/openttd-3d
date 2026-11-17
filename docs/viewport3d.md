@@ -1,9 +1,9 @@
 # Experimental 3D view
 
 This fork adds a second, 3D view of the map next to the normal 2D game.
-The 2D game, its GUI, the simulation and multiplayer are unchanged: the 3D view only reads the map.
+The 2D game, its GUI, the simulation and multiplayer are unchanged: the 3D view reads the map, and building in it goes through the same tools and commands as building in the 2D views.
 
-Status: the window shows the map and the vehicles as the 2D game draws them, apart from signs, with a free camera.
+Status: the window shows the map and the vehicles as the 2D game draws them, apart from signs, with a free camera, and the build tools of the game work in it.
 Everything is drawn with the graphics of the 2D game, so it follows the base set and NewGRFs in use.
 The ground, tracks and roads lie on the terrain. Trees, buildings, stations, industries, signals, bridges, vehicles and the like are flat sprites that stand upright and turn to face the camera.
 From the viewing angle of the 2D game that looks the same as there; from other angles it shows that they are not real 3D models yet.
@@ -19,9 +19,13 @@ To force one, type `view3d vulkan` or `view3d opengl`.
 
 | Action | Effect |
 | --- | --- |
-| Drag with the left mouse button | Move over the map |
-| Drag with the right mouse button | Rotate and tilt the camera |
+| Left mouse button | Use the selected build tool, or click what is on the tile, like in the 2D views |
+| Drag with the right mouse button | Move over the map |
+| Ctrl + drag with the right mouse button | Rotate and tilt the camera |
 | Mouse wheel | Zoom |
+
+Pick a tool from the toolbars of the game as usual, then click or drag in the 3D view.
+The tile selection of the tool is shown in both the 2D and the 3D view.
 
 Changes to the map, such as terraforming, show up in the 3D view right away.
 
@@ -85,9 +89,13 @@ Coordinates are OpenTTD's own world coordinates: 16 units per tile, x to the sou
 Heights are scaled down: the 2D game draws a height level as 8 pixels, which at its viewing angle of 30 degrees corresponds to about 3.3 world units rather than 8.
 With that scale the 3D view at the default angle has the proportions of the 2D game.
 
+To build in the 3D view, the window finds the spot on the ground below the cursor by following the line of sight through the cursor until it goes below the terrain.
+`GetTileBelowCursor()`, which all build tools of the game use, asks the 3D view first when the cursor is over it, so tools, dragging and the tile selection work without changes to the tools.
+The selection itself is drawn by the 2D game on the ground of a tile, so it arrives in the 3D view as part of the ground texture of that tile.
+
 The existing game is touched in a few small places:
 
-* `MarkTileDirtyByTile()` in `viewport.cpp` tells the 3D view which tile changed, and `CollectTileSprites()` at the end of that file tells it what a tile draws.
+* `MarkTileDirtyByTile()` in `viewport.cpp` tells the 3D view which tile changed, `SetSelectionTilesDirty()` tells it where the selection changed, `GetTileBelowCursor()` asks it for the tile below the cursor, and `CollectTileSprites()`, `HasTileSelection()` and `HandleView3DClicked()` at the end of that file tell it what a tile draws and pass on clicks.
 * `console_cmds.cpp` has the `view3d` command.
 * `window_type.h` has the new window class.
 * `lang/english.txt` has the strings of the window.
@@ -99,6 +107,8 @@ The existing game is touched in a few small places:
 * Terrain is built for the part of the map that has been in view and stays in memory until the window is closed. On the very largest maps, looking at all of it uses a lot of memory.
 * The ground textures and sprites are taken from the game when the window opens or when they are first needed. After changing NewGRFs in a running game, close and reopen the window.
 * Signs, station names and the shadows of aircraft are not drawn yet.
+* Vehicles and signs cannot be clicked in the 3D view yet, only tiles. Tools that pick a vehicle, such as cloning a train, need the 2D view.
+* The tile below the cursor is found on the bare terrain, so behind a tall building the tile that the building hides is picked.
 * What is in front of what is decided per sprite, so now and then a vehicle shows through the corner of a building it passes behind.
 * Buildings made of several sprites or covering several tiles can come apart when the camera is rotated, and tiles on foundations draw their ground as an upright sprite too.
 * Transparency options of the 2D game are followed, but see-through sprites are left out rather than drawn see-through.

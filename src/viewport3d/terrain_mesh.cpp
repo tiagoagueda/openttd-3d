@@ -251,9 +251,10 @@ static void AddFences(Tile tile, uint x, uint y, SpriteAtlas &atlas, TerrainChun
  * @param textures The ground textures.
  * @param atlas The atlas that provides the sprites.
  * @param mesh The mesh to add to.
+ * @param ground_only Only look at the ground; used for landscape tiles with a selection on them, which add their trees and fences themselves.
  * @return How to draw the ground of the tile.
  */
-static TileGround AddTileSprites(uint x, uint y, const std::array<uint8_t, 4> &heights, GroundTextures &textures, SpriteAtlas &atlas, TerrainChunkMesh &mesh)
+static TileGround AddTileSprites(uint x, uint y, const std::array<uint8_t, 4> &heights, GroundTextures &textures, SpriteAtlas &atlas, TerrainChunkMesh &mesh, bool ground_only = false)
 {
 	static TileSprites sprites;
 	static std::vector<SpritePart> group_parts;
@@ -267,7 +268,7 @@ static TileGround AddTileSprites(uint x, uint y, const std::array<uint8_t, 4> &h
 
 	uint index = 0;
 	for (const TileSpriteGroup &group : sprites.groups) {
-		if (group.count == 0) continue;
+		if (group.count == 0 || ground_only) continue;
 
 		/* The sprite stands in the middle of its bounding box, so it covers the place it stands on from all sides. */
 		int size_x = group.xmax + 1 - group.xmin;
@@ -291,7 +292,7 @@ static TileGround AddTileSprites(uint x, uint y, const std::array<uint8_t, 4> &h
 		AddUprightSprite(atlas.Get(group_parts), centre_x, centre_y, static_cast<float>(group.zmin), nearer, mesh.sprites);
 	}
 
-	if (sprites.ground.empty()) return TileGround{GROUND_TEXTURE_GRASS, COLOUR_WHITE};
+	if (sprites.ground.empty()) return ground_only ? GetTileGround(Tile(tile), x, y) : TileGround{GROUND_TEXTURE_GRASS, COLOUR_WHITE};
 	uint texture = textures.Get(sprites.ground, heights);
 	if (texture == GROUND_TEXTURE_NONE) return TileGround{GROUND_TEXTURE_NONE, TerrainColour{0x80, 0x80, 0x80}};
 	return TileGround{texture, COLOUR_WHITE, true};
@@ -358,10 +359,13 @@ void BuildTerrainChunkMesh(uint chunk_x, uint chunk_y, GroundTextures &textures,
 					break;
 			}
 
+			/* The selection of a build tool is drawn on the ground, so the ground of selected tiles comes from the 2D game too. */
+			bool selected = !collect && HasTileSelection(TileXY(x, y));
+
 			TileGround ground;
-			if (collect) {
+			if (collect || selected) {
 				int low = std::min({hn, hw, he, hs});
-				ground = AddTileSprites(x, y, {static_cast<uint8_t>(hn - low), static_cast<uint8_t>(hw - low), static_cast<uint8_t>(he - low), static_cast<uint8_t>(hs - low)}, textures, atlas, mesh);
+				ground = AddTileSprites(x, y, {static_cast<uint8_t>(hn - low), static_cast<uint8_t>(hw - low), static_cast<uint8_t>(he - low), static_cast<uint8_t>(hs - low)}, textures, atlas, mesh, selected);
 			} else {
 				ground = GetTileGround(tile, x, y);
 			}

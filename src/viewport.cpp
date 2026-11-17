@@ -461,6 +461,10 @@ static Point GetTileFromScreenXY(int x, int y, int zoom_x, int zoom_y)
 
 Point GetTileBelowCursor()
 {
+#ifdef WITH_VIEWPORT3D
+	/* The 3D view has no viewport; it finds the tile itself. */
+	if (Point pt; GetView3DTileBelowCursor(pt)) return pt;
+#endif
 	return GetTileFromScreenXY(_cursor.pos.x, _cursor.pos.y, _cursor.pos.x, _cursor.pos.y);
 }
 
@@ -2184,6 +2188,10 @@ static void SetSelectionTilesDirty()
 		/* make sure everything is multiple of TILE_SIZE */
 		assert((x_end | y_end | x_start | y_start) % TILE_SIZE == 0);
 
+#ifdef WITH_VIEWPORT3D
+		MarkAreaDirtyForView3D(x_start / TILE_SIZE, y_start / TILE_SIZE, x_end / TILE_SIZE, y_end / TILE_SIZE);
+#endif
+
 		/* How it works:
 		 * Suppose we have to mark dirty rectangle of 3x4 tiles:
 		 *   x
@@ -3899,6 +3907,7 @@ void CollectTileSprites(TileIndex tile, TileSprites &sprites)
 	_cur_ti.y = TileY(tile) * TILE_SIZE;
 	std::tie(_cur_ti.tileh, _cur_ti.z) = GetTilePixelSlope(tile);
 	_tile_type_procs[GetTileType(tile)]->draw_tile_proc(&_cur_ti);
+	if (_cur_ti.tile != INVALID_TILE) DrawTileSelection(&_cur_ti);
 
 	Point origin = RemapCoords(_cur_ti.x, _cur_ti.y, _cur_ti.z);
 	auto part = [&](SpriteID image, PaletteID pal, const SubSprite *sub, int x, int y) {
@@ -3941,5 +3950,49 @@ void CollectTileSprites(TileIndex tile, TileSprites &sprites)
 	_vd.tile_sprites_to_draw.clear();
 	_vd.parent_sprites_to_draw.clear();
 	_vd.child_screen_sprites_to_draw.clear();
+}
+
+/**
+ * Test whether the 2D game draws a selection or highlight on a tile, like the area a build tool is about to build on.
+ * @param tile The tile.
+ * @return Whether something is drawn on top of the tile.
+ */
+bool HasTileSelection(TileIndex tile)
+{
+	if (!_vd.tile_sprites_to_draw.empty() || !_vd.parent_sprites_to_draw.empty() || !_vd.child_screen_sprites_to_draw.empty()) return false;
+
+	_vd.foundation_part = FoundationPart::None;
+	_vd.foundation[FoundationPart::Normal] = -1;
+	_vd.foundation[FoundationPart::Halftile] = -1;
+
+	TileInfo ti;
+	ti.tile = tile;
+	ti.x = TileX(tile) * TILE_SIZE;
+	ti.y = TileY(tile) * TILE_SIZE;
+	std::tie(ti.tileh, ti.z) = GetTilePixelSlope(tile);
+	DrawTileSelection(&ti);
+
+	bool result = !_vd.tile_sprites_to_draw.empty() || !_vd.parent_sprites_to_draw.empty() || !_vd.child_screen_sprites_to_draw.empty();
+	_vd.tile_sprites_to_draw.clear();
+	_vd.parent_sprites_to_draw.clear();
+	_vd.child_screen_sprites_to_draw.clear();
+	return result;
+}
+
+/**
+ * The 3D view was clicked: use the active build tool at the tile below the cursor, or click that tile.
+ * This is what HandleViewportClicked() does for the 2D views.
+ * @return Whether the click did something.
+ */
+bool HandleView3DClicked()
+{
+	if ((_thd.place_mode & HT_DRAG_MASK) != HT_NONE) {
+		PlaceObject();
+		return true;
+	}
+
+	Point pt = GetTileBelowCursor();
+	if (pt.x == -1) return false;
+	return ClickTile(TileVirtXY(pt.x, pt.y));
 }
 #endif /* WITH_VIEWPORT3D */

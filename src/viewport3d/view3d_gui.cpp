@@ -13,6 +13,7 @@
 #include "renderer3d.h"
 #include "vehicle_sprites.h"
 #include "terrain_mesh.h"
+#include "tile_sprites.h"
 #include "../blitter/factory.hpp"
 #include "../gfx_func.h"
 #include "../landscape.h"
@@ -69,8 +70,7 @@ class View3DWindow : public Window {
 	std::vector<SpriteVertex> vehicle_sprites; ///< The vehicles in view.
 	uint64_t vehicle_hash = 0; ///< Hash of the vehicles in the last image, to see whether any moved.
 
-	bool panning = false; ///< Whether the view is being dragged with the left mouse button.
-	Point pan_last{}; ///< Cursor position at the previous step of the drag.
+	std::chrono::steady_clock::time_point textures_reset{}; ///< When the ground textures were last started afresh.
 
 public:
 	View3DWindow(WindowDesc &desc, WindowNumber window_number) : Window(desc)
@@ -115,6 +115,87 @@ public:
 		this->terrain_changed = true;
 	}
 
+	/**
+	 * An area of tiles changed, for example the selection of a build tool; remember to rebuild the terrain there.
+	 * @param x_start First tile along the x axis.
+	 * @param y_start First tile along the y axis.
+	 * @param x_end Last tile along the x axis.
+	 * @param y_end Last tile along the y axis.
+	 */
+	void MarkAreaDirty(uint x_start, uint y_start, uint x_end, uint y_end)
+	{
+		uint cx_end = std::min(x_end / TERRAIN_CHUNK_SIZE, this->chunks_x - 1);
+		uint cy_end = std::min(y_end / TERRAIN_CHUNK_SIZE, this->chunks_y - 1);
+		for (uint cy = y_start / TERRAIN_CHUNK_SIZE; cy <= cy_end; cy++) {
+			for (uint cx = x_start / TERRAIN_CHUNK_SIZE; cx <= cx_end; cx++) {
+				this->chunks[cy * this->chunks_x + cx].dirty = true;
+			}
+		}
+		this->terrain_changed = true;
+	}
+
+	/**
+	 * Find the spot on the ground below the cursor.
+	 * @param[out] pt The spot in world coordinates, or -1, -1 when the cursor is not over the map.
+	 * @return Whether the cursor is over this window, so no 2D view has to be asked.
+	 */
+	bool GetTileBelowCursor(Point &pt) const
+	{
+		if (FindWindowFromPt(_cursor.pos.x, _cursor.pos.y) != this) return false;
+
+		pt = {-1, -1};
+		if (this->renderer == nullptr) return true;
+		const NWidgetBase *view = this->GetWidget<NWidgetBase>(WID_V3D_VIEW);
+		int x = _cursor.pos.x - this->left - view->pos_x;
+		int y = _cursor.pos.y - this->top - view->pos_y;
+		if (x < 0 || y < 0 || x >= static_cast<int>(view->current_x) || y >= static_cast<int>(view->current_y)) return true;
+
+		/* The line of sight through the cursor. */
+		Vec3 eye = this->camera.GetEye();
+		Vec3 forward = Normalise(this->camera.target - eye);
+		Vec3 side = Normalise(Cross(forward, Vec3{0, 0, 1}));
+		Vec3 up = Cross(side, forward);
+		float half_height = std::tan(Camera3D::FOV_Y / 2);
+		float half_width = half_height * view->current_x / view->current_y;
+		Vec3 direction = Normalise(forward
+				+ side * (((x + 0.5f) / view->current_x * 2 - 1) * half_width)
+				+ up * ((1 - (y + 0.5f) / view->current_y * 2) * half_height));
+		if (direction.z > -0.001f) return true; // Looking at the sky.
+
+		/* Walk along the line where it is low enough to meet the ground, until it goes below the ground. */
+		static constexpr float STEP = 2.0f;
+		float max_height = _settings_game.construction.map_height_limit * HEIGHT_LEVEL_SIZE;
+		float start = std::max(0.0f, (eye.z - max_height) / -direction.z);
+		float end = eye.z / -direction.z;
+		auto above_ground = [&](float distance) {
+			Vec3 p = eye + direction * distance;
+			return p.z - GetGroundHeight(p.x, p.y);
+		};
+		if (above_ground(start) < 0) return true;
+
+		float low = start;
+		float high = -1;
+		for (float distance = start + STEP; distance < end + STEP; distance += STEP) {
+			if (above_ground(distance) < 0) {
+				high = distance;
+				break;
+			}
+			low = distance;
+		}
+		if (high < 0) return true;
+
+		/* Narrow it down to where the line meets the ground. */
+		for (int i = 0; i < 10; i++) {
+			float middle = (low + high) / 2;
+			(above_ground(middle) < 0 ? high : low) = middle;
+		}
+
+		Vec3 hit = eye + direction * high;
+		if (hit.x < 0 || hit.y < 0 || hit.x >= Map::MaxX() * TILE_SIZE || hit.y >= Map::MaxY() * TILE_SIZE) return true;
+		pt = {static_cast<int>(hit.x), static_cast<int>(hit.y)};
+		return true;
+	}
+
 	void DrawWidget(const Rect &r, WidgetID widget) const override
 	{
 		switch (widget) {
@@ -138,44 +219,35 @@ public:
 
 	void OnClick(Point, WidgetID widget, int) override
 	{
-		if (widget != WID_V3D_VIEW) return;
-		this->panning = true;
-		this->pan_last = _cursor.pos;
-	}
-
-	void OnMouseLoop() override
-	{
-		if (!this->panning) return;
-		if (!IsLeftButtonDown()) {
-			this->panning = false;
-			return;
-		}
-
-		Point delta{_cursor.pos.x - this->pan_last.x, _cursor.pos.y - this->pan_last.y};
-		if (delta.x == 0 && delta.y == 0) return;
-		this->pan_last = _cursor.pos;
-
-		/* Move the ground along with the cursor: one pixel is this many world units at the target. */
-		const NWidgetBase *view = this->GetWidget<NWidgetBase>(WID_V3D_VIEW);
-		float scale = this->camera.distance * 2.0f * std::tan(Camera3D::FOV_Y / 2) / std::max<uint>(view->current_y, 1);
-		/* The ground is seen at an angle, so vertical cursor movement covers more of it. */
-		float forward_scale = scale / std::max(0.2f, std::sin(this->camera.pitch));
-		this->camera.target = this->camera.target - this->camera.GetRight() * (delta.x * scale) + this->camera.GetForward() * (delta.y * forward_scale);
-		this->ClampCamera();
+		/* The left mouse button does what it does in the 2D views: use the active build tool, or click what is on the tile. */
+		if (widget == WID_V3D_VIEW) HandleView3DClicked();
 	}
 
 	bool OnRightClick(Point, WidgetID widget) override
 	{
 		if (widget != WID_V3D_VIEW || _scrolling_viewport) return false;
+		/* Dragging with the right mouse button moves the map like in the 2D views; OnScroll() gets the movement. */
 		_scrolling_viewport = true;
+		_cursor.fix_at = (_settings_client.gui.scroll_mode == ViewportScrollMode::ViewportRMBFixed ||
+				_settings_client.gui.scroll_mode == ViewportScrollMode::MapRMBFixed);
 		return true;
 	}
 
 	void OnScroll(Point delta) override
 	{
-		static constexpr float RADIANS_PER_PIXEL = 0.006f;
-		this->camera.yaw -= delta.x * RADIANS_PER_PIXEL;
-		this->camera.pitch += delta.y * RADIANS_PER_PIXEL;
+		if (IsCtrlPressed()) {
+			/* Look around. */
+			static constexpr float RADIANS_PER_PIXEL = 0.006f;
+			this->camera.yaw -= delta.x * RADIANS_PER_PIXEL;
+			this->camera.pitch += delta.y * RADIANS_PER_PIXEL;
+		} else {
+			/* Move over the map: one pixel is this many world units at the target. */
+			const NWidgetBase *view = this->GetWidget<NWidgetBase>(WID_V3D_VIEW);
+			float scale = this->camera.distance * 2.0f * std::tan(Camera3D::FOV_Y / 2) / std::max<uint>(view->current_y, 1);
+			/* The ground is seen at an angle, so vertical movement covers more of it. */
+			float forward_scale = scale / std::max(0.2f, std::sin(this->camera.pitch));
+			this->camera.target = this->camera.target + this->camera.GetRight() * (delta.x * scale) - this->camera.GetForward() * (delta.y * forward_scale);
+		}
 		this->ClampCamera();
 	}
 
@@ -211,6 +283,16 @@ public:
 		const NWidgetBase *view = this->GetWidget<NWidgetBase>(WID_V3D_VIEW);
 		if (view->current_x == 0 || view->current_y == 0) return;
 
+		/* Selections and new buildings keep adding ground textures. When there is no room left, start afresh
+		 * with only the ones in use now; not too often, in case a single view needs more than there is room for. */
+		auto now = std::chrono::steady_clock::now();
+		if (this->ground_textures->IsFull() && now - this->textures_reset > std::chrono::seconds(10)) {
+			this->textures_reset = now;
+			this->ground_textures = std::make_unique<GroundTextures>(this->renderer->GetMaxGroundTextures());
+			for (ChunkState &chunk : this->chunks) chunk.dirty = true;
+			this->terrain_changed = true;
+		}
+
 		bool geometry_changed = (this->view_changed || this->terrain_changed) && this->UpdateChunks(view->current_x, view->current_y);
 
 		/* Vehicles move all the time, so they are looked up for every image. */
@@ -234,6 +316,43 @@ public:
 	}
 
 private:
+	/**
+	 * Get the height of the ground as the 3D view draws it.
+	 * @param x Position along the x axis in world units.
+	 * @param y Position along the y axis in world units.
+	 * @return The height in world units; outside of the map it is so low that nothing is below it.
+	 */
+	static float GetGroundHeight(float x, float y)
+	{
+		if (x < 0 || y < 0 || x >= Map::MaxX() * TILE_SIZE || y >= Map::MaxY() * TILE_SIZE) return -1.0e9f;
+
+		uint tx = static_cast<uint>(x) / TILE_SIZE;
+		uint ty = static_cast<uint>(y) / TILE_SIZE;
+		float fx = x / TILE_SIZE - tx;
+		float fy = y / TILE_SIZE - ty;
+		int hn = TileHeight(TileXY(tx, ty));
+		int hw = TileHeight(TileXY(tx + 1, ty));
+		int he = TileHeight(TileXY(tx, ty + 1));
+		int hs = TileHeight(TileXY(tx + 1, ty + 1));
+
+		/* The same two triangles as BuildTerrainChunkMesh() makes. */
+		float height;
+		if (abs(hn - hs) <= abs(hw - he)) {
+			if (fx >= fy) {
+				height = hn + (hw - hn) * (fx - fy) + (hs - hn) * fy;
+			} else {
+				height = hn + (he - hn) * (fy - fx) + (hs - hn) * fx;
+			}
+		} else {
+			if (fx + fy <= 1) {
+				height = hn + (hw - hn) * fx + (he - hn) * fy;
+			} else {
+				height = hs + (he - hs) * (1 - fx) + (hw - hs) * (1 - fy);
+			}
+		}
+		return height * HEIGHT_LEVEL_SIZE;
+	}
+
 	/**
 	 * Look at the same spot as the main view.
 	 * This is done on the first frame rather than in the constructor: when the window
@@ -418,4 +537,26 @@ void ShowView3DWindow(std::string_view backend)
 void MarkTileDirtyForView3D(TileIndex tile)
 {
 	if (_view3d_window != nullptr) _view3d_window->MarkTileDirty(tile);
+}
+
+/**
+ * Tell the 3D view that an area of tiles changed.
+ * @param x_start First tile along the x axis.
+ * @param y_start First tile along the y axis.
+ * @param x_end Last tile along the x axis.
+ * @param y_end Last tile along the y axis.
+ */
+void MarkAreaDirtyForView3D(uint x_start, uint y_start, uint x_end, uint y_end)
+{
+	if (_view3d_window != nullptr) _view3d_window->MarkAreaDirty(x_start, y_start, x_end, y_end);
+}
+
+/**
+ * Find the spot on the ground below the cursor, when the cursor is over the 3D view.
+ * @param[out] pt The spot in world coordinates, or -1, -1 when the cursor is not over the map.
+ * @return Whether the cursor is over the 3D view; \a pt is only set when it is.
+ */
+bool GetView3DTileBelowCursor(Point &pt)
+{
+	return _view3d_window != nullptr && _view3d_window->GetTileBelowCursor(pt);
 }

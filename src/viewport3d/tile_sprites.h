@@ -41,5 +41,7 @@ struct TileSprites {
 };
 
 void CollectTileSprites(TileIndex tile, TileSprites &sprites);
+bool HasTileSelection(TileIndex tile);
+bool HandleView3DClicked();
 
 #endif /* VIEWPORT3D_TILE_SPRITES_H */

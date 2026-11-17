@@ -52,6 +52,9 @@ public:
 
 	uint Get(std::span<const SpritePart> sprites, const std::array<uint8_t, 4> &heights);
 
+	/** Whether there is no room left for more textures. */
+	bool IsFull() const { return this->next_layer >= this->max_layers; }
+
 	/** The textures that were made since the last call. */
 	std::vector<Pending> TakePending()
 	{

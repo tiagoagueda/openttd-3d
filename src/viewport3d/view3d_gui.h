@@ -10,9 +10,12 @@
 #ifndef VIEWPORT3D_VIEW3D_GUI_H
 #define VIEWPORT3D_VIEW3D_GUI_H
 
+#include "../core/geometry_type.hpp"
 #include "../tile_type.h"
 
 void ShowView3DWindow(std::string_view backend = {});
 void MarkTileDirtyForView3D(TileIndex tile);
+void MarkAreaDirtyForView3D(uint x_start, uint y_start, uint x_end, uint y_end);
+bool GetView3DTileBelowCursor(Point &pt);
 
 #endif /* VIEWPORT3D_VIEW3D_GUI_H */
