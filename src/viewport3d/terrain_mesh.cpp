@@ -40,6 +40,7 @@
 #include "../object_map.h"
 #include "../rail_map.h"
 #include "../rail.h"
+#include "../newgrf_railtype.h"
 #include "../road_map.h"
 #include "../station_map.h"
 #include "../town.h"
@@ -431,7 +432,108 @@ static void AddWallSprite(const AtlasSprite &sprite, const std::array<float, 3> 
  * @param atlas The atlas that provides the sprites.
  * @param mesh The mesh to add to.
  */
-static void AddFences(Tile tile, uint x, uint y, SpriteAtlas &atlas, TerrainChunkMesh &mesh)
+static void AddEdgeModel(const ModelPack::Entry &entry, const std::array<float, 3> &a, const std::array<float, 3> &b, TerrainChunkMesh &mesh)
+{
+	/* The model runs along x over 16 world units; stretch and shear it to run from a to b, and keep it upright. */
+	float dx = b[0] - a[0], dy = b[1] - a[1], dz = b[2] - a[2];
+	float length = std::sqrt(dx * dx + dy * dy);
+	if (length == 0) return;
+	float ux = dx / length, uy = dy / length;
+	float s = entry.scale;
+	ModelInstance &instance = mesh.models.emplace_back();
+	instance.model = entry.model;
+	instance.transform.m = {
+		dx / TILE_SIZE, dy / TILE_SIZE, dz / TILE_SIZE, 0,
+		-uy * s, ux * s, 0, 0,
+		0, 0, s, 0,
+		(a[0] + b[0]) * 0.5f, (a[1] + b[1]) * 0.5f, (a[2] + b[2]) * 0.5f, 1,
+	};
+	instance.tint = {1, 1, 1, 1};
+}
+
+/**
+ * Add 3D fences of a tile along one edge, or along the middle of the tile, a little inside the tile.
+ * @param entry The model of the fence.
+ * @param x X coordinate of the tile.
+ * @param y Y coordinate of the tile.
+ * @param heights Heights of the northern, western, eastern and southern corner, in height levels.
+ * @param from First corner of the line: 0 north, 1 west, 2 east, 3 south.
+ * @param to Second corner of the line.
+ * @param mesh The mesh to add to.
+ */
+static void AddFenceLine(const ModelPack::Entry &entry, uint x, uint y, const std::array<int, 4> &heights, uint from, uint to, TerrainChunkMesh &mesh)
+{
+	static constexpr float CORNERS[4][2] = {{0, 0}, {TILE_SIZE, 0}, {0, TILE_SIZE}, {TILE_SIZE, TILE_SIZE}};
+	static constexpr float INSET = 0.6f;
+	std::array<float, 3> a{x * TILE_SIZE + CORNERS[from][0], y * TILE_SIZE + CORNERS[from][1], heights[from] * HEIGHT_LEVEL_SIZE};
+	std::array<float, 3> b{x * TILE_SIZE + CORNERS[to][0], y * TILE_SIZE + CORNERS[to][1], heights[to] * HEIGHT_LEVEL_SIZE};
+	/* Move edges a little towards the middle of the tile, so fences of neighbouring tiles do not meet. */
+	float mx = (x + 0.5f) * TILE_SIZE, my = (y + 0.5f) * TILE_SIZE;
+	float ex = (a[0] + b[0]) * 0.5f - mx, ey = (a[1] + b[1]) * 0.5f - my;
+	float d = std::sqrt(ex * ex + ey * ey);
+	if (d > 1) {
+		for (auto *p : {&a, &b}) {
+			(*p)[0] -= ex / d * INSET;
+			(*p)[1] -= ey / d * INSET;
+		}
+	}
+	AddEdgeModel(entry, a, b, mesh);
+}
+
+/**
+ * Add 3D fences along a rail tile, where the 2D game draws its fences.
+ * @param tile The tile, a plain rail tile.
+ * @param x X coordinate of the tile.
+ * @param y Y coordinate of the tile.
+ * @param heights Heights of the corners, as for AddFenceLine().
+ * @param pack The package of 3D models.
+ * @param mesh The mesh to add to.
+ */
+static void AddRailFenceModels(Tile tile, uint x, uint y, const std::array<int, 4> &heights, const ModelPack &pack, TerrainChunkMesh &mesh)
+{
+	const ModelPack::Entry *entry = pack.Find(ModelKind::Fence, 0, 0);
+	if (entry == nullptr) return;
+	if (GetCustomRailSprite(GetRailTypeInfo(GetRailType(tile)), tile, RailSpriteType::Fences) != 0) return;
+
+	enum : uint { N, W, E, S };
+	auto line = [&](uint from, uint to) { AddFenceLine(*entry, x, y, heights, from, to, mesh); };
+	switch (GetRailGroundType(tile)) {
+		case RailGroundType::FenceNW: line(N, W); break;
+		case RailGroundType::FenceSE: line(E, S); break;
+		case RailGroundType::FenceSENW: line(N, W); line(E, S); break;
+		case RailGroundType::FenceNE: line(N, E); break;
+		case RailGroundType::FenceSW: line(W, S); break;
+		case RailGroundType::FenceNESW: line(N, E); line(W, S); break;
+		case RailGroundType::FenceVert1:
+		case RailGroundType::FenceVert2: line(N, S); break;
+		case RailGroundType::FenceHoriz1:
+		case RailGroundType::FenceHoriz2: line(W, E); break;
+		case RailGroundType::HalfTileWater: {
+			Slope slope = GetTileSlope(tile);
+			Corner corner = IsHalftileSlope(slope) ? GetHalftileSlopeCorner(slope) : OppositeCorner(GetHighestSlopeCorner(ComplementSlope(slope)));
+			if (corner == Corner::W || corner == Corner::E) {
+				line(N, S);
+			} else {
+				line(W, E);
+			}
+			break;
+		}
+		default: break;
+	}
+}
+
+/**
+ * Whether a sprite is one of the fences that the 2D game draws along rail tiles.
+ * @param sprite The sprite.
+ * @return True for the default rail fences.
+ */
+static bool IsRailFenceSprite(SpriteID sprite)
+{
+	sprite &= SPRITE_MASK;
+	return sprite >= SPR_TRACK_FENCE_FLAT_X && sprite < SPR_TRACK_FENCE_FLAT_X + 8;
+}
+
+static void AddFences(Tile tile, uint x, uint y, SpriteAtlas &atlas, const ModelPack *pack, TerrainChunkMesh &mesh)
 {
 	auto [slope, base_z] = GetTilePixelSlope(TileXY(x, y));
 	if (IsHalftileSlope(slope)) return;
@@ -445,6 +547,12 @@ static void AddFences(Tile tile, uint x, uint y, SpriteAtlas &atlas, TerrainChun
 	auto fence = [&](DiagDirection side, const SlopeIndexArray<uint8_t> &slope_offsets, const std::array<float, 3> &a, const std::array<float, 3> &b) {
 		uint type = GetFence(tile, side);
 		if (type == 0 || type > std::size(_clear_land_fence_sprites)) return;
+		if (pack != nullptr && !pack->IsEmpty()) {
+			if (const ModelPack::Entry *entry = pack->Find(ModelKind::Fence, 0, type); entry != nullptr) {
+				AddEdgeModel(*entry, {a[0], a[1], a[2] * WORLD_Z_SCALE}, {b[0], b[1], b[2] * WORLD_Z_SCALE}, mesh);
+				return;
+			}
+		}
 		SpriteID sprite = _clear_land_fence_sprites[type - 1];
 		if (sprite == 0) return;
 		AddWallSprite(atlas.Get(sprite + slope_offsets[slope], PAL_NONE), anchor, a, b, mesh);
@@ -806,6 +914,8 @@ static TileGround AddTileSprites(uint x, uint y, const std::array<uint8_t, 4> &h
 		AddSignalModels(Tile(tile), *pack, mesh, signal_places);
 	}
 
+	bool rail_fences = !ground_only && pack != nullptr && !pack->IsEmpty() && pack->Find(ModelKind::Fence, 0, 0) != nullptr && IsTileType(tile, TileType::Railway) && IsPlainRail(tile);
+
 	int tile_x = x * TILE_SIZE;
 	int tile_y = y * TILE_SIZE;
 	auto [slope, tile_z] = GetTilePixelSlope(tile);
@@ -830,6 +940,7 @@ static TileGround AddTileSprites(uint x, uint y, const std::array<uint8_t, 4> &h
 			continue;
 		}
 		if (ground_only || (replaced && !group.foundation)) continue;
+		if (rail_fences && IsRailFenceSprite(sprites.parts[group.first].sprite)) continue;
 		if (group.xmin == group.xmax && group.ymin == group.ymax &&
 				std::ranges::find(signal_places, std::pair<int, int>{group.xmin, group.ymin}) != signal_places.end()) continue;
 
@@ -991,11 +1102,12 @@ void BuildTerrainChunkMesh(uint chunk_x, uint chunk_y, GroundTextures &textures,
 			bool models = pack != nullptr && !pack->IsEmpty();
 			if (collect && models && IsTileType(tile, TileType::Railway) && IsPlainRail(tile)) {
 				AddTrackModels(tile, x, y, {hn, hw, he, hs}, *pack, mesh);
+				AddRailFenceModels(tile, x, y, {hn, hw, he, hs}, *pack, mesh);
 			}
 			if (!collect) {
 				if (IsTileType(tile, TileType::Trees) && !(models && AddTreeModels(tile, x, y, *pack, mesh))) AddTrees(tile, x, y, atlas, mesh);
 				if (IsTileType(tile, TileType::Clear)) {
-					if (IsClearGround(tile, ClearGround::Fields)) AddFences(tile, x, y, atlas, mesh);
+					if (IsClearGround(tile, ClearGround::Fields)) AddFences(tile, x, y, atlas, pack, mesh);
 					if (models && !ground.foundation) AddClearModel(tile, x, y, {hn, hw, he, hs}, *pack, mesh);
 				}
 			}
