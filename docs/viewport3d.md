@@ -104,7 +104,7 @@ A click first looks for a vehicle of which the sprite is below the cursor, then 
 3D models are read from binary glTF files (`model3d.cpp`) listed in the index of the OpenGFX3D package (`model_pack.cpp`).
 A vehicle with a model is put on the map at its position, turned to its direction of travel and tilted on slopes, and lit with the same light as the terrain.
 A rail vehicle model is stretched to the length of the vehicle in the train (`cached_veh_length`), and on diagonal track a little more, because there the vehicles of a train are further apart; vehicles that are flipped in the train are turned around.
-Parts of a model with a material named `company` take the colour of the owner.
+Parts of a model with a material named `company` take the colour of the owner. Parts with a material named `load` are the cargo: they are drawn only when the vehicle is loaded, lower down the emptier it is.
 
 A building with a model is part of the terrain chunk it stands on (`AddTileModel()` in `terrain_mesh.cpp`): the sprites the tile draws for the building are left out and the model is put on the highest corner of the footprint, turned to face the way the building faces.
 Houses and industries take the colour the game picked for them, stations, stops and objects that of their owner.

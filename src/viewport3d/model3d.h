@@ -26,7 +26,9 @@ struct ModelVertex {
 /** A 3D model: triangles with a colour per corner. */
 struct Model3D {
 	std::vector<ModelVertex> vertices; ///< The corners.
-	std::vector<uint32_t> indices; ///< Three corners per triangle.
+	std::vector<uint32_t> indices; ///< Three corners per triangle; the triangles of the load come last.
+	size_t num_fixed_indices = 0; ///< Number of indices before the triangles of the load.
+	float load_depth = 0; ///< How far the load can sink into the vehicle, in units of the model.
 };
 
 /** One model to draw somewhere on the map. */
@@ -34,6 +36,7 @@ struct ModelInstance {
 	uint model; ///< Which model, as given to Renderer3D::SetModel().
 	Matrix4 transform; ///< From the frame of the model to world units.
 	std::array<float, 4> tint; ///< Colour of the owner, each channel from 0 to 1.
+	float load = 1; ///< How full the vehicle is, from 0 (the load is not drawn) to 1.
 };
 
 bool LoadGlbModel(std::span<const uint8_t> data, Model3D &model, std::string &error);

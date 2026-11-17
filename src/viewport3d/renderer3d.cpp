@@ -61,6 +61,9 @@ struct GpuChunk {
 struct GpuModel {
 	bgfx::VertexBufferHandle vertices = BGFX_INVALID_HANDLE; ///< The corners.
 	bgfx::IndexBufferHandle indices = BGFX_INVALID_HANDLE; ///< The triangles.
+	uint32_t num_indices = 0; ///< Number of indices.
+	uint32_t num_fixed_indices = 0; ///< Number of indices before the triangles of the load.
+	float load_depth = 0; ///< How far the load can sink into the vehicle.
 };
 
 struct Renderer3D::Impl {
@@ -352,6 +355,9 @@ void Renderer3D::SetModel(uint id, const Model3D &model)
 
 	gpu.vertices = bgfx::createVertexBuffer(bgfx::copy(model.vertices.data(), static_cast<uint32_t>(model.vertices.size() * sizeof(ModelVertex))), impl.model_layout);
 	gpu.indices = bgfx::createIndexBuffer(bgfx::copy(model.indices.data(), static_cast<uint32_t>(model.indices.size() * sizeof(uint32_t))), BGFX_BUFFER_INDEX32);
+	gpu.num_indices = static_cast<uint32_t>(model.indices.size());
+	gpu.num_fixed_indices = static_cast<uint32_t>(model.num_fixed_indices);
+	gpu.load_depth = model.load_depth;
 }
 
 /**
@@ -472,14 +478,25 @@ void Renderer3D::Render(uint width, uint height, const Camera3D &camera, std::sp
 		const GpuModel &gpu = impl.models[instance.model];
 		if (!bgfx::isValid(gpu.vertices)) return;
 
-		bgfx::setTransform(instance.transform.m.data());
-		bgfx::setVertexBuffer(0, gpu.vertices);
-		bgfx::setIndexBuffer(gpu.indices);
-		bgfx::setUniform(impl.model_tint, instance.tint.data());
-		bgfx::setUniform(impl.model_sun, MODEL_SUN);
-		bgfx::setUniform(impl.model_light, MODEL_LIGHT);
-		bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A | BGFX_STATE_WRITE_Z | BGFX_STATE_DEPTH_TEST_LESS);
-		bgfx::submit(VIEW_SCENE, impl.model_program);
+		auto submit = [&](const Matrix4 &transform, uint32_t first, uint32_t count) {
+			if (count == 0) return;
+			bgfx::setTransform(transform.m.data());
+			bgfx::setVertexBuffer(0, gpu.vertices);
+			bgfx::setIndexBuffer(gpu.indices, first, count);
+			bgfx::setUniform(impl.model_tint, instance.tint.data());
+			bgfx::setUniform(impl.model_sun, MODEL_SUN);
+			bgfx::setUniform(impl.model_light, MODEL_LIGHT);
+			bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A | BGFX_STATE_WRITE_Z | BGFX_STATE_DEPTH_TEST_LESS);
+			bgfx::submit(VIEW_SCENE, impl.model_program);
+		};
+		submit(instance.transform, 0, gpu.num_fixed_indices);
+		if (instance.load <= 0) return;
+
+		/* The load sinks along the up axis of the model as the vehicle gets emptier. */
+		Matrix4 load = instance.transform;
+		float sink = (1 - std::min(instance.load, 1.0f)) * gpu.load_depth;
+		for (int i = 0; i < 3; i++) load.m[12 + i] -= load.m[8 + i] * sink;
+		submit(load, gpu.num_fixed_indices, gpu.num_indices - gpu.num_fixed_indices);
 	};
 
 	for (ChunkID id : chunks) {

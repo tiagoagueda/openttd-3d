@@ -81,6 +81,11 @@ static bool AddVehicleModel(const Vehicle *v, const ModelPack *pack, std::vector
 		static_cast<float>(v->x_pos), static_cast<float>(v->y_pos), v->z_pos * WORLD_Z_SCALE, 1,
 	};
 
+	/* The load shows how full the vehicle is; a little cargo shows a little load. */
+	instance.load = 0;
+	uint count = v->cargo.StoredCount();
+	if (count > 0 && v->cargo_cap > 0) instance.load = std::clamp(static_cast<float>(count) / v->cargo_cap, 0.2f, 1.0f);
+
 	instance.tint = {1, 1, 1, 1};
 	if (v->owner < MAX_COMPANIES) {
 		instance.tint = ModelPack::GetTint(_company_colours[v->owner]);

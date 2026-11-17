@@ -19,6 +19,8 @@
  * - positions, normals (made from the triangles when missing) and indices;
  * - the base colour of the material as the colour of the triangles.
  * A material with a name that starts with "company" takes the colour of the owner, multiplied with its base colour.
+ * Triangles of a material with a name that starts with "load" are the cargo of a vehicle: they are drawn
+ * only when the vehicle carries cargo, and sink into the vehicle as it gets emptier.
  * Textures, animations and skins are ignored.
  *
  * glTF has x to the left of the model, y up and z to its front. One unit is one world unit: a tile is 16 long.
@@ -54,7 +56,17 @@ public:
 		const nlohmann::json &scenes = this->json.at("scenes");
 		const nlohmann::json &scene = scenes.at(this->json.value("scene", 0));
 		for (const auto &node : scene.at("nodes")) this->AddNode(node.get<size_t>(), IDENTITY, 0);
-		if (this->model.indices.empty()) throw std::string("no triangles found");
+		if (this->model.indices.empty() && this->load_indices.empty()) throw std::string("no triangles found");
+
+		/* The load goes last, so that it can be drawn on its own. */
+		this->model.num_fixed_indices = this->model.indices.size();
+		float low = std::numeric_limits<float>::max(), high = std::numeric_limits<float>::lowest();
+		for (uint32_t index : this->load_indices) {
+			low = std::min(low, this->model.vertices[index].z);
+			high = std::max(high, this->model.vertices[index].z);
+		}
+		if (!this->load_indices.empty()) this->model.load_depth = high - low;
+		this->model.indices.insert(this->model.indices.end(), this->load_indices.begin(), this->load_indices.end());
 	}
 
 private:
@@ -96,6 +108,7 @@ private:
 	};
 
 	Model3D &model; ///< The model to fill.
+	std::vector<uint32_t> load_indices; ///< The triangles of the load, until they are added after the others.
 	nlohmann::json json; ///< The scene description.
 	std::span<const uint8_t> bin; ///< The binary data that the scene description refers to.
 
@@ -208,13 +221,16 @@ private:
 
 		/* The colour of the material. glTF has linear colours; the screen has not. */
 		std::array<uint8_t, 4> colour{200, 200, 200, 255};
+		bool is_load = false;
 		if (primitive.contains("material")) {
 			const nlohmann::json &material = this->json.at("materials").at(primitive.at("material").get<size_t>());
 			std::vector<float> factor{1, 1, 1, 1};
 			if (material.contains("pbrMetallicRoughness")) factor = material.at("pbrMetallicRoughness").value("baseColorFactor", factor);
 			if (factor.size() != 4) throw std::string("bad material colour");
 			for (int i = 0; i < 3; i++) colour[i] = static_cast<uint8_t>(std::clamp(std::pow(std::max(factor[i], 0.0f), 1 / 2.2f) * 255.0f + 0.5f, 0.0f, 255.0f));
-			if (material.value("name", std::string{}).starts_with("company")) colour[3] = 0;
+			std::string name = material.value("name", std::string{});
+			if (name.starts_with("company")) colour[3] = 0;
+			is_load = name.starts_with("load");
 		}
 
 		/* From glTF axes to the frame of our models: front, left, up. */
@@ -266,6 +282,11 @@ private:
 			}
 		}
 
+		if (is_load) {
+			this->load_indices.insert(this->load_indices.end(), this->model.indices.begin() + first_index, this->model.indices.end());
+			this->model.indices.resize(first_index);
+		}
+
 		for (size_t i = first; i < this->model.vertices.size(); i++) {
 			ModelVertex &v = this->model.vertices[i];
 			Vec3 n = Normalise(Vec3{v.nx, v.ny, v.nz});
@@ -288,8 +309,7 @@ private:
  */
 bool LoadGlbModel(std::span<const uint8_t> data, Model3D &model, std::string &error)
 {
-	model.vertices.clear();
-	model.indices.clear();
+	model = {};
 	try {
 		GlbReader reader(data, model);
 		return true;
@@ -298,7 +318,6 @@ bool LoadGlbModel(std::span<const uint8_t> data, Model3D &model, std::string &er
 	} catch (const nlohmann::json::exception &e) {
 		error = e.what();
 	}
-	model.vertices.clear();
-	model.indices.clear();
+	model = {};
 	return false;
 }
