@@ -41,6 +41,7 @@
 #include "../rail_map.h"
 #include "../rail.h"
 #include "../newgrf_railtype.h"
+#include "../elrail_func.h"
 #include "../road_map.h"
 #include "../station_map.h"
 #include "../town.h"
@@ -273,6 +274,13 @@ static void AddGroundModel(const ModelPack::Entry &entry, uint x, uint y, const 
 	instance.tint = {1, 1, 1, 1};
 }
 
+/** Middle and direction of each track on a tile, in the order of enum Track: X, Y, upper, lower, left, right. */
+static constexpr float TRACK_PIECES[6][4] = {
+	{TILE_SIZE * 0.5f, TILE_SIZE * 0.5f, 1, 0}, {TILE_SIZE * 0.5f, TILE_SIZE * 0.5f, 0, 1},
+	{TILE_SIZE * 0.25f, TILE_SIZE * 0.25f, 0.70710678f, -0.70710678f}, {TILE_SIZE * 0.75f, TILE_SIZE * 0.75f, 0.70710678f, -0.70710678f},
+	{TILE_SIZE * 0.75f, TILE_SIZE * 0.25f, 0.70710678f, 0.70710678f}, {TILE_SIZE * 0.25f, TILE_SIZE * 0.75f, 0.70710678f, 0.70710678f},
+};
+
 /**
  * Add a model that lies along a line on the ground of a tile, like a piece of track, tilted along the slope of the tile.
  * @param entry The model; it runs along its x axis.
@@ -333,22 +341,80 @@ static bool AddTrackModels(Tile tile, uint x, uint y, const std::array<int, 4> &
 	const ModelPack::Entry *diagonal = pack.Find(ModelKind::Track, 0, base + 1);
 	if (straight == nullptr || diagonal == nullptr) return false;
 
-	static constexpr float H = TILE_SIZE * 0.5f;
-	static constexpr float Q = TILE_SIZE * 0.25f;
-	static constexpr float D = 0.70710678f;
-	/* Middle and direction of each track, in the order of enum Track: X, Y, upper, lower, left, right. */
-	static constexpr float PIECES[6][4] = {
-		{H, H, 1, 0}, {H, H, 0, 1},
-		{Q, Q, D, -D}, {3 * Q, 3 * Q, D, -D},
-		{3 * Q, Q, D, D}, {Q, 3 * Q, D, D},
-	};
 	TrackBits bits = GetTrackBits(tile);
 	for (uint track = 0; track < 6; track++) {
 		if (!bits.Test(static_cast<Track>(track))) continue;
-		const float *p = PIECES[track];
+		const float *p = TRACK_PIECES[track];
 		AddPieceModel(track < 2 ? *straight : *diagonal, x, y, heights, p[0], p[1], p[2], p[3], mesh);
 	}
 	return true;
+}
+
+/**
+ * Whether the overhead wires of a rail tile are drawn with 3D models.
+ * @param tile The tile, a plain rail tile.
+ * @param pack The package of 3D models.
+ * @return True if the tile has wires, the package has models for them and no NewGRF draws them.
+ */
+static bool HasCatenaryModels(Tile tile, const ModelPack &pack)
+{
+	RailType rt = GetRailType(tile);
+	if (!HasRailCatenaryDrawn(rt)) return false;
+	if (GetCustomRailSprite(GetRailTypeInfo(rt), tile, RailSpriteType::Wires) != 0) return false;
+	if (GetCustomRailSprite(GetRailTypeInfo(rt), tile, RailSpriteType::Pylons) != 0) return false;
+	for (uint id = 0; id < 4; id++) {
+		if (pack.Find(ModelKind::Catenary, 0, id) == nullptr) return false;
+	}
+	return true;
+}
+
+/**
+ * Add 3D overhead wires above the tracks of a rail tile; the pylons come from AddTileSprites().
+ * @param tile The tile, a plain rail tile.
+ * @param x X coordinate of the tile.
+ * @param y Y coordinate of the tile.
+ * @param heights Heights of the corners, as for AddPieceModel().
+ * @param pack The package of 3D models.
+ * @param mesh The mesh to add to.
+ */
+static void AddWireModels(Tile tile, uint x, uint y, const std::array<int, 4> &heights, const ModelPack &pack, TerrainChunkMesh &mesh)
+{
+	if (!HasCatenaryModels(tile, pack)) return;
+	const ModelPack::Entry *straight = pack.Find(ModelKind::Catenary, 0, 2);
+	const ModelPack::Entry *diagonal = pack.Find(ModelKind::Catenary, 0, 3);
+	TrackBits bits = GetTrackBits(tile);
+	for (uint track = 0; track < 6; track++) {
+		if (!bits.Test(static_cast<Track>(track))) continue;
+		const float *p = TRACK_PIECES[track];
+		AddPieceModel(track < 2 ? *straight : *diagonal, x, y, heights, p[0], p[1], p[2], p[3], mesh);
+	}
+}
+
+/**
+ * Add a 3D pylon where the 2D game draws a pylon sprite.
+ * @param group The sprite group of the pylon.
+ * @param offset Which pylon sprite it is, from SPR_PYLON_BASE.
+ * @param pack The package of 3D models.
+ * @param mesh The mesh to add to.
+ */
+static void AddPylonModel(const TileSpriteGroup &group, uint offset, const ModelPack &pack, TerrainChunkMesh &mesh)
+{
+	/* The direction from the pylon to the track, by pylon sprite (PylonSpriteOffset). */
+	static constexpr float D = 0.70710678f;
+	static constexpr float ARM[8][2] = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}, {D, D}, {-D, -D}, {-D, D}, {D, -D}};
+	const ModelPack::Entry *entry = pack.Find(ModelKind::Catenary, 0, offset < 4 ? 0 : 1);
+	if (entry == nullptr) return;
+	auto [dx, dy] = ARM[offset];
+	float s = entry->scale;
+	ModelInstance &instance = mesh.models.emplace_back();
+	instance.model = entry->model;
+	instance.transform.m = {
+		dx * s, dy * s, 0, 0,
+		-dy * s, dx * s, 0, 0,
+		0, 0, s, 0,
+		group.xmin + 1.0f, group.ymin + 1.0f, group.zmin * WORLD_Z_SCALE, 1,
+	};
+	instance.tint = {1, 1, 1, 1};
 }
 
 /**
@@ -914,6 +980,7 @@ static TileGround AddTileSprites(uint x, uint y, const std::array<uint8_t, 4> &h
 		AddSignalModels(Tile(tile), *pack, mesh, signal_places);
 	}
 
+	bool catenary = !ground_only && pack != nullptr && !pack->IsEmpty() && IsTileType(tile, TileType::Railway) && IsPlainRail(tile) && HasCatenaryModels(Tile(tile), *pack);
 	bool rail_fences = !ground_only && pack != nullptr && !pack->IsEmpty() && pack->Find(ModelKind::Fence, 0, 0) != nullptr && IsTileType(tile, TileType::Railway) && IsPlainRail(tile);
 
 	int tile_x = x * TILE_SIZE;
@@ -941,6 +1008,14 @@ static TileGround AddTileSprites(uint x, uint y, const std::array<uint8_t, 4> &h
 		}
 		if (ground_only || (replaced && !group.foundation)) continue;
 		if (rail_fences && IsRailFenceSprite(sprites.parts[group.first].sprite)) continue;
+		if (catenary) {
+			SpriteID sprite = sprites.parts[group.first].sprite & SPRITE_MASK;
+			if (sprite >= SPR_WIRE_BASE && sprite < SPR_PYLON_BASE) continue;
+			if (sprite >= SPR_PYLON_BASE && sprite < SPR_PYLON_BASE + 8) {
+				AddPylonModel(group, sprite - SPR_PYLON_BASE, *pack, mesh);
+				continue;
+			}
+		}
 		if (group.xmin == group.xmax && group.ymin == group.ymax &&
 				std::ranges::find(signal_places, std::pair<int, int>{group.xmin, group.ymin}) != signal_places.end()) continue;
 
@@ -1103,6 +1178,7 @@ void BuildTerrainChunkMesh(uint chunk_x, uint chunk_y, GroundTextures &textures,
 			if (collect && models && IsTileType(tile, TileType::Railway) && IsPlainRail(tile)) {
 				AddTrackModels(tile, x, y, {hn, hw, he, hs}, *pack, mesh);
 				AddRailFenceModels(tile, x, y, {hn, hw, he, hs}, *pack, mesh);
+				AddWireModels(tile, x, y, {hn, hw, he, hs}, *pack, mesh);
 			}
 			if (!collect) {
 				if (IsTileType(tile, TileType::Trees) && !(models && AddTreeModels(tile, x, y, *pack, mesh))) AddTrees(tile, x, y, atlas, mesh);
