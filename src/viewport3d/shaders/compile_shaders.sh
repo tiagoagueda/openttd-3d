@@ -43,3 +43,5 @@ compile vs_terrain vertex
 compile fs_terrain fragment
 compile vs_sprite vertex
 compile fs_sprite fragment
+compile vs_model vertex
+compile fs_model fragment

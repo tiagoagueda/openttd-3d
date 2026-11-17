@@ -20,6 +20,8 @@
 #include "shaders/fs_terrain.bin.h"
 #include "shaders/vs_sprite.bin.h"
 #include "shaders/fs_sprite.bin.h"
+#include "shaders/vs_model.bin.h"
+#include "shaders/fs_model.bin.h"
 
 #include "../safeguards.h"
 
@@ -54,7 +56,19 @@ struct GpuChunk {
 	uint32_t num_sprites = 0; ///< Number of sprites.
 };
 
+/** GPU buffers of one 3D model. */
+struct GpuModel {
+	bgfx::VertexBufferHandle vertices = BGFX_INVALID_HANDLE; ///< The corners.
+	bgfx::IndexBufferHandle indices = BGFX_INVALID_HANDLE; ///< The triangles.
+};
+
 struct Renderer3D::Impl {
+	bgfx::VertexLayout model_layout;
+	bgfx::ProgramHandle model_program = BGFX_INVALID_HANDLE;
+	bgfx::UniformHandle model_tint = BGFX_INVALID_HANDLE;
+	bgfx::UniformHandle model_sun = BGFX_INVALID_HANDLE;
+	bgfx::UniformHandle model_light = BGFX_INVALID_HANDLE;
+	std::vector<GpuModel> models;
 	Renderer3DCallback callback;
 	bool initialised = false;
 	bgfx::VertexLayout layout;
@@ -178,6 +192,16 @@ static bgfx::ShaderHandle CreateShader(const ShaderVariants &variants)
 		.end();
 	impl.sprite_program = bgfx::createProgram(CreateShader(SHADER_VARIANTS(vs_sprite)), CreateShader(SHADER_VARIANTS(fs_sprite)), true);
 	impl.sprite_sampler = bgfx::createUniform("s_sprites", bgfx::UniformType::Sampler);
+
+	impl.model_layout.begin()
+		.add(bgfx::Attrib::Position, 3, bgfx::AttribType::Float)
+		.add(bgfx::Attrib::Normal, 3, bgfx::AttribType::Float)
+		.add(bgfx::Attrib::Color0, 4, bgfx::AttribType::Uint8, true)
+		.end();
+	impl.model_program = bgfx::createProgram(CreateShader(SHADER_VARIANTS(vs_model)), CreateShader(SHADER_VARIANTS(fs_model)), true);
+	impl.model_tint = bgfx::createUniform("u_modelTint", bgfx::UniformType::Vec4);
+	impl.model_sun = bgfx::createUniform("u_modelSun", bgfx::UniformType::Vec4);
+	impl.model_light = bgfx::createUniform("u_modelLight", bgfx::UniformType::Vec4);
 	impl.sprite_axes = bgfx::createUniform("u_spriteAxes", bgfx::UniformType::Vec4);
 	impl.sprite_nearer = bgfx::createUniform("u_spriteNearer", bgfx::UniformType::Vec4);
 	/* Without smaller versions of the atlas: sprites next to each other would blend into one another. */
@@ -209,6 +233,14 @@ Renderer3D::~Renderer3D()
 	for (int i = 0; this->pending && i < 8; i++) this->Poll();
 
 	this->ClearChunks();
+	for (GpuModel &model : impl.models) {
+		if (bgfx::isValid(model.vertices)) bgfx::destroy(model.vertices);
+		if (bgfx::isValid(model.indices)) bgfx::destroy(model.indices);
+	}
+	if (bgfx::isValid(impl.model_program)) bgfx::destroy(impl.model_program);
+	if (bgfx::isValid(impl.model_tint)) bgfx::destroy(impl.model_tint);
+	if (bgfx::isValid(impl.model_sun)) bgfx::destroy(impl.model_sun);
+	if (bgfx::isValid(impl.model_light)) bgfx::destroy(impl.model_light);
 	if (bgfx::isValid(impl.framebuffer)) bgfx::destroy(impl.framebuffer);
 	if (bgfx::isValid(impl.readback)) bgfx::destroy(impl.readback);
 	if (bgfx::isValid(impl.quad_indices)) bgfx::destroy(impl.quad_indices);
@@ -303,6 +335,25 @@ void Renderer3D::UpdateSpriteAtlas(SpriteAtlas &atlas)
 }
 
 /**
+ * Upload or replace a 3D model.
+ * @param id Number of the model, chosen by the caller; ModelInstance::model refers to it.
+ * @param model The model.
+ */
+void Renderer3D::SetModel(uint id, const Model3D &model)
+{
+	Impl &impl = *this->impl;
+	if (id >= impl.models.size()) impl.models.resize(id + 1);
+	GpuModel &gpu = impl.models[id];
+	if (bgfx::isValid(gpu.vertices)) bgfx::destroy(gpu.vertices);
+	if (bgfx::isValid(gpu.indices)) bgfx::destroy(gpu.indices);
+	gpu = {};
+	if (model.vertices.empty() || model.indices.empty()) return;
+
+	gpu.vertices = bgfx::createVertexBuffer(bgfx::copy(model.vertices.data(), static_cast<uint32_t>(model.vertices.size() * sizeof(ModelVertex))), impl.model_layout);
+	gpu.indices = bgfx::createIndexBuffer(bgfx::copy(model.indices.data(), static_cast<uint32_t>(model.indices.size() * sizeof(uint32_t))), BGFX_BUFFER_INDEX32);
+}
+
+/**
  * Upload or replace the geometry of a terrain chunk.
  * @param id Identifier of the chunk, chosen by the caller.
  * @param mesh The geometry.
@@ -348,8 +399,9 @@ void Renderer3D::ClearChunks()
  * @param camera Where to look from.
  * @param chunks The chunks to draw.
  * @param sprites Sprites to draw that are in no chunk, such as vehicles; four vertices per sprite.
+ * @param models 3D models to draw.
  */
-void Renderer3D::Render(uint width, uint height, const Camera3D &camera, std::span<const ChunkID> chunks, std::span<const SpriteVertex> sprites)
+void Renderer3D::Render(uint width, uint height, const Camera3D &camera, std::span<const ChunkID> chunks, std::span<const SpriteVertex> sprites, std::span<const ModelInstance> models)
 {
 	assert(!this->pending);
 	Impl &impl = *this->impl;
@@ -450,6 +502,24 @@ void Renderer3D::Render(uint width, uint height, const Camera3D &camera, std::sp
 		bgfx::setIndexBuffer(impl.quad_indices, 0, num_sprites * 6);
 		bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A | BGFX_STATE_WRITE_Z | BGFX_STATE_DEPTH_TEST_LESS);
 		bgfx::submit(VIEW_SCENE, impl.sprite_program);
+	}
+
+	/* The same light as the terrain gets in BuildTerrainChunkMesh(). */
+	static constexpr float MODEL_SUN[4] = {-0.4683f, 0.5620f, 0.6817f, 0};
+	static constexpr float MODEL_LIGHT[4] = {0.45f, 0.80f, 0, 0};
+	for (const ModelInstance &instance : models) {
+		if (instance.model >= impl.models.size()) continue;
+		const GpuModel &gpu = impl.models[instance.model];
+		if (!bgfx::isValid(gpu.vertices)) continue;
+
+		bgfx::setTransform(instance.transform.m.data());
+		bgfx::setVertexBuffer(0, gpu.vertices);
+		bgfx::setIndexBuffer(gpu.indices);
+		bgfx::setUniform(impl.model_tint, instance.tint.data());
+		bgfx::setUniform(impl.model_sun, MODEL_SUN);
+		bgfx::setUniform(impl.model_light, MODEL_LIGHT);
+		bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A | BGFX_STATE_WRITE_Z | BGFX_STATE_DEPTH_TEST_LESS);
+		bgfx::submit(VIEW_SCENE, impl.model_program);
 	}
 
 	/* Copy the finished image into a texture the CPU can read, and ask for its contents. */

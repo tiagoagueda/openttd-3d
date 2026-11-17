@@ -2,6 +2,10 @@ add_files(
     camera3d.h
     ground_textures.cpp
     ground_textures.h
+    model3d.cpp
+    model3d.h
+    model_pack.cpp
+    model_pack.h
     renderer3d.cpp
     renderer3d.h
     sprite_atlas.cpp

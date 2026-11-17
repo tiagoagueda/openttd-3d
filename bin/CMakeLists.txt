@@ -1,2 +1,5 @@
 add_subdirectory(ai)
 add_subdirectory(game)
+if(VIEWPORT3D_ENABLED)
+    add_subdirectory(opengfx3d)
+endif()

@@ -11,6 +11,7 @@
 #define VIEWPORT3D_VEHICLE_SPRITES_H
 
 #include "camera3d.h"
+#include "model_pack.h"
 #include "sprite_atlas.h"
 #include "terrain_mesh.h"
 #include "../vehicle_type.h"
@@ -22,6 +23,6 @@ struct VehicleSpritePlace {
 	float left, top, width, height; ///< The sprite relative to that place, in pixels of the 2D game.
 };
 
-void BuildVehicleSprites(const Camera3D &camera, const Frustum3D &frustum, SpriteAtlas &atlas, std::vector<SpriteVertex> &vertices, std::vector<VehicleSpritePlace> &places);
+void BuildVehicleSprites(const Camera3D &camera, const Frustum3D &frustum, SpriteAtlas &atlas, const ModelPack *pack, std::vector<SpriteVertex> &vertices, std::vector<VehicleSpritePlace> &places, std::vector<ModelInstance> &models);
 
 #endif /* VIEWPORT3D_VEHICLE_SPRITES_H */

@@ -12,6 +12,7 @@
 
 #include "camera3d.h"
 #include "ground_textures.h"
+#include "model3d.h"
 #include "sprite_atlas.h"
 #include "terrain_mesh.h"
 
@@ -42,11 +43,12 @@ public:
 	void UpdateGroundTextures(GroundTextures &textures);
 	void UpdateSpriteAtlas(SpriteAtlas &atlas);
 
+	void SetModel(uint id, const Model3D &model);
 	void SetChunk(ChunkID id, const TerrainChunkMesh &mesh);
 	void ClearChunks();
 
 	bool IsBusy() const { return this->pending; }
-	void Render(uint width, uint height, const Camera3D &camera, std::span<const ChunkID> chunks, std::span<const SpriteVertex> sprites);
+	void Render(uint width, uint height, const Camera3D &camera, std::span<const ChunkID> chunks, std::span<const SpriteVertex> sprites, std::span<const ModelInstance> models);
 	bool Poll();
 
 	bool HomogeneousDepth() const;

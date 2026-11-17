@@ -6,7 +6,10 @@ The 2D game, its GUI, the simulation and multiplayer are unchanged: the 3D view 
 Status: the window shows the map, the vehicles, and the names of towns, stations and signs as the 2D game draws them, with a free camera. The build tools of the game work in it, and vehicles, names and tiles can be clicked like in the 2D views.
 Everything is drawn with the graphics of the 2D game, so it follows the base set and NewGRFs in use.
 The ground, tracks and roads lie on the terrain. Trees, buildings, stations, industries, signals, bridges, vehicles and the like are flat sprites that stand upright and turn to face the camera.
-From the viewing angle of the 2D game that looks the same as there; from other angles it shows that they are not real 3D models yet.
+From the viewing angle of the 2D game that looks the same as there; from other angles it shows that they are not real 3D models.
+
+Real 3D models come from a package called OpenGFX3D (`bin/opengfx3d/`, see its README). What has a model there is drawn with it, everything else keeps its sprites.
+For now the package has two simple sample models, a bus and a lorry, for the buses and the first lorries of the base game.
 
 ## Using it
 
@@ -96,6 +99,10 @@ The selection itself is drawn by the 2D game on the ground of a tile, so it arri
 Names of towns and stations and signs are not part of the 3D image. The window asks the 2D game to draw them on top of the image, at the place where the 3D view shows the spot they belong to (`DrawView3DSigns()`), so they look and are filtered like in the 2D views.
 A click first looks for a vehicle of which the sprite is below the cursor, then for a name or sign, then for the tile, in the same order as the 2D views (`HandleView3DClicked()`).
 
+3D models are read from binary glTF files (`model3d.cpp`) listed in the index of the OpenGFX3D package (`model_pack.cpp`).
+A vehicle with a model is put on the map at its position, turned to its direction of travel and tilted on slopes, and lit with the same light as the terrain.
+Parts of a model with a material named `company` take the colour of the owner.
+
 The existing game is touched in a few small places:
 
 * `MarkTileDirtyByTile()` in `viewport.cpp` tells the 3D view which tile changed, `SetSelectionTilesDirty()` tells it where the selection changed, `GetTileBelowCursor()` asks it for the tile below the cursor, and `CollectTileSprites()`, `HasTileSelection()`, `DrawView3DSigns()` and `HandleView3DClicked()` at the end of that file tell it what a tile draws, draw the names and pass on clicks.
@@ -117,6 +124,7 @@ The existing game is touched in a few small places:
 * Transparency options of the 2D game are followed, but see-through sprites are left out rather than drawn see-through.
 * Tiles with animations, such as some industries, rebuild their whole chunk of 64x64 tiles for every animation step.
 * Water is not animated, and sprites far away flicker a little because they have no smaller versions yet.
+* 3D models have colours per material but no textures yet, vehicles with a model turn in steps of 45 degrees like the sprites do, and liveries other than the company colour are not followed.
 * There is no anti-aliasing.
 * It has been run on Linux with Mesa's software Vulkan and OpenGL drivers, and on Windows with the Direct3D 11 video driver.
 

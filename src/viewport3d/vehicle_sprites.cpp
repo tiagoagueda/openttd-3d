@@ -15,7 +15,65 @@
 #include "../vehicle_func.h"
 #include "../table/sprites.h"
 
+#include "../aircraft.h"
+#include "../company_func.h"
+#include "../engine_base.h"
+#include "../palette_func.h"
+#include "../roadveh.h"
+#include "../train.h"
 #include "../safeguards.h"
+
+/**
+ * Draw a vehicle with a 3D model, if the package has one for it.
+ * @param v The vehicle.
+ * @param pack The package of 3D models, or \c nullptr.
+ * @param models The 3D models to draw, to add to.
+ * @return Whether the vehicle has a model.
+ */
+static bool AddVehicleModel(const Vehicle *v, const ModelPack *pack, std::vector<ModelInstance> &models)
+{
+	if (pack == nullptr || !IsCompanyBuildableVehicleType(v) || v->direction >= Direction::End) return false;
+	/* The rotors of helicopters are vehicles of their own. */
+	if (v->type == VehicleType::Aircraft && !Aircraft::From(v)->IsNormalAircraft()) return false;
+	const ModelPack::VehicleModel *model = pack->FindVehicle(Engine::GetIfValid(v->engine_type));
+	if (model == nullptr) return false;
+
+	/* Which way each direction points on the map; diagonal ones are of length one too. */
+	static constexpr float D = 0.70710678f;
+	static constexpr float HEADINGS[8][2] = {
+		{-D, -D}, {-1, 0}, {-D, D}, {0, 1}, {D, D}, {1, 0}, {D, -D}, {0, -1},
+	};
+	const float *heading = HEADINGS[to_underlying(v->direction)];
+
+	/* Nose up or down on slopes: one height level per tile. */
+	float climb = 0;
+	if (v->IsGroundVehicle()) {
+		GroundVehicleFlags flags = v->type == VehicleType::Train ? Train::From(v)->gv_flags : RoadVehicle::From(v)->gv_flags;
+		if (flags.Test(GroundVehicleFlag::GoingUp)) climb = HEIGHT_LEVEL_SIZE / TILE_SIZE;
+		if (flags.Test(GroundVehicleFlag::GoingDown)) climb = -HEIGHT_LEVEL_SIZE / TILE_SIZE;
+	}
+	float length = std::sqrt(1 + climb * climb);
+	Vec3 front{heading[0] / length, heading[1] / length, climb / length};
+	Vec3 left{-heading[1], heading[0], 0};
+	Vec3 up = Cross(front, left);
+
+	ModelInstance &instance = models.emplace_back();
+	instance.model = model->model;
+	float s = model->scale;
+	instance.transform.m = {
+		front.x * s, front.y * s, front.z * s, 0,
+		left.x * s, left.y * s, left.z * s, 0,
+		up.x * s, up.y * s, up.z * s, 0,
+		static_cast<float>(v->x_pos), static_cast<float>(v->y_pos), v->z_pos * WORLD_Z_SCALE, 1,
+	};
+
+	instance.tint = {1, 1, 1, 1};
+	if (v->owner < MAX_COMPANIES) {
+		const Colour &colour = _cur_palette.palette[GetColourGradient(_company_colours[v->owner], Shade::Normal).p];
+		instance.tint = {colour.r / 255.0f, colour.g / 255.0f, colour.b / 255.0f, 1};
+	}
+	return true;
+}
 
 /**
  * Make the sprites of all vehicles that are in view.
@@ -27,14 +85,17 @@
  * @param camera Where we look from.
  * @param frustum What is in view.
  * @param atlas The atlas that provides the sprites.
+ * @param pack The package of 3D models; vehicles that have a model there are drawn with it instead of with sprites. May be \c nullptr.
  * @param[out] vertices Four vertices per sprite; previous contents are discarded.
  * @param[out] places Where the vehicles that can be clicked are; previous contents are discarded.
+ * @param[out] models The 3D models to draw; previous contents are discarded.
  */
-void BuildVehicleSprites(const Camera3D &camera, const Frustum3D &frustum, SpriteAtlas &atlas, std::vector<SpriteVertex> &vertices, std::vector<VehicleSpritePlace> &places)
+void BuildVehicleSprites(const Camera3D &camera, const Frustum3D &frustum, SpriteAtlas &atlas, const ModelPack *pack, std::vector<SpriteVertex> &vertices, std::vector<VehicleSpritePlace> &places, std::vector<ModelInstance> &models)
 {
 	static std::vector<SpritePart> parts;
 	vertices.clear();
 	places.clear();
+	models.clear();
 
 	/* The 2D game looks from the south, a yaw of 45 degrees. Each further 45 degrees shows the next side of a vehicle. */
 	static constexpr float EIGHTH_TURN = 0.78539816f;
@@ -82,7 +143,8 @@ void BuildVehicleSprites(const Camera3D &camera, const Frustum3D &frustum, Sprit
 		/* Vehicles are drawn over the tracks and roads they are on, and stand in the middle of their bounding box like buildings. */
 		float nearer = (v->bounds.extent.x + v->bounds.extent.y) * 0.5f + 2.0f;
 		const AtlasSprite &sprite = atlas.Get(parts);
-		AddUprightSprite(sprite, x, y, z, nearer, vertices);
+		/* The sprite still tells where the vehicle can be clicked when a model is drawn in its place. */
+		if (!AddVehicleModel(v, pack, models)) AddUprightSprite(sprite, x, y, z, nearer, vertices);
 		if (sprite.valid && !v->vehstatus.Test(VehState::Unclickable)) {
 			places.push_back({v->index, x, y, z, static_cast<float>(sprite.left), static_cast<float>(sprite.top), static_cast<float>(sprite.width), static_cast<float>(sprite.height)});
 		}

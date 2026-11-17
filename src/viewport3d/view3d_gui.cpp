@@ -69,6 +69,8 @@ class View3DWindow : public Window {
 	TerrainChunkMesh scratch_mesh; ///< Reused while building chunks.
 	std::unique_ptr<GroundTextures> ground_textures; ///< The ground textures that the chunks use.
 	std::unique_ptr<SpriteAtlas> atlas; ///< The sprites of the 2D game that the chunks use.
+	std::unique_ptr<ModelPack> model_pack; ///< The package of 3D models, if there is one.
+	std::vector<ModelInstance> vehicle_models; ///< The vehicles in view that are drawn with a 3D model.
 	std::vector<SpriteVertex> vehicle_sprites; ///< The vehicles in view.
 	std::vector<VehicleSpritePlace> vehicle_places; ///< Where the vehicles in view are, to find the one below the cursor.
 	uint64_t vehicle_hash = 0; ///< Hash of the vehicles in the last image, to see whether any moved.
@@ -281,6 +283,9 @@ public:
 			if (this->renderer != nullptr) {
 				this->ground_textures = std::make_unique<GroundTextures>(this->renderer->GetMaxGroundTextures());
 				this->atlas = std::make_unique<SpriteAtlas>();
+				this->model_pack = std::make_unique<ModelPack>();
+				uint id = 0;
+				for (const Model3D &model : this->model_pack->GetModels()) this->renderer->SetModel(id++, model);
 			}
 			this->SetDirty();
 		}
@@ -306,11 +311,15 @@ public:
 
 		/* Vehicles move all the time, so they are looked up for every image. */
 		Matrix4 view_proj = this->camera.GetProjectionMatrix(static_cast<float>(view->current_x) / view->current_y, this->renderer->HomogeneousDepth()) * this->camera.GetViewMatrix();
-		BuildVehicleSprites(this->camera, Frustum3D(view_proj), *this->atlas, this->vehicle_sprites, this->vehicle_places);
+		BuildVehicleSprites(this->camera, Frustum3D(view_proj), *this->atlas, this->model_pack.get(), this->vehicle_sprites, this->vehicle_places, this->vehicle_models);
 		uint64_t hash = 0xcbf29ce484222325ULL;
 		const uint8_t *data = reinterpret_cast<const uint8_t *>(this->vehicle_sprites.data());
 		for (size_t i = 0; i < this->vehicle_sprites.size() * sizeof(SpriteVertex); i++) {
 			hash = (hash ^ data[i]) * 0x100000001b3ULL;
+		}
+		for (const ModelInstance &instance : this->vehicle_models) {
+			hash = (hash ^ instance.model) * 0x100000001b3ULL;
+			for (float f : instance.transform.m) hash = (hash ^ std::bit_cast<uint32_t>(f)) * 0x100000001b3ULL;
 		}
 		bool vehicles_changed = hash != this->vehicle_hash;
 
@@ -318,7 +327,7 @@ public:
 		this->renderer->UpdateSpriteAtlas(*this->atlas);
 		if (!this->view_changed && !geometry_changed && !vehicles_changed) return;
 
-		this->renderer->Render(view->current_x, view->current_y, this->camera, this->visible_chunks, this->vehicle_sprites);
+		this->renderer->Render(view->current_x, view->current_y, this->camera, this->visible_chunks, this->vehicle_sprites, this->vehicle_models);
 		this->view_changed = false;
 		this->vehicle_hash = hash;
 		this->renderer->Poll();
