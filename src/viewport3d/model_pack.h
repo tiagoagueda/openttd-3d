@@ -44,6 +44,9 @@ enum class ModelKind : uint8_t {
 	Track, ///< Pieces of track: 0 and 1 railway, 2 and 3 monorail, 4 and 5 maglev; even straight, odd diagonal.
 	Signal, ///< Rail signals, by type * 4 + variant * 2 + state.
 	Catenary, ///< Overhead wires: 0 and 1 pylons beside straight and diagonal track, 2 and 3 wires of straight and diagonal pieces.
+	Bridge, ///< Bridges: bridge type * 4 + 0 deck, 1 ramp, 2 pillar; 64 the road on road bridges.
+	Tunnel, ///< Tunnel portals: 0.
+	Crossing, ///< Level crossings: 0 open, 1 closed.
 	Fence, ///< Fences: 0 along railways, 1 to 6 the edges of fields by fence type.
 };
 

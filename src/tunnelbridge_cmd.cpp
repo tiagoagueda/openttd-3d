@@ -1620,6 +1620,7 @@ void DrawBridgeMiddle(const TileInfo *ti, BridgePillarFlags blocked_pillars)
 	 */
 
 	if (!IsBridgeAbove(ti->tile)) return;
+	MarkBridgeMiddleSprites();
 
 	TileIndex rampnorth = GetNorthernBridgeEnd(ti->tile);
 	TileIndex rampsouth = GetSouthernBridgeEnd(ti->tile);

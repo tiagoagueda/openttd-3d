@@ -3880,12 +3880,22 @@ void ViewportData::CancelFollow(const Window &viewport_window)
  * @param tile The tile.
  * @param[out] sprites The sprites; previous contents are discarded.
  */
+static int _bridge_middle_first = -1; ///< While collecting the sprites of a tile: the first sprite of the bridge above it, if any.
+
+/** Note that the sprites drawn from now on, while drawing a tile, belong to the bridge above the tile. */
+void MarkBridgeMiddleSprites()
+{
+	_bridge_middle_first = static_cast<int>(_vd.parent_sprites_to_draw.size());
+}
+
 void CollectTileSprites(TileIndex tile, TileSprites &sprites)
 {
 	sprites.ground.clear();
 	sprites.groups.clear();
 	sprites.parts.clear();
+	sprites.bridge_first = UINT_MAX;
 	if (!_vd.tile_sprites_to_draw.empty() || !_vd.parent_sprites_to_draw.empty() || !_vd.child_screen_sprites_to_draw.empty()) return;
+	_bridge_middle_first = -1;
 
 	/* A viewport that is large enough that nothing is left out for being outside of it. */
 	AutoRestoreBackup dpi_backup(_vd.dpi, DrawPixelInfo{});
@@ -3947,6 +3957,9 @@ void CollectTileSprites(TileIndex tile, TileSprites &sprites)
 		}
 		group.count = static_cast<uint>(sprites.parts.size()) - group.first;
 	}
+
+	if (_bridge_middle_first >= 0) sprites.bridge_first = static_cast<uint>(_bridge_middle_first);
+	_bridge_middle_first = -1;
 
 	_vd.string_sprites_to_draw.clear();
 	_vd.tile_sprites_to_draw.clear();

@@ -62,6 +62,7 @@ inline void AddSortableSpriteToDraw(SpriteID image, PaletteID pal, const Coord3D
 }
 
 void StartSpriteCombine();
+void MarkBridgeMiddleSprites();
 void EndSpriteCombine();
 
 bool HandleViewportClicked(const Viewport &vp, int x, int y);

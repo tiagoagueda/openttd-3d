@@ -52,6 +52,7 @@ struct TileSprites {
 	std::vector<SpritePart> ground; ///< Sprites drawn flat on the ground, relative to the screen position of the tile's northern corner at the tile's base height.
 	std::vector<TileSpriteGroup> groups; ///< Things standing on the tile.
 	std::vector<SpritePart> parts; ///< The sprites of the groups, relative to the same reference point as the ground sprites.
+	uint bridge_first = UINT_MAX; ///< Index of the first group that belongs to a bridge above the tile; UINT_MAX if there is none.
 };
 
 void CollectTileSprites(TileIndex tile, TileSprites &sprites);

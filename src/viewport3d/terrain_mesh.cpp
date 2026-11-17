@@ -42,6 +42,7 @@
 #include "../rail.h"
 #include "../newgrf_railtype.h"
 #include "../elrail_func.h"
+#include "../tunnelbridge_map.h"
 #include "../road_map.h"
 #include "../station_map.h"
 #include "../town.h"
@@ -315,6 +316,29 @@ static void AddPieceModel(const ModelPack::Entry &entry, uint x, uint y, const s
 }
 
 /**
+ * Get the 3D model of a piece of track.
+ * @param rt The rail type.
+ * @param diagonal Whether to get the diagonal piece, rather than the straight one.
+ * @param pack The package of 3D models.
+ * @return The model, or \c nullptr if there is none for this kind of track.
+ */
+static const ModelPack::Entry *GetTrackPiece(RailType rt, bool diagonal, const ModelPack &pack)
+{
+	const RailTypeInfo *rti = GetRailTypeInfo(rt);
+	uint base;
+	if (rti->label == RAILTYPE_LABEL_RAIL || rti->label == RAILTYPE_LABEL_ELECTRIC) {
+		base = 0;
+	} else if (rti->label == RAILTYPE_LABEL_MONO) {
+		base = 2;
+	} else if (rti->label == RAILTYPE_LABEL_MAGLEV) {
+		base = 4;
+	} else {
+		return nullptr;
+	}
+	return pack.Find(ModelKind::Track, 0, base + (diagonal ? 1 : 0));
+}
+
+/**
  * Add 3D track on a tile: one piece for each track.
  * @param tile The tile, a plain rail tile.
  * @param x X coordinate of the tile.
@@ -326,19 +350,8 @@ static void AddPieceModel(const ModelPack::Entry &entry, uint x, uint y, const s
  */
 static bool AddTrackModels(Tile tile, uint x, uint y, const std::array<int, 4> &heights, const ModelPack &pack, TerrainChunkMesh &mesh)
 {
-	const RailTypeInfo *rti = GetRailTypeInfo(GetRailType(tile));
-	uint base;
-	if (rti->label == RAILTYPE_LABEL_RAIL || rti->label == RAILTYPE_LABEL_ELECTRIC) {
-		base = 0;
-	} else if (rti->label == RAILTYPE_LABEL_MONO) {
-		base = 2;
-	} else if (rti->label == RAILTYPE_LABEL_MAGLEV) {
-		base = 4;
-	} else {
-		return false;
-	}
-	const ModelPack::Entry *straight = pack.Find(ModelKind::Track, 0, base);
-	const ModelPack::Entry *diagonal = pack.Find(ModelKind::Track, 0, base + 1);
+	const ModelPack::Entry *straight = GetTrackPiece(GetRailType(tile), false, pack);
+	const ModelPack::Entry *diagonal = GetTrackPiece(GetRailType(tile), true, pack);
 	if (straight == nullptr || diagonal == nullptr) return false;
 
 	TrackBits bits = GetTrackBits(tile);
@@ -716,6 +729,207 @@ static std::array<float, 4> GetOwnerTint(Owner owner)
 }
 
 /**
+ * Add what a bridge carries along one of its pieces: track, wires or road.
+ * @param head A head of the bridge.
+ * @param a Where the piece starts, in world coordinates, at the height vehicles drive on.
+ * @param b Where it ends.
+ * @param pack The package of 3D models.
+ * @param models The models to add to.
+ */
+static void AddBridgeLoad(TileIndex head, const std::array<float, 3> &a, const std::array<float, 3> &b, const ModelPack &pack, std::vector<ModelInstance> &models)
+{
+	auto add = [&](const ModelPack::Entry *entry) {
+		if (entry == nullptr) return;
+		/* AddEdgeModel() works on a mesh; borrow one for its list of models. */
+		static TerrainChunkMesh scratch;
+		scratch.models.clear();
+		AddEdgeModel(*entry, a, b, scratch);
+		models.insert(models.end(), scratch.models.begin(), scratch.models.end());
+	};
+	switch (GetTunnelBridgeTransportType(head)) {
+		case TransportType::Rail: {
+			RailType rt = GetRailType(head);
+			add(GetTrackPiece(rt, false, pack));
+			if (HasRailCatenaryDrawn(rt)) add(pack.Find(ModelKind::Catenary, 0, 2));
+			break;
+		}
+		case TransportType::Road:
+			add(pack.Find(ModelKind::Bridge, 0, 64));
+			break;
+		default:
+			break;
+	}
+}
+
+/**
+ * Add the 3D model of the ramp of a bridge, and what it carries.
+ * @param tile The tile, a bridge head.
+ * @param pack The package of 3D models.
+ * @param models The models to add to.
+ * @return Whether the package has a model for the bridge.
+ */
+static bool AddBridgeRampModel(TileIndex tile, const ModelPack &pack, std::vector<ModelInstance> &models)
+{
+	if (GetTunnelBridgeTransportType(tile) == TransportType::Water) return false;
+	const ModelPack::Entry *entry = pack.Find(ModelKind::Bridge, 0, GetBridgeType(tile) * 4 + 1);
+	if (entry == nullptr) return false;
+
+	/* From the middle of the outer edge of the tile to the middle of the edge where the bridge starts. */
+	static constexpr float DIRECTIONS[4][2] = {{-1, 0}, {0, 1}, {1, 0}, {0, -1}}; // NE, SE, SW, NW
+	auto [dx, dy] = DIRECTIONS[to_underlying(GetTunnelBridgeDirection(tile))];
+	float cx = TileX(tile) * TILE_SIZE + TILE_SIZE * 0.5f;
+	float cy = TileY(tile) * TILE_SIZE + TILE_SIZE * 0.5f;
+	/* The height vehicles drive at, just inside the outer edge. */
+	int ox = Clamp(static_cast<int>(cx - dx * 8), static_cast<int>(TileX(tile) * TILE_SIZE), static_cast<int>(TileX(tile) * TILE_SIZE + TILE_SIZE - 1));
+	int oy = Clamp(static_cast<int>(cy - dy * 8), static_cast<int>(TileY(tile) * TILE_SIZE), static_cast<int>(TileY(tile) * TILE_SIZE + TILE_SIZE - 1));
+	float outer_z = GetSlopePixelZ(ox, oy, true) * WORLD_Z_SCALE;
+	float inner_z = GetBridgePixelHeight(tile) * WORLD_Z_SCALE;
+	std::array<float, 3> a{cx - dx * TILE_SIZE * 0.5f, cy - dy * TILE_SIZE * 0.5f, outer_z};
+	std::array<float, 3> b{cx + dx * TILE_SIZE * 0.5f, cy + dy * TILE_SIZE * 0.5f, inner_z};
+
+	static TerrainChunkMesh scratch;
+	scratch.models.clear();
+	AddEdgeModel(*entry, a, b, scratch);
+	models.insert(models.end(), scratch.models.begin(), scratch.models.end());
+	AddBridgeLoad(tile, a, b, pack, models);
+	return true;
+}
+
+/**
+ * Add the 3D model of the piece of a bridge above a tile, with its pillar.
+ * @param tile The tile under the bridge.
+ * @param pack The package of 3D models.
+ * @param mesh The mesh to add to.
+ * @return Whether the package has a model for the bridge.
+ */
+static bool AddBridgeMiddleModel(TileIndex tile, const ModelPack &pack, TerrainChunkMesh &mesh)
+{
+	TileIndex head = GetSouthernBridgeEnd(tile);
+	if (GetTunnelBridgeTransportType(head) == TransportType::Water) return false;
+	uint type = GetBridgeType(head);
+	const ModelPack::Entry *deck = pack.Find(ModelKind::Bridge, 0, type * 4);
+	if (deck == nullptr) return false;
+
+	bool along_x = GetBridgeAxis(tile) == Axis::X;
+	float cx = TileX(tile) * TILE_SIZE + TILE_SIZE * 0.5f;
+	float cy = TileY(tile) * TILE_SIZE + TILE_SIZE * 0.5f;
+	float z = GetBridgePixelHeight(head) * WORLD_Z_SCALE;
+	float hx = along_x ? TILE_SIZE * 0.5f : 0, hy = along_x ? 0 : TILE_SIZE * 0.5f;
+	std::array<float, 3> a{cx - hx, cy - hy, z}, b{cx + hx, cy + hy, z};
+	AddEdgeModel(*deck, a, b, mesh);
+	AddBridgeLoad(head, a, b, pack, mesh.models);
+
+	/* Pillars stand on open land and in water, out of the way of anything below the bridge. */
+	Tile below(tile);
+	bool open = IsTileType(below, TileType::Clear) || IsTileType(below, TileType::Trees) || (IsTileType(below, TileType::Water) && !IsShipDepot(below) && !IsLock(below));
+	const ModelPack::Entry *pillar = pack.Find(ModelKind::Bridge, 0, type * 4 + 2);
+	if (!open || pillar == nullptr) return true;
+	float ground = TileHeight(tile);
+	for (TileIndex t : {TileXY(TileX(tile) + 1, TileY(tile)), TileXY(TileX(tile), TileY(tile) + 1), TileXY(TileX(tile) + 1, TileY(tile) + 1)}) {
+		ground = std::min<float>(ground, TileHeight(t));
+	}
+	ground *= HEIGHT_LEVEL_SIZE;
+	float top = z - 0.9f;
+	if (top - ground < 0.5f) return true;
+	float s = pillar->scale;
+	ModelInstance &instance = mesh.models.emplace_back();
+	instance.model = pillar->model;
+	float ux = along_x ? 1.0f : 0.0f, uy = along_x ? 0.0f : 1.0f;
+	instance.transform.m = {
+		ux * s, uy * s, 0, 0,
+		-uy * s, ux * s, 0, 0,
+		0, 0, top - ground, 0,
+		cx, cy, ground, 1,
+	};
+	instance.tint = {1, 1, 1, 1};
+	return true;
+}
+
+/**
+ * Add a model standing on a tile, turned so that its x axis points along a direction.
+ * @param entry The model.
+ * @param tile The tile.
+ * @param ux X part of the direction, of length one together with uy.
+ * @param uy Y part of the direction.
+ * @param z Height of the ground under the model, in world units.
+ * @param models The models to add to.
+ */
+static void AddTurnedModel(const ModelPack::Entry &entry, TileIndex tile, float ux, float uy, float z, std::vector<ModelInstance> &models)
+{
+	float s = entry.scale;
+	ModelInstance &instance = models.emplace_back();
+	instance.model = entry.model;
+	instance.transform.m = {
+		ux * s, uy * s, 0, 0,
+		-uy * s, ux * s, 0, 0,
+		0, 0, s, 0,
+		TileX(tile) * TILE_SIZE + TILE_SIZE * 0.5f, TileY(tile) * TILE_SIZE + TILE_SIZE * 0.5f, z, 1,
+	};
+	instance.tint = {1, 1, 1, 1};
+}
+
+/**
+ * Whether a tile is the entrance of a tunnel that is drawn with a 3D portal; the terrain of such tiles is flat.
+ * @param tile The tile.
+ * @param pack The package of 3D models.
+ * @return True for tunnel entrances with a model.
+ */
+static bool HasTunnelModel(Tile tile, const ModelPack &pack)
+{
+	return IsTileType(tile, TileType::TunnelBridge) && IsTunnel(tile) && pack.Find(ModelKind::Tunnel, 0, 0) != nullptr;
+}
+
+/**
+ * Add the 3D portal of a tunnel entrance, and the track or road leading into it.
+ * @param tile The tile, a tunnel entrance.
+ * @param pack The package of 3D models.
+ * @param models The models to add to.
+ * @return Whether the package has a model for tunnels.
+ */
+static bool AddTunnelModel(TileIndex tile, const ModelPack &pack, std::vector<ModelInstance> &models)
+{
+	if (!HasTunnelModel(Tile(tile), pack)) return false;
+	/* The model faces out of the tunnel, against the direction into it. */
+	static constexpr float OUT[4][2] = {{1, 0}, {0, -1}, {-1, 0}, {0, 1}}; // into the tunnel towards NE, SE, SW, NW
+	auto [ux, uy] = OUT[to_underlying(GetTunnelBridgeDirection(tile))];
+	uint x = TileX(tile), y = TileY(tile);
+	float z = std::min({TileHeight(tile), TileHeight(TileXY(x + 1, y)), TileHeight(TileXY(x, y + 1)), TileHeight(TileXY(x + 1, y + 1))}) * HEIGHT_LEVEL_SIZE;
+	AddTurnedModel(*pack.Find(ModelKind::Tunnel, 0, 0), tile, ux, uy, z, models);
+	float cx = x * TILE_SIZE + TILE_SIZE * 0.5f, cy = y * TILE_SIZE + TILE_SIZE * 0.5f;
+	AddBridgeLoad(tile, {cx + ux * TILE_SIZE * 0.5f, cy + uy * TILE_SIZE * 0.5f, z}, {cx - ux * TILE_SIZE * 0.5f, cy - uy * TILE_SIZE * 0.5f, z}, pack, models);
+	return true;
+}
+
+/**
+ * Add the 3D barriers of a level crossing, and its track.
+ * @param tile The tile, a level crossing.
+ * @param pack The package of 3D models.
+ * @param models The models to add to.
+ * @return Whether the package has a model for level crossings.
+ */
+static bool AddCrossingModel(TileIndex tile, const ModelPack &pack, std::vector<ModelInstance> &models)
+{
+	const ModelPack::Entry *entry = pack.Find(ModelKind::Crossing, 0, IsCrossingBarred(tile) ? 1 : 0);
+	const ModelPack::Entry *track = GetTrackPiece(GetRailType(tile), false, pack);
+	if (entry == nullptr || track == nullptr) return false;
+	bool along_x = GetCrossingRailAxis(tile) == Axis::X;
+	float ux = along_x ? 1.0f : 0.0f, uy = along_x ? 0.0f : 1.0f;
+	uint x = TileX(tile), y = TileY(tile);
+	int px = x * TILE_SIZE, py = y * TILE_SIZE;
+	float z = GetTileMaxPixelZ(tile) * WORLD_Z_SCALE;
+	AddTurnedModel(*entry, tile, ux, uy, z, models);
+	/* The track follows the ground from edge to edge. */
+	float za = GetSlopePixelZ(px + (along_x ? 0 : 8), py + (along_x ? 8 : 0), true) * WORLD_Z_SCALE;
+	float zb = GetSlopePixelZ(px + (along_x ? 15 : 8), py + (along_x ? 8 : 15), true) * WORLD_Z_SCALE;
+	static TerrainChunkMesh scratch;
+	scratch.models.clear();
+	float cx = px + TILE_SIZE * 0.5f, cy = py + TILE_SIZE * 0.5f;
+	AddEdgeModel(*track, {cx - ux * TILE_SIZE * 0.5f, cy - uy * TILE_SIZE * 0.5f, za}, {cx + ux * TILE_SIZE * 0.5f, cy + uy * TILE_SIZE * 0.5f, zb}, scratch);
+	models.insert(models.end(), scratch.models.begin(), scratch.models.end());
+	return true;
+}
+
+/**
  * Find whether OpenGFX3D has a model for the building on a tile, and add the model when this tile is where it stands.
  * @param tile The tile.
  * @param pack The package of 3D models.
@@ -800,6 +1014,10 @@ static bool AddTileModel(TileIndex tile, const ModelPack &pack, std::vector<Mode
 			return true;
 		}
 
+		case TileType::TunnelBridge:
+			if (IsTunnel(tile)) return AddTunnelModel(tile, pack, models);
+			return AddBridgeRampModel(tile, pack, models);
+
 		case TileType::Railway: {
 			if (!IsRailDepot(tile)) return false;
 			const ModelPack::Entry *entry = pack.Find(ModelKind::RailDepot, 0, 0);
@@ -809,6 +1027,7 @@ static bool AddTileModel(TileIndex tile, const ModelPack &pack, std::vector<Mode
 		}
 
 		case TileType::Road: {
+			if (IsLevelCrossing(tile)) return AddCrossingModel(tile, pack, models);
 			if (!IsRoadDepot(tile)) return false;
 			const ModelPack::Entry *entry = pack.Find(ModelKind::RoadDepot, 0, 0);
 			if (entry == nullptr) return false;
@@ -980,6 +1199,10 @@ static TileGround AddTileSprites(uint x, uint y, const std::array<uint8_t, 4> &h
 		AddSignalModels(Tile(tile), *pack, mesh, signal_places);
 	}
 
+	/* A bridge above the tile with a 3D model replaces what the 2D game draws for the bridge. */
+	uint bridge_first = sprites.bridge_first;
+	if (ground_only || bridge_first == UINT_MAX || pack == nullptr || pack->IsEmpty() || !AddBridgeMiddleModel(tile, *pack, mesh)) bridge_first = UINT_MAX;
+
 	bool catenary = !ground_only && pack != nullptr && !pack->IsEmpty() && IsTileType(tile, TileType::Railway) && IsPlainRail(tile) && HasCatenaryModels(Tile(tile), *pack);
 	bool rail_fences = !ground_only && pack != nullptr && !pack->IsEmpty() && pack->Find(ModelKind::Fence, 0, 0) != nullptr && IsTileType(tile, TileType::Railway) && IsPlainRail(tile);
 
@@ -992,10 +1215,14 @@ static TileGround AddTileSprites(uint x, uint y, const std::array<uint8_t, 4> &h
 	int foundation_z = GetTileMaxPixelZ(tile);
 	static std::vector<SpritePart> ground;
 	ground = sprites.ground;
+	/* A tunnel portal has its own track or road; the ground in front of it is plain. */
+	if (replaced && IsTileType(tile, TileType::TunnelBridge) && IsTunnel(tile)) ground.clear();
 
 	uint index = 0;
-	for (const TileSpriteGroup &group : sprites.groups) {
+	for (uint g = 0; g < sprites.groups.size(); g++) {
+		const TileSpriteGroup &group = sprites.groups[g];
 		if (group.count == 0) continue;
+		if (g >= bridge_first) continue;
 		if (group.foundation && flat_foundation) {
 			/* The foundation becomes walls of the terrain. What lies on top of it, like tracks, becomes the ground of the tile;
 			 * the 2D game draws that higher up, by the height of the foundation. */
@@ -1159,6 +1386,10 @@ void BuildTerrainChunkMesh(uint chunk_x, uint chunk_y, GroundTextures &textures,
 				wall(x + 1, y + 1, hs, x, y + 1, he, 0, 1);
 				wall(x, y + 1, he, x, y, hn, -1, 0);
 				hn = hw = he = hs = top;
+			}
+			/* A tunnel portal stands on flat ground at the foot of the slope; its wing walls close the sides. */
+			if (pack != nullptr && !pack->IsEmpty() && HasTunnelModel(tile, *pack)) {
+				hn = hw = he = hs = std::min({hn, hw, he, hs});
 			}
 
 			TerrainVertex vn = vertex(x, y, hn);
