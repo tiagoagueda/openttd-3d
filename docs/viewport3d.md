@@ -91,7 +91,7 @@ Trees without a 3D model are sprites on upright quads that turn to face the came
 Both are sized and placed such that from the viewing angle of the 2D game they look the same as there.
 
 Coordinates are OpenTTD's own world coordinates: 16 units per tile, x to the south-west, y to the south-east, z up.
-Heights are scaled down: the 2D game draws a height level as 8 pixels, which at its viewing angle of 30 degrees corresponds to about 3.3 world units rather than 8.
+Heights are scaled down: the 2D game draws a height level as 8 pixels, which at its viewing angle of 30 degrees corresponds to about 3.3 world units rather than 8. At the middle of the image the 3D view then shows hills as high as the 2D view does. The camera has a narrow field of view (about 17 degrees), so the angle changes little from the top to the bottom of the image and hills near the bottom do not look flatter than in the 2D view. Slopes are shaded a little more than their true slope would give, like the 2D ground sprites.
 With that scale the 3D view at the default angle has the proportions of the 2D game.
 
 To build in the 3D view, the window finds the spot on the ground below the cursor by following the line of sight through the cursor until it goes below the terrain.

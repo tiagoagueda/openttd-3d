@@ -1400,7 +1400,7 @@ void BuildTerrainChunkMesh(uint chunk_x, uint chunk_y, GroundTextures &textures,
 	static constexpr float AMBIENT = 0.45f;
 	static constexpr float DIFFUSE = 0.80f;
 	/* Change in world height per world unit of distance, for one height level difference across a tile. */
-	static constexpr float SLOPE_SCALE = static_cast<float>(TILE_HEIGHT) / TILE_SIZE;
+	static constexpr float SLOPE_SCALE = 1.5f * TILE_HEIGHT / TILE_SIZE; // a little more than the true slope, as the 2D ground sprites shade slopes strongly
 
 	mesh.vertices.clear();
 	mesh.sprites.clear();

@@ -72,7 +72,7 @@ inline Vec3 Normalise(const Vec3 &v)
  * exactly like OpenTTD's own world coordinates.
  */
 struct Camera3D {
-	static constexpr float FOV_Y = 0.6f; ///< Vertical field of view in radians.
+	static constexpr float FOV_Y = 0.3f; ///< Vertical field of view in radians.
 	static constexpr float MIN_PITCH = 0.15f; ///< Lowest allowed angle above the horizon in radians.
 	static constexpr float MAX_PITCH = 1.50f; ///< Highest allowed angle above the horizon in radians.
 	static constexpr float MIN_DISTANCE = 48.0f; ///< Closest distance to the target in world units.
@@ -81,7 +81,7 @@ struct Camera3D {
 	Vec3 target{}; ///< Point the camera looks at.
 	float yaw = 0.7853982f; ///< Direction from the target to the camera around the z axis; the default looks north like the 2D view.
 	float pitch = 0.5235988f; ///< Angle of the camera above the horizon; the default of 30 degrees matches the 2D view.
-	float distance = 640.0f; ///< Distance from the target to the camera.
+	float distance = 1280.0f; ///< Distance from the target to the camera.
 
 	/** Position of the camera. */
 	Vec3 GetEye() const
