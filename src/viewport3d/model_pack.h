@@ -41,6 +41,7 @@ enum class ModelKind : uint8_t {
 	Rough, ///< Rough land, by version; the game picks one for each tile.
 	Rocks, ///< Rocky land, by version; the game picks one for each tile.
 	Effect, ///< Smoke, steam and sparks, by effect vehicle type.
+	Track, ///< Pieces of track: 0 and 1 railway, 2 and 3 monorail, 4 and 5 maglev; even straight, odd diagonal.
 };
 
 /**

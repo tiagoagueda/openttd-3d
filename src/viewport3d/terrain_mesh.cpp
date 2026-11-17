@@ -39,6 +39,7 @@
 #include "../object_base.h"
 #include "../object_map.h"
 #include "../rail_map.h"
+#include "../rail.h"
 #include "../road_map.h"
 #include "../station_map.h"
 #include "../town.h"
@@ -269,6 +270,84 @@ static void AddGroundModel(const ModelPack::Entry &entry, uint x, uint y, const 
 		(x + 0.5f) * TILE_SIZE, (y + 0.5f) * TILE_SIZE, zc, 1,
 	};
 	instance.tint = {1, 1, 1, 1};
+}
+
+/**
+ * Add a model that lies along a line on the ground of a tile, like a piece of track, tilted along the slope of the tile.
+ * @param entry The model; it runs along its x axis.
+ * @param x X coordinate of the tile.
+ * @param y Y coordinate of the tile.
+ * @param heights Heights of the northern, western, eastern and southern corner, in height levels.
+ * @param cx Where the middle of the model goes, in world units within the tile along x.
+ * @param cy Where the middle of the model goes, in world units within the tile along y.
+ * @param dx Direction of the model along x, of length one together with dy.
+ * @param dy Direction of the model along y.
+ * @param mesh The mesh to add to.
+ */
+static void AddPieceModel(const ModelPack::Entry &entry, uint x, uint y, const std::array<int, 4> &heights, float cx, float cy, float dx, float dy, TerrainChunkMesh &mesh)
+{
+	auto [hn, hw, he, hs] = heights;
+	/* The plane that fits the corners best, as in AddGroundModel(). */
+	float zc = (hn + hw + he + hs) * 0.25f * HEIGHT_LEVEL_SIZE;
+	float ax = ((hw + hs) - (hn + he)) * 0.5f * HEIGHT_LEVEL_SIZE / TILE_SIZE;
+	float ay = ((he + hs) - (hn + hw)) * 0.5f * HEIGHT_LEVEL_SIZE / TILE_SIZE;
+	float s = entry.scale;
+	float z = zc + ax * (cx - TILE_SIZE * 0.5f) + ay * (cy - TILE_SIZE * 0.5f);
+
+	ModelInstance &instance = mesh.models.emplace_back();
+	instance.model = entry.model;
+	instance.transform.m = {
+		dx * s, dy * s, (ax * dx + ay * dy) * s, 0,
+		-dy * s, dx * s, (-ax * dy + ay * dx) * s, 0,
+		0, 0, s, 0,
+		x * TILE_SIZE + cx, y * TILE_SIZE + cy, z, 1,
+	};
+	instance.tint = {1, 1, 1, 1};
+}
+
+/**
+ * Add 3D track on a tile: one piece for each track.
+ * @param tile The tile, a plain rail tile.
+ * @param x X coordinate of the tile.
+ * @param y Y coordinate of the tile.
+ * @param heights Heights of the corners, as for AddPieceModel().
+ * @param pack The package of 3D models.
+ * @param mesh The mesh to add to.
+ * @return Whether the package has track of this kind; if not, nothing was added.
+ */
+static bool AddTrackModels(Tile tile, uint x, uint y, const std::array<int, 4> &heights, const ModelPack &pack, TerrainChunkMesh &mesh)
+{
+	const RailTypeInfo *rti = GetRailTypeInfo(GetRailType(tile));
+	uint base;
+	if (rti->label == RAILTYPE_LABEL_RAIL || rti->label == RAILTYPE_LABEL_ELECTRIC) {
+		base = 0;
+	} else if (rti->label == RAILTYPE_LABEL_MONO) {
+		base = 2;
+	} else if (rti->label == RAILTYPE_LABEL_MAGLEV) {
+		base = 4;
+	} else {
+		return false;
+	}
+	const ModelPack::Entry *straight = pack.Find(ModelKind::Track, 0, base);
+	const ModelPack::Entry *diagonal = pack.Find(ModelKind::Track, 0, base + 1);
+	if (straight == nullptr || diagonal == nullptr) return false;
+
+	static constexpr float H = TILE_SIZE * 0.5f;
+	static constexpr float Q = TILE_SIZE * 0.25f;
+	static constexpr float D = 0.70710678f;
+	/* Middle and direction of each track, in the order of enum Track: X, Y, upper, lower, left, right. */
+	static constexpr float PIECES[6][4] = {
+		{H, H, 1, 0}, {H, H, 0, 1},
+		{Q, Q, D, -D}, {3 * Q, 3 * Q, D, -D},
+		{3 * Q, Q, D, D}, {Q, 3 * Q, D, D},
+	};
+	TrackBits bits = GetTrackBits(tile);
+	for (uint track = 0; track < 6; track++) {
+		if (!bits.Test(static_cast<Track>(track))) continue;
+		const float *p = PIECES[track];
+		AddPieceModel(track < 2 ? *straight : *diagonal, x, y, heights, p[0], p[1], p[2], p[3], mesh);
+	}
+	return true;
 }
 
 /**
@@ -818,8 +897,11 @@ void BuildTerrainChunkMesh(uint chunk_x, uint chunk_y, GroundTextures &textures,
 				mesh.vertices.insert(mesh.vertices.end(), {vn, ve, vw, vs});
 			}
 
+			bool models = pack != nullptr && !pack->IsEmpty();
+			if (collect && models && IsTileType(tile, TileType::Railway) && IsPlainRail(tile)) {
+				AddTrackModels(tile, x, y, {hn, hw, he, hs}, *pack, mesh);
+			}
 			if (!collect) {
-				bool models = pack != nullptr && !pack->IsEmpty();
 				if (IsTileType(tile, TileType::Trees) && !(models && AddTreeModels(tile, x, y, *pack, mesh))) AddTrees(tile, x, y, atlas, mesh);
 				if (IsTileType(tile, TileType::Clear)) {
 					if (IsClearGround(tile, ClearGround::Fields)) AddFences(tile, x, y, atlas, mesh);
