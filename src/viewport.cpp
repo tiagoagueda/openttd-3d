@@ -1921,6 +1921,20 @@ void Window::DrawViewport() const
 	dpi->left += this->left;
 	dpi->top += this->top;
 
+#ifdef WITH_VIEWPORT3D
+	/* When the map is shown in 3D, so are the views in news messages, town, vehicle and other windows. */
+	const Viewport &vp = *this->viewport;
+	int left = std::max(dpi->left, vp.left);
+	int top = std::max(dpi->top, vp.top);
+	int right = std::min(dpi->left + dpi->width, vp.left + vp.width);
+	int bottom = std::min(dpi->top + dpi->height, vp.top + vp.height);
+	if (this->window_class != WindowClass::MainWindow && (left >= right || top >= bottom || DrawViewportIn3D(*this, left, top, right, bottom))) {
+		dpi->left -= this->left;
+		dpi->top -= this->top;
+		return;
+	}
+#endif
+
 	ViewportDraw(*this->viewport, dpi->left, dpi->top, dpi->left + dpi->width, dpi->top + dpi->height);
 
 	dpi->left -= this->left;

@@ -128,10 +128,23 @@ struct Renderer3D::Impl {
 	bgfx::VertexBufferHandle sky_vertices = BGFX_INVALID_HANDLE; ///< One triangle that covers the screen.
 	std::chrono::steady_clock::time_point start = std::chrono::steady_clock::now(); ///< When the renderer started; things move with the time since.
 	bgfx::IndexBufferHandle quad_indices = BGFX_INVALID_HANDLE; ///< Indices for a full chunk of quads, shared by all chunks.
-	bgfx::FrameBufferHandle framebuffer = BGFX_INVALID_HANDLE;
-	bgfx::TextureHandle readback = BGFX_INVALID_HANDLE;
-	uint fb_width = 0;
-	uint fb_height = 0;
+	/** Where the images of one view are drawn and read back. */
+	struct Target {
+		bgfx::FrameBufferHandle framebuffer = BGFX_INVALID_HANDLE; ///< Colour and depth to draw into.
+		bgfx::TextureHandle readback = BGFX_INVALID_HANDLE; ///< Copy of the colour the CPU can read.
+		uint width = 0; ///< Width of both in pixels.
+		uint height = 0; ///< Height of both in pixels.
+
+		/** Free the GPU memory. */
+		void Destroy()
+		{
+			if (bgfx::isValid(this->framebuffer)) bgfx::destroy(this->framebuffer);
+			if (bgfx::isValid(this->readback)) bgfx::destroy(this->readback);
+			this->framebuffer = BGFX_INVALID_HANDLE;
+			this->readback = BGFX_INVALID_HANDLE;
+		}
+	};
+	std::unordered_map<uint, Target> targets; ///< Render targets by the id of their view.
 	std::unordered_map<ChunkID, GpuChunk> chunks;
 };
 
@@ -329,8 +342,7 @@ Renderer3D::~Renderer3D()
 	if (bgfx::isValid(impl.shadow_sampler)) bgfx::destroy(impl.shadow_sampler);
 	if (bgfx::isValid(impl.shadow_matrix)) bgfx::destroy(impl.shadow_matrix);
 	if (bgfx::isValid(impl.shadow_params)) bgfx::destroy(impl.shadow_params);
-	if (bgfx::isValid(impl.framebuffer)) bgfx::destroy(impl.framebuffer);
-	if (bgfx::isValid(impl.readback)) bgfx::destroy(impl.readback);
+	for (auto &[id, target] : impl.targets) target.Destroy();
 	if (bgfx::isValid(impl.quad_indices)) bgfx::destroy(impl.quad_indices);
 	if (bgfx::isValid(impl.sprite_atlas)) bgfx::destroy(impl.sprite_atlas);
 	if (bgfx::isValid(impl.sprite_axes)) bgfx::destroy(impl.sprite_axes);
@@ -630,7 +642,7 @@ static ShadowView GetShadowView(const Camera3D &camera, Vec3 sun, bool homogeneo
  * @param sprites Sprites to draw that are in no chunk, such as vehicles; four vertices per sprite.
  * @param models 3D models to draw.
  */
-void Renderer3D::Render(uint width, uint height, const Camera3D &camera, std::span<const ChunkID> chunks, std::span<const SpriteVertex> sprites, std::span<const ModelInstance> models)
+void Renderer3D::Render(uint target_id, uint width, uint height, const Camera3D &camera, std::span<const ChunkID> chunks, std::span<const SpriteVertex> sprites, std::span<const ModelInstance> models)
 {
 	assert(!this->pending);
 	Impl &impl = *this->impl;
@@ -639,9 +651,9 @@ void Renderer3D::Render(uint width, uint height, const Camera3D &camera, std::sp
 	width = Clamp(width, 1, 4096);
 	height = Clamp(height, 1, 4096);
 
-	if (width != impl.fb_width || height != impl.fb_height) {
-		if (bgfx::isValid(impl.framebuffer)) bgfx::destroy(impl.framebuffer);
-		if (bgfx::isValid(impl.readback)) bgfx::destroy(impl.readback);
+	Impl::Target &target = impl.targets[target_id];
+	if (width != target.width || height != target.height) {
+		target.Destroy();
 
 		bgfx::TextureFormat::Enum depth_format = bgfx::TextureFormat::D24S8;
 		for (bgfx::TextureFormat::Enum candidate : {bgfx::TextureFormat::D32F, bgfx::TextureFormat::D24S8, bgfx::TextureFormat::D24, bgfx::TextureFormat::D16}) {
@@ -663,10 +675,10 @@ void Renderer3D::Render(uint width, uint height, const Camera3D &camera, std::sp
 			bgfx::createTexture2D(static_cast<uint16_t>(width), static_cast<uint16_t>(height), false, 1, bgfx::TextureFormat::BGRA8, msaa | BGFX_SAMPLER_U_CLAMP | BGFX_SAMPLER_V_CLAMP),
 			bgfx::createTexture2D(static_cast<uint16_t>(width), static_cast<uint16_t>(height), false, 1, depth_format, (msaa & BGFX_TEXTURE_RT_MSAA_MASK) | BGFX_TEXTURE_RT_WRITE_ONLY),
 		};
-		impl.framebuffer = bgfx::createFrameBuffer(static_cast<uint8_t>(std::size(attachments)), attachments, true);
-		impl.readback = bgfx::createTexture2D(static_cast<uint16_t>(width), static_cast<uint16_t>(height), false, 1, bgfx::TextureFormat::BGRA8, BGFX_TEXTURE_BLIT_DST | BGFX_TEXTURE_READ_BACK);
-		impl.fb_width = width;
-		impl.fb_height = height;
+		target.framebuffer = bgfx::createFrameBuffer(static_cast<uint8_t>(std::size(attachments)), attachments, true);
+		target.readback = bgfx::createTexture2D(static_cast<uint16_t>(width), static_cast<uint16_t>(height), false, 1, bgfx::TextureFormat::BGRA8, BGFX_TEXTURE_BLIT_DST | BGFX_TEXTURE_READ_BACK);
+		target.width = width;
+		target.height = height;
 	}
 
 	static constexpr bgfx::ViewId VIEW_SHADOW = 0;
@@ -676,7 +688,7 @@ void Renderer3D::Render(uint width, uint height, const Camera3D &camera, std::sp
 	Matrix4 view = camera.GetViewMatrix();
 	Matrix4 proj = camera.GetProjectionMatrix(static_cast<float>(width) / height, bgfx::getCaps()->homogeneousDepth);
 
-	bgfx::setViewFrameBuffer(VIEW_SCENE, impl.framebuffer);
+	bgfx::setViewFrameBuffer(VIEW_SCENE, target.framebuffer);
 	bgfx::setViewRect(VIEW_SCENE, 0, 0, static_cast<uint16_t>(width), static_cast<uint16_t>(height));
 	bgfx::setViewClear(VIEW_SCENE, BGFX_CLEAR_COLOR | BGFX_CLEAR_DEPTH, 0xccdbebff, 1.0f, 0);
 	bgfx::setViewTransform(VIEW_SCENE, view.m.data(), proj.m.data());
@@ -757,6 +769,16 @@ void Renderer3D::Render(uint width, uint height, const Camera3D &camera, std::sp
 	/* x: first layer that is mixed. y: layer of asphalt, followed by gravel and paving. z: the light of flat ground, as in BuildTerrainChunkMesh(), at half brightness. */
 	const float layers[4] = {terrain_textures && bgfx::isValid(impl.ground_mix) ? static_cast<float>(GROUND_TEXTURE_END) : 4096.0f, static_cast<float>(GROUND_TEXTURE_ASPHALT), 0.5f * (0.45f + 0.80f * 0.6817f), 0};
 	bgfx::setUniform(impl.layers, layers);
+	/* Draws are sorted before they are made, so a draw may come before the one these were set for; and they would
+	 * then keep the values of the previous image, which can be of another view. So every draw sets them. */
+	auto set_scene = [&]() {
+		bgfx::setUniform(impl.haze_colour, HAZE_COLOUR);
+		bgfx::setUniform(impl.haze_params, haze_params);
+		bgfx::setUniform(impl.water, water);
+		bgfx::setUniform(impl.terrain, terrain);
+		bgfx::setUniform(impl.layers, layers);
+		set_shadow();
+	};
 
 	Matrix4 view_proj = proj * view;
 	Matrix4 inverse;
@@ -806,7 +828,7 @@ void Renderer3D::Render(uint width, uint height, const Camera3D &camera, std::sp
 			bgfx::setUniform(impl.model_tint, instance.tint.data());
 			bgfx::setUniform(impl.model_sun, MODEL_SUN);
 			bgfx::setUniform(impl.model_light, MODEL_LIGHT);
-			set_shadow();
+			set_scene();
 			if (see_through) {
 				bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_DEPTH_TEST_LESS | BGFX_STATE_BLEND_ALPHA);
 				bgfx::submit(VIEW_SCENE, impl.model_program);
@@ -845,7 +867,7 @@ void Renderer3D::Render(uint width, uint height, const Camera3D &camera, std::sp
 			bgfx::setTexture(2, impl.terrain_sampler, terrain_textures ? impl.terrain_textures : impl.ground_textures);
 			bgfx::setTexture(3, impl.mix_sampler, bgfx::isValid(impl.ground_mix) ? impl.ground_mix : impl.ground_textures);
 			bgfx::setIndexBuffer(impl.quad_indices, 0, chunk.num_water * 6);
-			set_shadow();
+			set_scene();
 			bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_DEPTH_TEST_LESS | BGFX_STATE_BLEND_FUNC_SEPARATE(BGFX_STATE_BLEND_SRC_ALPHA, BGFX_STATE_BLEND_INV_SRC_ALPHA, BGFX_STATE_BLEND_ZERO, BGFX_STATE_BLEND_ONE));
 			bgfx::submit(VIEW_SCENE, impl.program);
 		}
@@ -857,7 +879,7 @@ void Renderer3D::Render(uint width, uint height, const Camera3D &camera, std::sp
 			bgfx::setTexture(2, impl.terrain_sampler, terrain_textures ? impl.terrain_textures : impl.ground_textures);
 			bgfx::setTexture(3, impl.mix_sampler, bgfx::isValid(impl.ground_mix) ? impl.ground_mix : impl.ground_textures);
 			bgfx::setIndexBuffer(impl.quad_indices, 0, chunk.num_quads * 6);
-			set_shadow();
+			set_scene();
 			bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A | BGFX_STATE_WRITE_Z | BGFX_STATE_DEPTH_TEST_LESS);
 			bgfx::submit(VIEW_SCENE, impl.program);
 
@@ -879,7 +901,7 @@ void Renderer3D::Render(uint width, uint height, const Camera3D &camera, std::sp
 			bgfx::setUniform(impl.sprite_axes, sprite_axes);
 			bgfx::setUniform(impl.sprite_nearer, sprite_nearer);
 			bgfx::setIndexBuffer(impl.quad_indices, 0, chunk.num_sprites * 6);
-			set_shadow();
+			set_scene();
 			bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A | BGFX_STATE_WRITE_Z | BGFX_STATE_DEPTH_TEST_LESS);
 			bgfx::submit(VIEW_SCENE, impl.sprite_program);
 			cast_sprites([&]() { bgfx::setVertexBuffer(0, chunk.sprites); }, chunk.num_sprites);
@@ -899,7 +921,7 @@ void Renderer3D::Render(uint width, uint height, const Camera3D &camera, std::sp
 		bgfx::setUniform(impl.sprite_axes, sprite_axes);
 		bgfx::setUniform(impl.sprite_nearer, sprite_nearer);
 		bgfx::setIndexBuffer(impl.quad_indices, 0, num_sprites * 6);
-		set_shadow();
+		set_scene();
 		bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A | BGFX_STATE_WRITE_Z | BGFX_STATE_DEPTH_TEST_LESS);
 		bgfx::submit(VIEW_SCENE, impl.sprite_program);
 		cast_sprites([&]() { bgfx::setVertexBuffer(0, &buffer); }, num_sprites);
@@ -925,7 +947,7 @@ void Renderer3D::Render(uint width, uint height, const Camera3D &camera, std::sp
 			bgfx::setInstanceDataBuffer(&copies);
 			bgfx::setUniform(impl.model_sun, MODEL_SUN);
 			bgfx::setUniform(impl.model_light, MODEL_LIGHT);
-			set_shadow();
+			set_scene();
 			bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A | BGFX_STATE_WRITE_Z | BGFX_STATE_DEPTH_TEST_LESS);
 			bgfx::submit(VIEW_SCENE, impl.model_instanced_program);
 
@@ -940,20 +962,39 @@ void Renderer3D::Render(uint width, uint height, const Camera3D &camera, std::sp
 	}
 
 	/* Copy the finished image into a texture the CPU can read, and ask for its contents. */
-	bgfx::blit(VIEW_READBACK, bgfx::TextureRegion{.handle = impl.readback}, bgfx::TextureRegion{.handle = bgfx::getTexture(impl.framebuffer, 0)});
+	bgfx::blit(VIEW_READBACK, bgfx::TextureRegion{.handle = target.readback}, bgfx::TextureRegion{.handle = bgfx::getTexture(target.framebuffer, 0)});
 
 	this->pending_image.resize(static_cast<size_t>(width) * height);
 	this->pending_width = width;
 	this->pending_height = height;
-	this->pending_frame = bgfx::read(bgfx::TextureRegion{.handle = impl.readback}, this->pending_image.data());
+	this->pending_frame = bgfx::read(bgfx::TextureRegion{.handle = target.readback}, this->pending_image.data());
+	this->pending_target = target_id;
 	this->pending = true;
+}
+
+/**
+ * Forget a view: free its render target and its image.
+ * @param target_id The view, as given to Render().
+ */
+void Renderer3D::ReleaseTarget(uint target_id)
+{
+	this->images.erase(target_id);
+	/* The GPU may still be copying out of it; then it goes once that is done. */
+	if (this->pending && this->pending_target == target_id) {
+		this->release_pending = true;
+		return;
+	}
+	auto it = this->impl->targets.find(target_id);
+	if (it == this->impl->targets.end()) return;
+	it->second.Destroy();
+	this->impl->targets.erase(it);
 }
 
 /**
  * Let the GPU make progress on a requested image. Call once per display frame while IsBusy().
  * @return Whether a new image became available through GetImage().
  */
-bool Renderer3D::Poll()
+bool Renderer3D::Poll(uint *target_id)
 {
 	if (!this->pending) return false;
 	if (this->impl->callback.failed) {
@@ -965,19 +1006,27 @@ bool Renderer3D::Poll()
 	if (frame < this->pending_frame) return false;
 
 	this->pending = false;
-	this->image_width = this->pending_width;
-	this->image_height = this->pending_height;
+	if (this->release_pending) {
+		this->release_pending = false;
+		this->ReleaseTarget(this->pending_target);
+		return false;
+	}
+
+	Image &image = this->images[this->pending_target];
+	image.width = this->pending_width;
+	image.height = this->pending_height;
 
 	if (bgfx::getCaps()->originBottomLeft) {
 		/* The image arrives with the bottom row first; flip it. */
-		this->image.resize(this->pending_image.size());
-		for (uint y = 0; y < this->image_height; y++) {
-			std::copy_n(this->pending_image.begin() + static_cast<size_t>(this->image_height - 1 - y) * this->image_width, this->image_width, this->image.begin() + static_cast<size_t>(y) * this->image_width);
+		image.pixels.resize(this->pending_image.size());
+		for (uint y = 0; y < image.height; y++) {
+			std::copy_n(this->pending_image.begin() + static_cast<size_t>(image.height - 1 - y) * image.width, image.width, image.pixels.begin() + static_cast<size_t>(y) * image.width);
 		}
 	} else {
-		std::swap(this->image, this->pending_image);
+		std::swap(image.pixels, this->pending_image);
 	}
 	/* Blitters treat the top byte as alpha; make sure the image is opaque. */
-	for (uint32_t &pixel : this->image) pixel |= 0xFF000000;
+	for (uint32_t &pixel : image.pixels) pixel |= 0xFF000000;
+	if (target_id != nullptr) *target_id = this->pending_target;
 	return true;
 }

@@ -129,6 +129,8 @@ Names of towns and stations and signs stand in the world: each is a board on a p
 
 The cursor is in the world too (`AddCursorModels()`): with a build tool, a white frame with corner posts follows the ground around the selected tiles (or the tile below the mouse for tools that build along lines), and a yellow arrow bobs over the tile below the mouse; without a tool, white brackets mark the corners of that tile. The parts are `interface` models 1 to 4.
 
+With the 3D main view, the views inside other windows (news messages, town, vehicle, station and industry windows, extra viewports) are drawn in 3D too. `Window::DrawViewport()` in `viewport.cpp` asks `DrawViewportIn3D()`, which copies the latest 3D image of that window's view and notes where the view looks; the 3D window then renders the small views in turns with its own image (`RenderSmallView()`), each into its own render target of the renderer (`Renderer3D::Render()` takes the id of the view), when one moved or, a few times a second, when something in it moved. The camera looks at the spot in the middle of the 2D view from the default angle, from as far as makes the scale match its zoom. Until its first image is ready, a view is drawn in 2D. These small views have no names, signs or cursor.
+
 With the 3D main view and the setting "3D-styled windows and buttons" (`gui.view3d_interface`, on by default; needs a 32bpp blitter), `DrawFrameRect()` in `widget.cpp` draws every frame of the interface shaded: raised buttons and panels lit from above with a sheen and a dark lower edge, lowered ones shaded like a hollow (`DrawFrameRect3D()`). Tall panels get only a hint of it.
 A click first looks for a vehicle of which the sprite is below the cursor, then for a name or sign, then for the tile, in the same order as the 2D views (`HandleView3DClicked()`).
 
@@ -177,7 +179,7 @@ A tile with a foundation is drawn flat at the top of the foundation, with stone 
 
 The existing game is touched in a few small places:
 
-* `MarkTileDirtyByTile()` in `viewport.cpp` tells the 3D view which tile changed, `SetSelectionTilesDirty()` tells it where the selection changed, `GetTileBelowCursor()` asks it for the tile below the cursor, and `CollectTileSprites()`, `HasTileSelection()`, `GetView3DLabels()`, `DrawView3DLabel()` and `HandleView3DClicked()` at the end of that file tell it what a tile draws, make the names and pass on clicks.
+* `MarkTileDirtyByTile()` in `viewport.cpp` tells the 3D view which tile changed, `SetSelectionTilesDirty()` tells it where the selection changed, `GetTileBelowCursor()` asks it for the tile below the cursor, and `CollectTileSprites()`, `HasTileSelection()`, `GetView3DLabels()`, `DrawView3DLabel()` and `HandleView3DClicked()` at the end of that file tell it what a tile draws, make the names and pass on clicks; `Window::DrawViewport()` lets it draw the views of other windows.
 * `console_cmds.cpp` has the `view3d` command.
 * `window_type.h` has the new window class.
 * `lang/english.txt` has the strings of the window.

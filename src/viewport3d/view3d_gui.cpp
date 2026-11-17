@@ -26,6 +26,7 @@
 #include "../core/backup_type.hpp"
 #include "../viewport_type.h"
 #include "../viewport_func.h"
+#include "../zoom_func.h"
 #include "../error.h"
 #include "../openttd.h"
 #include "../tilehighlight_func.h"
@@ -140,6 +141,27 @@ class View3DWindow : public Window {
 	std::chrono::steady_clock::time_point labels_found{}; ///< When the labels were last looked up.
 
 	std::chrono::steady_clock::time_point textures_reset{}; ///< When the ground textures were last started afresh.
+
+	/** A viewport of another window, such as a news message, a town, vehicle or industry window or an extra viewport, that is drawn in 3D. */
+	struct SmallView {
+		WindowClass window_class; ///< Class of the window.
+		WindowNumber window_number; ///< Number of the window.
+		uint target; ///< Id of its image in the renderer.
+		Camera3D camera; ///< Where it looks from.
+		uint width = 0; ///< Width of the viewport in pixels.
+		uint height = 0; ///< Height of the viewport in pixels.
+		bool changed = true; ///< Whether the camera or size changed since the last image.
+		uint64_t hash = 0; ///< Hash of the vehicles in the last image.
+		std::chrono::steady_clock::time_point rendered{}; ///< When it was last looked at for a new image.
+	};
+	std::vector<SmallView> small_views; ///< The viewports of other windows.
+	uint next_small_target = 1; ///< Id for the image of the next new small view; 0 is our own.
+	size_t next_small_view = 0; ///< Small view to look at first for the next image, so they all get their turn.
+	bool small_turn = false; ///< Whether the next image is for a small view rather than our own.
+	std::vector<Renderer3D::ChunkID> small_chunks; ///< Chunks in a small view; reused.
+	std::vector<SpriteVertex> small_sprites; ///< Vehicles in a small view; reused.
+	std::vector<VehicleSpritePlace> small_places; ///< Places of the vehicles in a small view; not used, but needed to find them.
+	std::vector<ModelInstance> small_models; ///< Models in a small view; reused.
 
 public:
 	View3DWindow(WindowDesc &desc, WindowNumber window_number) : Window(desc), main_view(desc.cls == WindowClass::View3DMain)
@@ -897,15 +919,22 @@ public:
 		if (this->main_view) this->FollowMainView();
 		this->MoveCamera(delta_ms);
 		if (this->main_view) this->MoveMainView();
-		if (this->renderer->Poll()) this->SetWidgetDirty(WID_V3D_VIEW);
+		this->PollRenderer();
 		if (this->renderer->IsBusy()) return;
+
+		/* Our own view and the viewports of other windows take turns. */
+		auto now = std::chrono::steady_clock::now();
+		if (this->main_view) {
+			this->ForgetClosedSmallViews();
+			this->small_turn = !this->small_turn;
+			if (this->small_turn && this->RenderSmallView(now)) return;
+		}
 
 		const NWidgetBase *view = this->GetWidget<NWidgetBase>(WID_V3D_VIEW);
 		if (view->current_x == 0 || view->current_y == 0) return;
 
 		/* Selections and new buildings keep adding ground textures. When there is no room left, start afresh
 		 * with only the ones in use now; not too often, in case a single view needs more than there is room for. */
-		auto now = std::chrono::steady_clock::now();
 		if (this->ground_textures->IsFull() && now - this->textures_reset > std::chrono::seconds(10)) {
 			this->textures_reset = now;
 			this->ground_textures = std::make_unique<GroundTextures>(this->renderer->GetMaxGroundTextures());
@@ -914,7 +943,7 @@ public:
 			this->terrain_changed = true;
 		}
 
-		bool geometry_changed = (this->view_changed || this->terrain_changed) && this->UpdateChunks(view->current_x, view->current_y);
+		bool geometry_changed = (this->view_changed || this->terrain_changed) && this->UpdateChunks(this->camera, view->current_x, view->current_y, this->visible_chunks, true);
 
 		/* Vehicles move all the time, so they are looked up for every image. */
 		Matrix4 view_proj = this->camera.GetProjectionMatrix(static_cast<float>(view->current_x) / view->current_y, this->renderer->HomogeneousDepth()) * this->camera.GetViewMatrix();
@@ -928,28 +957,172 @@ public:
 		this->AddPreviewModels();
 		this->AddLabels(view_proj, view->current_x, view->current_y);
 		this->AddCursorModels(seconds);
-		uint64_t hash = 0xcbf29ce484222325ULL;
-		const uint8_t *data = reinterpret_cast<const uint8_t *>(this->vehicle_sprites.data());
-		for (size_t i = 0; i < this->vehicle_sprites.size() * sizeof(SpriteVertex); i++) {
-			hash = (hash ^ data[i]) * 0x100000001b3ULL;
-		}
-		for (const ModelInstance &instance : this->vehicle_models) {
-			hash = (hash ^ instance.model) * 0x100000001b3ULL;
-			for (float f : instance.transform.m) hash = (hash ^ std::bit_cast<uint32_t>(f)) * 0x100000001b3ULL;
-		}
+		uint64_t hash = HashMoving(this->vehicle_sprites, this->vehicle_models);
 		bool vehicles_changed = hash != this->vehicle_hash;
 
 		this->renderer->UpdateGroundTextures(*this->ground_textures);
 		this->renderer->UpdateSpriteAtlas(*this->atlas);
 		if (!this->view_changed && !geometry_changed && !vehicles_changed) return;
 
-		this->renderer->Render(view->current_x, view->current_y, this->camera, this->visible_chunks, this->vehicle_sprites, this->vehicle_models);
+		this->renderer->Render(0, view->current_x, view->current_y, this->camera, this->visible_chunks, this->vehicle_sprites, this->vehicle_models);
 		this->view_changed = false;
 		this->vehicle_hash = hash;
-		this->renderer->Poll();
+		this->PollRenderer();
+	}
+
+	/**
+	 * Draw a viewport of another window from its latest 3D image, and ask for a new image when it moved.
+	 * @param w The window.
+	 * @param left Left edge of the area to draw, in pixels of the screen.
+	 * @param top Top edge of the area to draw.
+	 * @param right Right edge of the area to draw, exclusive.
+	 * @param bottom Bottom edge of the area to draw, exclusive.
+	 * @return Whether it was drawn; if not, there is no image yet and the 2D view has to do.
+	 */
+	bool DrawSmallView(const Window &w, int left, int top, int right, int bottom)
+	{
+		if (this->renderer == nullptr || !this->main_view) return false;
+		const Viewport &vp = *w.viewport;
+		if (vp.width <= 0 || vp.height <= 0) return false;
+
+		auto it = std::ranges::find_if(this->small_views, [&w](const SmallView &view) { return view.window_class == w.window_class && view.window_number == w.window_number; });
+		if (it == this->small_views.end()) {
+			it = this->small_views.emplace(this->small_views.end());
+			it->window_class = w.window_class;
+			it->window_number = w.window_number;
+			it->target = this->next_small_target++;
+		}
+
+		/* Look at the spot the 2D view would show in its middle, from as far as makes one pixel of a sprite as large. */
+		Camera3D camera;
+		Point centre = InverseRemapCoords2(vp.virtual_left + vp.virtual_width / 2, vp.virtual_top + vp.virtual_height / 2, true);
+		camera.target.x = Clamp(static_cast<float>(centre.x), 0.0f, static_cast<float>(Map::MaxX() * TILE_SIZE));
+		camera.target.y = Clamp(static_cast<float>(centre.y), 0.0f, static_cast<float>(Map::MaxY() * TILE_SIZE));
+		camera.target.z = std::max(0.0f, GetGroundHeight(camera.target.x, camera.target.y));
+		float distance = UnScaleByZoom(vp.virtual_height, ZoomLevel::Normal) * SPRITE_PIXEL_SIZE / (2.0f * std::tan(Camera3D::FOV_Y / 2));
+		camera.distance = Clamp(distance, Camera3D::MIN_DISTANCE, Camera3D::MAX_DISTANCE);
+		if (camera.target.x != it->camera.target.x || camera.target.y != it->camera.target.y || camera.target.z != it->camera.target.z ||
+				camera.distance != it->camera.distance || it->width != static_cast<uint>(vp.width) || it->height != static_cast<uint>(vp.height)) {
+			it->camera = camera;
+			it->width = vp.width;
+			it->height = vp.height;
+			it->changed = true;
+		}
+
+		std::span<const uint32_t> image = this->renderer->GetImage(it->target);
+		int image_width = this->renderer->GetImageWidth(it->target);
+		int image_height = this->renderer->GetImageHeight(it->target);
+		if (image.empty()) return false;
+
+		/* Fill with palette index 0 first, for blitters with an animation buffer; see DrawView(). */
+		GfxFillRect(left, top, right - 1, bottom - 1, PixelColour{0});
+		const DrawPixelInfo *dpi = _cur_dpi;
+		Blitter *blitter = BlitterFactory::GetCurrentBlitter();
+		int copy_right = std::min({right, vp.left + image_width, dpi->left + dpi->width});
+		int copy_bottom = std::min({bottom, vp.top + image_height, dpi->top + dpi->height});
+		left = std::max(left, dpi->left);
+		top = std::max(top, dpi->top);
+		for (int y = top; y < copy_bottom; y++) {
+			if (left >= copy_right) break;
+			const uint32_t *src = image.data() + static_cast<size_t>(y - vp.top) * image_width + (left - vp.left);
+			uint32_t *dst = static_cast<uint32_t *>(blitter->MoveTo(dpi->dst_ptr, left - dpi->left, y - dpi->top));
+			std::copy_n(src, copy_right - left, dst);
+		}
+		return true;
 	}
 
 private:
+	/**
+	 * Hash what moves in an image, to see whether anything moved since the last one.
+	 * @param sprites The vehicles drawn with sprites.
+	 * @param models Everything drawn with models that is looked up anew for every image.
+	 * @return The hash.
+	 */
+	static uint64_t HashMoving(std::span<const SpriteVertex> sprites, std::span<const ModelInstance> models)
+	{
+		uint64_t hash = 0xcbf29ce484222325ULL;
+		const uint8_t *data = reinterpret_cast<const uint8_t *>(sprites.data());
+		for (size_t i = 0; i < sprites.size() * sizeof(SpriteVertex); i++) {
+			hash = (hash ^ data[i]) * 0x100000001b3ULL;
+		}
+		for (const ModelInstance &instance : models) {
+			hash = (hash ^ instance.model) * 0x100000001b3ULL;
+			for (float f : instance.transform.m) hash = (hash ^ std::bit_cast<uint32_t>(f)) * 0x100000001b3ULL;
+		}
+		return hash;
+	}
+
+	/** Take a finished image, and have whichever view it is for drawn again. */
+	void PollRenderer()
+	{
+		uint target;
+		if (!this->renderer->Poll(&target)) return;
+		if (target == 0) {
+			this->SetWidgetDirty(WID_V3D_VIEW);
+			return;
+		}
+		for (const SmallView &view : this->small_views) {
+			if (view.target != target) continue;
+			const Window *w = FindWindowById(view.window_class, view.window_number);
+			if (w != nullptr && w->viewport != nullptr) AddDirtyBlock(w->viewport->left, w->viewport->top, w->viewport->left + w->viewport->width, w->viewport->top + w->viewport->height);
+			return;
+		}
+	}
+
+	/** Forget the viewports of windows that closed. */
+	void ForgetClosedSmallViews()
+	{
+		for (auto it = this->small_views.begin(); it != this->small_views.end();) {
+			const Window *w = FindWindowById(it->window_class, it->window_number);
+			if (w != nullptr && w->viewport != nullptr) {
+				++it;
+				continue;
+			}
+			this->renderer->ReleaseTarget(it->target);
+			it = this->small_views.erase(it);
+		}
+	}
+
+	/**
+	 * Make a new image for one of the viewports of other windows, when one moved or something in it might have.
+	 * @param now The time now.
+	 * @return Whether an image was asked for.
+	 */
+	bool RenderSmallView(std::chrono::steady_clock::time_point now)
+	{
+		/* Vehicles and animations in a viewport that did not move are looked at a few times a second. */
+		static constexpr std::chrono::milliseconds RECHECK{200};
+		size_t count = this->small_views.size();
+		for (size_t i = 0; i < count; i++) {
+			size_t index = (this->next_small_view + i) % count;
+			SmallView &view = this->small_views[index];
+			if (!view.changed && now - view.rendered < RECHECK) continue;
+			view.rendered = now;
+
+			/* Chunks only seen here are built here; then our own view may have to be drawn again too. */
+			if (this->UpdateChunks(view.camera, view.width, view.height, this->small_chunks, false)) this->view_changed = true;
+
+			Matrix4 view_proj = view.camera.GetProjectionMatrix(static_cast<float>(view.width) / view.height, this->renderer->HomogeneousDepth()) * view.camera.GetViewMatrix();
+			BuildVehicleSprites(view.camera, Frustum3D(view_proj), *this->atlas, this->model_pack.get(), this->small_sprites, this->small_places, this->small_models);
+			float seconds = std::chrono::duration<float>(now - this->opened).count();
+			for (Renderer3D::ChunkID id : this->small_chunks) {
+				for (const AnimatedPart &part : this->chunks[id].parts) this->small_models.push_back(part.Place(seconds));
+				for (const auto &[tile, models] : this->chunks[id].live) this->small_models.insert(this->small_models.end(), models.begin(), models.end());
+			}
+			uint64_t hash = HashMoving(this->small_sprites, this->small_models);
+			if (!view.changed && hash == view.hash) continue;
+
+			this->renderer->UpdateGroundTextures(*this->ground_textures);
+			this->renderer->UpdateSpriteAtlas(*this->atlas);
+			this->renderer->Render(view.target, view.width, view.height, view.camera, this->small_chunks, this->small_sprites, this->small_models);
+			view.changed = false;
+			view.hash = hash;
+			this->next_small_view = index + 1;
+			return true;
+		}
+		return false;
+	}
+
 	/** Tells where a point of the map is in the image. */
 	struct Projection {
 		Matrix4 view_proj; ///< World to clip space.
@@ -1124,22 +1297,25 @@ private:
 	/**
 	 * Work out which chunks are in view, and build or rebuild those that need it.
 	 * Building is spread over several frames when there is a lot to do.
+	 * @param camera Where the view looks from.
 	 * @param width Width of the image in pixels.
 	 * @param height Height of the image in pixels.
+	 * @param[out] visible The chunks to draw.
+	 * @param own Whether it is our own view, rather than a viewport of another window.
 	 * @return Whether the geometry of any visible chunk changed.
 	 */
-	bool UpdateChunks(uint width, uint height)
+	bool UpdateChunks(const Camera3D &camera, uint width, uint height, std::vector<Renderer3D::ChunkID> &visible, bool own)
 	{
 		static constexpr std::chrono::milliseconds BUILD_BUDGET{6};
 		auto start = std::chrono::steady_clock::now();
 
-		Matrix4 view_proj = this->camera.GetProjectionMatrix(static_cast<float>(width) / height, this->renderer->HomogeneousDepth()) * this->camera.GetViewMatrix();
+		Matrix4 view_proj = camera.GetProjectionMatrix(static_cast<float>(width) / height, this->renderer->HomogeneousDepth()) * camera.GetViewMatrix();
 		Frustum3D frustum(view_proj);
 		/* Room above the ground for what stands on it. */
 		static constexpr float HEADROOM = 48.0f;
 		float max_height = _settings_game.construction.map_height_limit * HEIGHT_LEVEL_SIZE + HEADROOM;
 
-		this->visible_chunks.clear();
+		visible.clear();
 		bool changed = false;
 		bool out_of_time = false;
 		/* Only one chunk a frame is rebuilt for slow changes, so they never stall a frame. */
@@ -1165,7 +1341,7 @@ private:
 				if (!chunk.built || chunk.dirty || slow_due) {
 					if (out_of_time || (slow_due && !chunk.dirty && slow_built)) {
 						/* Draw what we have for now; the rest follows in the next frames. */
-						if (chunk.built) this->visible_chunks.push_back(id);
+						if (chunk.built) visible.push_back(id);
 						continue;
 					}
 
@@ -1187,12 +1363,17 @@ private:
 
 					if (std::chrono::steady_clock::now() - start > BUILD_BUDGET) out_of_time = true;
 				}
-				this->visible_chunks.push_back(id);
+				visible.push_back(id);
 			}
 		}
 
 		/* Chunks that are dirty but out of view stay dirty, and are rebuilt when they come into view. */
-		this->terrain_changed = out_of_time || slow_waiting || slow_built;
+		if (own) {
+			this->terrain_changed = out_of_time || slow_waiting || slow_built;
+		} else if (out_of_time || slow_waiting || slow_built) {
+			/* Not all of it is ready yet; look again soon. */
+			changed = true;
+		}
 		return changed;
 	}
 
@@ -1333,6 +1514,20 @@ void MarkTileDirtyForView3D(TileIndex tile)
 void MarkAreaDirtyForView3D(uint x_start, uint y_start, uint x_end, uint y_end)
 {
 	if (_view3d_window != nullptr) _view3d_window->MarkAreaDirty(x_start, y_start, x_end, y_end);
+}
+
+/**
+ * Draw the viewport of a window, such as a news message, a town or vehicle window or an extra viewport, in 3D when the map is shown in 3D.
+ * @param w The window; not the main window.
+ * @param left Left edge of the area to draw, in pixels of the screen.
+ * @param top Top edge of the area to draw.
+ * @param right Right edge of the area to draw, exclusive.
+ * @param bottom Bottom edge of the area to draw, exclusive.
+ * @return Whether it was drawn; if not, it is drawn in 2D.
+ */
+bool DrawViewportIn3D(const Window &w, int left, int top, int right, int bottom)
+{
+	return _view3d_window != nullptr && _view3d_window->DrawSmallView(w, left, top, right, bottom);
 }
 
 /**

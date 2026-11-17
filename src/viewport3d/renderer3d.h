@@ -16,6 +16,8 @@
 #include "sprite_atlas.h"
 #include "terrain_mesh.h"
 
+#include <unordered_map>
+
 /**
  * Offscreen renderer for the 3D viewport.
  *
@@ -50,17 +52,18 @@ public:
 	void ClearChunks();
 
 	bool IsBusy() const { return this->pending; }
-	void Render(uint width, uint height, const Camera3D &camera, std::span<const ChunkID> chunks, std::span<const SpriteVertex> sprites, std::span<const ModelInstance> models);
-	bool Poll();
+	void Render(uint target_id, uint width, uint height, const Camera3D &camera, std::span<const ChunkID> chunks, std::span<const SpriteVertex> sprites, std::span<const ModelInstance> models);
+	bool Poll(uint *target_id = nullptr);
+	void ReleaseTarget(uint target_id);
 
 	bool HomogeneousDepth() const;
 
-	/** Width of the last finished image in pixels. */
-	uint GetImageWidth() const { return this->image_width; }
-	/** Height of the last finished image in pixels. */
-	uint GetImageHeight() const { return this->image_height; }
-	/** Pixels of the last finished image, top row first, in the format of 32bpp blitters. */
-	std::span<const uint32_t> GetImage() const { return this->image; }
+	/** Width of the last finished image of a view in pixels. */
+	uint GetImageWidth(uint target_id = 0) const { auto it = this->images.find(target_id); return it == this->images.end() ? 0 : it->second.width; }
+	/** Height of the last finished image of a view in pixels. */
+	uint GetImageHeight(uint target_id = 0) const { auto it = this->images.find(target_id); return it == this->images.end() ? 0 : it->second.height; }
+	/** Pixels of the last finished image of a view, top row first, in the format of 32bpp blitters. */
+	std::span<const uint32_t> GetImage(uint target_id = 0) const { auto it = this->images.find(target_id); return it == this->images.end() ? std::span<const uint32_t>{} : std::span<const uint32_t>{it->second.pixels}; }
 
 private:
 	Renderer3D() = default;
@@ -76,9 +79,16 @@ private:
 	uint pending_height = 0; ///< Height of the requested image.
 	std::vector<uint32_t> pending_image; ///< Destination of the requested image; must stay put while pending.
 
-	uint image_width = 0; ///< Width of the last finished image.
-	uint image_height = 0; ///< Height of the last finished image.
-	std::vector<uint32_t> image; ///< The last finished image.
+	uint pending_target = 0; ///< View of the requested image.
+	bool release_pending = false; ///< Whether the view of the requested image is to be forgotten once it arrives.
+
+	/** A finished image of a view. */
+	struct Image {
+		uint width = 0; ///< Width in pixels.
+		uint height = 0; ///< Height in pixels.
+		std::vector<uint32_t> pixels; ///< Pixels, top row first.
+	};
+	std::unordered_map<uint, Image> images; ///< The last finished image of each view, by the id of the view.
 };
 
 #endif /* VIEWPORT3D_RENDERER3D_H */
