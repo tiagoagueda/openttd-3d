@@ -123,12 +123,16 @@ Infrastructure has models too (the functions are in `terrain_mesh.cpp`):
 * Signals (`signal`, by type, variant and state): they stand where the 2D game puts its signal sprites, face the trains they are for, and are mirrored when signals are on the left (`AddSignalModels()`). Their sprites are left out by their place on the tile.
 * Overhead wires (`catenary`): wires above each track, and pylons where the 2D game puts its pylon sprites (`AddWireModels()`, `AddPylonModel()`). This and the rail fences are used only with the base set's sprites, not with NewGRF rail types that draw their own.
 * Fences (`fence`): along rail tiles and the edges of farm fields (hedges, wooden fences, stone walls), stretched and sheared along each edge (`AddRailFenceModels()`, `AddFences()`).
-* Bridges (`bridge`): a deck piece above each tile under a bridge, a pillar stretched down to open land or water, and a ramp on each head, carrying track, wires or road (`AddBridgeMiddleModel()`, `AddBridgeRampModel()`). `DrawBridgeMiddle()` calls `MarkBridgeMiddleSprites()` so `CollectTileSprites()` can tell which sprites of a tile belong to the bridge above it. Aqueducts keep their sprites.
+* Bridges (`bridge`): a deck piece above each tile under a bridge, a pillar stretched down to open land or water, and a ramp on each head, carrying track, wires or road (`AddBridgeMiddleModel()`, `AddBridgeRampModel()`). `DrawBridgeMiddle()` calls `MarkBridgeMiddleSprites()` so `CollectTileSprites()` can tell which sprites of a tile belong to the bridge above it. Aqueducts use bridge type 17 of the package (`GetBridgeModelType()`). Road bridges with electric road or tram types carry wires.
 * Tunnels (`tunnel`): a portal on the entrance tile, which the terrain then draws flat at the foot of the slope; wing walls close the sides (`AddTunnelModel()`).
-* Level crossings (`crossing`, open and closed) with their track (`AddCrossingModel()`).
-* Along roads (`roadside`): pavements with kerbs on town roads, tram rails, and street lamps and trees where the 2D game puts their sprites (`AddRoadModels()`, `AddRoadDetailModel()`).
+* Level crossings (`crossing`, open and closed) with their track (`AddCrossingModel()`). Their ground becomes plain road, because the 2D ground sprite has the lights painted in.
+* Along roads (`roadside`): pavements with kerbs on town roads, tram rails, and street lamps and trees where the 2D game puts their sprites (`AddRoadModels()`, `AddRoadDetailModel()`). Trams and electric roads get wires and a pole beside straight roads (`AddRoadWireModels()`, catenary ids 4 and 5), unless a NewGRF draws its own.
 
 Models of buildings can have parts that move (`parts` in the index), such as the beams of pump jacks, the winding wheels of mines and the press of the toy factory; they are drawn anew for every image, from the chunks in view. Tiles that are drawn with a model are not rebuilt when the game marks them dirty without changing what model they get (animated tiles do so for every frame of their animation); `MarkTileDirty()` remembers the models of such tiles to tell.
+
+Signals and the barriers of level crossings are "live" models: they are kept per tile (`TerrainChunkMesh::live`) and drawn every frame like vehicles, so a train passing by does not rebuild its chunk. `GetTileChangeKey()` hashes the map bits of rail tiles and crossings without signal states, reservations and barriers; `MarkTileDirty()` only rebuilds the chunk when that key changed, and otherwise just looks up the live models of the tile again. Grass, fields and trees change all over the map all the time; a change that keeps a tile bare land or trees at the same height marks its chunk `slow`, and slow chunks are rebuilt a few seconds later, one per frame.
+
+The scene is drawn with 4x multisampling where the GPU supports it.
 Parts of a model with a material named `company` take the colour of the owner. Parts with a material named `load` are the cargo: they are drawn only when the vehicle is loaded, lower down the emptier it is.
 
 A building with a model is part of the terrain chunk it stands on (`AddTileModel()` in `terrain_mesh.cpp`): the sprites the tile draws for the building are left out and the model is put on the highest corner of the footprint, turned to face the way the building faces.
@@ -155,7 +159,7 @@ The existing game is touched in a few small places:
 * What is in front of what is decided per sprite, so now and then a vehicle shows through the corner of a building it passes behind.
 * Buildings without a model that are made of several sprites or cover several tiles can come apart when the camera is rotated, and tiles on half-tile foundations draw their ground as an upright sprite too.
 * Transparency options of the 2D game are followed, but see-through sprites are left out rather than drawn see-through.
-* Tiles with animations, such as some industries, rebuild their whole chunk of 64x64 tiles for every animation step.
+* Tiles with animations that have no model (some industries with NewGRF graphics) rebuild their whole chunk of 64x64 tiles for every animation step; building one chunk takes about 1.5 ms.
 * Water is not animated, and sprites far away flicker a little because they have no smaller versions yet.
 * 3D models have colours per material but no textures yet, vehicles with a model turn in steps of 45 degrees like the sprites do, and liveries other than the company colour are not followed.
 * There is no anti-aliasing.
