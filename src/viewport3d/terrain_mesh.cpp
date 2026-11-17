@@ -779,6 +779,13 @@ static void AddFenceLine(const ModelPack::Entry &entry, uint x, uint y, const st
 			(*p)[0] -= ex / d * INSET;
 			(*p)[1] -= ey / d * INSET;
 		}
+		/* Reach as far past the corners, so the fence meets the fence of a neighbouring tile that turns the corner. */
+		float lx = b[0] - a[0], ly = b[1] - a[1];
+		float l = std::sqrt(lx * lx + ly * ly);
+		a[0] -= lx / l * INSET;
+		a[1] -= ly / l * INSET;
+		b[0] += lx / l * INSET;
+		b[1] += ly / l * INSET;
 	}
 	AddEdgeModel(entry, a, b, mesh);
 }
@@ -1568,13 +1575,12 @@ static bool GetGroundPattern(TileIndex tile, Slope slope, const ModelPack *pack,
 	GroundTextures::PatternKind kind;
 	uint8_t bits;
 	uint8_t under = GROUND_TEXTURE_GRASS + 3;
+	uint8_t reserved = 0;
 	if (IsTileType(tile, TileType::Railway) && IsPlainRail(tile)) {
 		RailType rt = GetRailType(tile);
 		if (GetTrackPiece(rt, false, *pack) == nullptr || GetTrackPiece(rt, true, *pack) == nullptr) return false;
 		/* Railway types of NewGRFs can draw their own ground. */
 		if (GetRailTypeInfo(rt)->UsesOverlay()) return false;
-		/* The reservation of a path is drawn on the track. */
-		if (_settings_client.gui.show_track_reservation && GetRailReservationTrackBits(tile).Any()) return false;
 		switch (GetRailGroundType(tile)) {
 			case RailGroundType::Barren: under = GROUND_TEXTURE_GRASS; break;
 			case RailGroundType::SnowOrDesert: under = GROUND_TEXTURE_SNOW_DESERT + 3; break;
@@ -1583,6 +1589,8 @@ static bool GetGroundPattern(TileIndex tile, Slope slope, const ModelPack *pack,
 		}
 		kind = GroundTextures::PatternKind::Rail;
 		bits = static_cast<uint8_t>(GetTrackBits(tile).base());
+		/* The reservation of a path shows along the track. */
+		if (_settings_client.gui.show_track_reservation) reserved = static_cast<uint8_t>(GetRailReservationTrackBits(tile).base());
 	} else if (IsTileType(tile, TileType::Road) && IsNormalRoad(tile)) {
 		/* Only the road of the base game; others have their own look. Road works and one-way arrows are drawn on the road. */
 		if (HasRoadWorks(tile) || GetDisallowedRoadDirections(tile).Any()) return false;
@@ -1603,7 +1611,7 @@ static bool GetGroundPattern(TileIndex tile, Slope slope, const ModelPack *pack,
 		return false;
 	}
 
-	uint texture = textures.GetPattern(kind, bits);
+	uint texture = textures.GetPattern(kind, bits, reserved);
 	if (texture == GROUND_TEXTURE_NONE) return false;
 	result = TileGround{texture, COLOUR_WHITE};
 	result.under = under;

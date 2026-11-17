@@ -95,7 +95,7 @@ public:
 		Road, ///< A road with grass or bare land beside it; the bits are the road bits.
 		PavedRoad, ///< A road with pavements; the bits are the road bits.
 	};
-	uint GetPattern(PatternKind kind, uint8_t bits);
+	uint GetPattern(PatternKind kind, uint8_t bits, uint8_t reserved = 0);
 
 	/** Whether there is no room left for more textures. */
 	bool IsFull() const { return this->next_layer >= this->max_layers; }
@@ -124,7 +124,7 @@ private:
 	bool mixing = false; ///< Whether ground textures of the model package are mixed in; see UseTerrain().
 	std::unordered_map<uint32_t, uint8_t> landscape_colours; ///< Colours of the landscape sprites, and the texture of the package each stands for.
 	std::vector<uint8_t> under; ///< For each layer, the texture of the package under it.
-	std::map<std::pair<PatternKind, uint8_t>, uint> patterns; ///< Layers of the patterns made so far.
+	std::map<std::tuple<PatternKind, uint8_t, uint8_t>, uint> patterns; ///< Layers of the patterns made so far.
 };
 
 #endif /* VIEWPORT3D_GROUND_TEXTURES_H */

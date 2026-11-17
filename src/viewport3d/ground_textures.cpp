@@ -358,12 +358,13 @@ void GroundTextures::UseTerrain()
  * Patterns are flat shapes on the square of the tile, so one serves all slopes.
  * @param kind What the pattern is of.
  * @param bits Its road or track bits.
+ * @param reserved For tracks: those that are reserved for a train, which get a pale edge along the track bed.
  * @return The layer, or #GROUND_TEXTURE_NONE when there is no room.
  */
-uint GroundTextures::GetPattern(PatternKind kind, uint8_t bits)
+uint GroundTextures::GetPattern(PatternKind kind, uint8_t bits, uint8_t reserved)
 {
 	assert(this->mixing);
-	auto [it, inserted] = this->patterns.try_emplace({kind, bits}, GROUND_TEXTURE_NONE);
+	auto [it, inserted] = this->patterns.try_emplace({kind, bits, reserved}, GROUND_TEXTURE_NONE);
 	if (!inserted || this->next_layer >= this->max_layers) return it->second;
 
 	/* Distance from a point to the segment from a to b. */
@@ -374,7 +375,7 @@ uint GroundTextures::GetPattern(PatternKind kind, uint8_t bits)
 		return std::sqrt(eu * eu + ev * ev);
 	};
 	/* How far a point is from the nearest piece of track or road, in tiles. */
-	auto distance = [&](float u, float v) {
+	auto distance = [&](float u, float v, uint8_t bits) {
 		float nearest = 2.0f;
 		if (kind == PatternKind::Rail) {
 			/* The middle lines of the six tracks, from edge to edge; the same as the pieces of 3D track. */
@@ -384,7 +385,10 @@ uint GroundTextures::GetPattern(PatternKind kind, uint8_t bits)
 			for (uint track = 0; track < 6; track++) {
 				if (!HasBit(bits, track)) continue;
 				const float *t = TRACKS[track];
-				nearest = std::min(nearest, segment(u, v, t[0], t[1], t[2], t[3]));
+				/* The track goes on in the next tile, so the edge of its bed goes on straight up to the edge of this tile.
+				 * That matters for the pieces across a corner: near their ends, points of the tile lie beyond the end of the piece. */
+				float du = (t[2] - t[0]) * 0.5f, dv = (t[3] - t[1]) * 0.5f;
+				nearest = std::min(nearest, segment(u, v, t[0] - du, t[1] - dv, t[2] + du, t[3] + dv));
 			}
 		} else {
 			/* From the middle of the tile to the middle of each edge with a road bit: NW, SW, SE, NE. */
@@ -399,7 +403,7 @@ uint GroundTextures::GetPattern(PatternKind kind, uint8_t bits)
 
 	/* Shares of the textures at a point, from 0 to 1. */
 	auto shares = [&](float u, float v, float &land, float &asphalt, float &gravel, float &paving) {
-		float d = distance(u, v);
+		float d = distance(u, v, bits);
 		land = asphalt = gravel = paving = 0;
 		switch (kind) {
 			case PatternKind::Rail:
@@ -425,6 +429,11 @@ uint GroundTextures::GetPattern(PatternKind kind, uint8_t bits)
 	static constexpr uint8_t ROAD_X = 0b1010, ROAD_Y = 0b0101; // NE and SW, NW and SE
 	const bool lined = kind != PatternKind::Rail && (bits == ROAD_X || bits == ROAD_Y);
 	auto marking = [&](float u, float v) {
+		/* Reserved tracks: a pale edge either side of the 3D track bed, like the 2D game lights up the ballast. */
+		if (reserved != 0) {
+			float d = distance(u, v, reserved);
+			return d > 0.24f && d < 0.31f ? 0.7f : 0.0f;
+		}
 		if (!lined) return 0.0f;
 		float across = bits == ROAD_X ? v : u;
 		float along = bits == ROAD_X ? u : v;
