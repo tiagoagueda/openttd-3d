@@ -1726,6 +1726,9 @@ STR_CONFIG_SETTING_SCROLLMODE_RMB_LOCKED                        :Move map with R
 STR_CONFIG_SETTING_SCROLLMODE_RMB                               :Move map with RMB
 STR_CONFIG_SETTING_SCROLLMODE_LMB                               :Move map with LMB
 
+STR_CONFIG_SETTING_VIEW3D_MAIN                                  :Show the map in 3D: {STRING2}
+STR_CONFIG_SETTING_VIEW3D_MAIN_HELPTEXT                         :Draw the main view of the map in 3D. Drag with the right mouse button to move, hold Ctrl while dragging to rotate and tilt, and use the mouse wheel to zoom. Extra viewports stay in 2D
+
 STR_CONFIG_SETTING_SMOOTH_SCROLLING                             :Smooth viewport scrolling: {STRING2}
 STR_CONFIG_SETTING_SMOOTH_SCROLLING_HELPTEXT                    :Control how the main view scrolls to a specific position when clicking on the smallmap or when issuing a command to scroll to a specific object on the map. If enabled, the viewport scrolls smoothly, if disabled it jumps directly to the targeted spot
 

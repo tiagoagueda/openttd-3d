@@ -40,6 +40,10 @@
 #include "network/network_gui.h"
 #include "network/network_base.h"
 
+#ifdef WITH_VIEWPORT3D
+#include "viewport3d/view3d_gui.h"
+#endif
+
 #include "table/sprites.h"
 #include "table/strings.h"
 
@@ -557,6 +561,9 @@ void SetupColoursAndInitialWindow()
 	}
 
 	new MainWindow(_main_window_desc);
+#ifdef WITH_VIEWPORT3D
+	UpdateView3DMainView();
+#endif
 
 	/* XXX: these are not done */
 	switch (_game_mode) {

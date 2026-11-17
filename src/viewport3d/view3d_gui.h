@@ -34,6 +34,7 @@ bool GetRailToolPreview(View3DPreview &preview);
 bool GetRoadToolPreview(View3DPreview &preview);
 
 void ShowView3DWindow(std::string_view backend = {});
+void UpdateView3DMainView();
 void MarkTileDirtyForView3D(TileIndex tile);
 void MarkAreaDirtyForView3D(uint x_start, uint y_start, uint x_end, uint y_end);
 bool GetView3DTileBelowCursor(Point &pt);

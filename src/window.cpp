@@ -1433,6 +1433,10 @@ static uint GetWindowZPriority(WindowClass wc)
 			++z_priority;
 			[[fallthrough]];
 
+		case WindowClass::View3DMain: // Covers the main window, below everything else.
+			++z_priority;
+			[[fallthrough]];
+
 		case WindowClass::MainWindow:
 			return z_priority;
 	}
@@ -3629,6 +3633,7 @@ void RelocateAllWindows(int neww, int newh)
 		 * in a 'backup'-desc that the window should always be centered. */
 		switch (w->window_class) {
 			case WindowClass::MainWindow:
+			case WindowClass::View3DMain:
 			case WindowClass::Bootstrap:
 			case WindowClass::Highscore:
 			case WindowClass::Endscreen:

@@ -57,6 +57,10 @@
 #include "aircraft.h"
 #include "aircraft_cmd.h"
 
+#ifdef WITH_VIEWPORT3D
+#include "viewport3d/view3d_gui.h"
+#endif
+
 #include "table/strings.h"
 #include "table/settings.h"
 
@@ -175,6 +179,14 @@ static void UpdateLinkgraphColours(int32_t)
 {
 	BuildLinkStatsLegend();
 	MarkWholeScreenDirty();
+}
+
+/** Switch the main view between 2D and 3D after the setting changed. */
+static void View3DMainChanged(int32_t)
+{
+#ifdef WITH_VIEWPORT3D
+	UpdateView3DMainView();
+#endif
 }
 
 static void StationSpreadChanged(int32_t)

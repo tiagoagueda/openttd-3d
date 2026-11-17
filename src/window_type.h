@@ -749,6 +749,12 @@ enum class WindowClass : uint16_t {
 	 */
 	View3D,
 
+	/**
+	 * The 3D view in place of the main view, behind all other windows; %Window numbers:
+	 *   - 0 = #View3DWidgets
+	 */
+	View3DMain,
+
 	Invalid = 0xFFFF, ///< Invalid window.
 };
 

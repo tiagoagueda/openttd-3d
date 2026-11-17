@@ -25,6 +25,9 @@
 #include "../vehicle_base.h"
 #include "../core/backup_type.hpp"
 #include "../viewport_type.h"
+#include "../viewport_func.h"
+#include "../error.h"
+#include "../openttd.h"
 #include "../tilehighlight_func.h"
 #include "../window_func.h"
 #include "../window_gui.h"
@@ -105,6 +108,11 @@ class View3DWindow : public Window {
 	bool zoom_anchored = false; ///< Whether zooming keeps #zoom_anchor in place on the screen.
 	Vec3 zoom_anchor{}; ///< Spot on the ground below the cursor when zooming started.
 	bool view_changed = true; ///< Whether the camera or image size changed since the last render.
+
+	bool main_view = false; ///< Whether this is the 3D view in place of the main view, rather than a window of its own.
+	Point main_scrollpos{INT_MIN, INT_MIN}; ///< Where the 2D main view was when we last looked; it moves us when it moves.
+	ZoomLevel main_zoom = ZoomLevel::Normal; ///< The zoom of the 2D main view when we last looked.
+	std::array<float, 2> pushed_target{-1, -1}; ///< The camera target that the 2D main view was last moved to.
 	bool terrain_changed = true; ///< Whether chunks need to be (re)built.
 
 	uint chunks_x = 0; ///< Number of chunks along the x axis.
@@ -123,9 +131,20 @@ class View3DWindow : public Window {
 	std::chrono::steady_clock::time_point textures_reset{}; ///< When the ground textures were last started afresh.
 
 public:
-	View3DWindow(WindowDesc &desc, WindowNumber window_number) : Window(desc)
+	View3DWindow(WindowDesc &desc, WindowNumber window_number) : Window(desc), main_view(desc.cls == WindowClass::View3DMain)
 	{
 		this->InitNested(window_number);
+		if (this->main_view) {
+			/* Cover the whole screen, like the main window does. */
+			this->left = 0;
+			this->top = 0;
+			ResizeWindow(this, _screen.width - this->width, _screen.height - this->height);
+			const Window *main_window = GetMainWindow();
+			if (main_window != nullptr && main_window->viewport != nullptr) this->main_zoom = main_window->viewport->zoom;
+			/* Start as close to the map as the 2D view is: one pixel of a sprite covers as many pixels of the screen. */
+			float distance = _screen.height * SPRITE_PIXEL_SIZE / (2.0f * std::tan(Camera3D::FOV_Y / 2)) * std::pow(2.0f, static_cast<float>(to_underlying(this->main_zoom) - to_underlying(ZoomLevel::Normal)));
+			this->goal_distance = this->camera.distance = Clamp(distance, Camera3D::MIN_DISTANCE, Camera3D::MAX_DISTANCE);
+		}
 
 		this->chunks_x = CeilDiv(Map::MaxX(), TERRAIN_CHUNK_SIZE);
 		this->chunks_y = CeilDiv(Map::MaxY(), TERRAIN_CHUNK_SIZE);
@@ -515,6 +534,44 @@ public:
 		}
 	}
 
+	/**
+	 * Go where the 2D main view goes: the arrow keys, the minimap, following a vehicle and "go to location" all move
+	 * that view, and its zoom buttons zoom us.
+	 */
+	void FollowMainView()
+	{
+		const Window *main_window = GetMainWindow();
+		if (main_window == nullptr || main_window->viewport == nullptr) return;
+		const ViewportData &vp = *main_window->viewport;
+
+		if (vp.zoom != this->main_zoom) {
+			this->goal_distance = Clamp(this->goal_distance * std::pow(2.0f, static_cast<float>(to_underlying(vp.zoom) - to_underlying(this->main_zoom))), Camera3D::MIN_DISTANCE, Camera3D::MAX_DISTANCE);
+			this->zoom_anchored = false;
+			this->main_zoom = vp.zoom;
+		}
+
+		Point pos{vp.scrollpos_x, vp.scrollpos_y};
+		if (pos == this->main_scrollpos) return;
+		this->main_scrollpos = pos;
+		Point centre = InverseRemapCoords2(pos.x + vp.virtual_width / 2, pos.y + vp.virtual_height / 2, true);
+		this->camera.target.x = static_cast<float>(centre.x);
+		this->camera.target.y = static_cast<float>(centre.y);
+		this->zoom_anchored = false;
+		this->ClampCamera();
+		this->pushed_target = {this->camera.target.x, this->camera.target.y};
+	}
+
+	/** Keep the 2D main view where the camera looks, so the minimap and everything else that asks it stay right. */
+	void MoveMainView()
+	{
+		if (this->pushed_target[0] == this->camera.target.x && this->pushed_target[1] == this->camera.target.y) return;
+		this->pushed_target = {this->camera.target.x, this->camera.target.y};
+		Window *main_window = GetMainWindow();
+		if (main_window == nullptr || main_window->viewport == nullptr) return;
+		ScrollWindowTo(static_cast<int>(this->camera.target.x), static_cast<int>(this->camera.target.y), -1, main_window, true);
+		this->main_scrollpos = {main_window->viewport->scrollpos_x, main_window->viewport->scrollpos_y};
+	}
+
 	/** Add see-through models of what the active build tool is about to build, on the tiles it has selected. */
 	void AddPreviewModels()
 	{
@@ -598,9 +655,18 @@ public:
 			}
 			this->SetDirty();
 		}
-		if (this->renderer == nullptr) return;
+		if (this->renderer == nullptr) {
+			if (this->main_view) {
+				/* Fall back to the 2D view, and say why. */
+				ShowErrorMessage(GetEncodedString(STR_VIEW3D_ERROR_NO_RENDERER, this->error), {}, WarningLevel::Error);
+				this->Close();
+			}
+			return;
+		}
 
+		if (this->main_view) this->FollowMainView();
 		this->MoveCamera(delta_ms);
+		if (this->main_view) this->MoveMainView();
 		if (this->renderer->Poll()) this->SetWidgetDirty(WID_V3D_VIEW);
 		if (this->renderer->IsBusy()) return;
 
@@ -956,12 +1022,47 @@ static WindowDesc _view3d_desc(
 	_nested_view3d_widgets
 );
 
+static constexpr std::initializer_list<NWidgetPart> _nested_view3d_main_widgets = {
+	NWidget(WWT_EMPTY, Colours::Invalid, WID_V3D_VIEW), SetResize(1, 1), SetFill(1, 1),
+};
+
+/** Window definition for the 3D view in place of the main view. */
+static WindowDesc _view3d_main_desc(
+	WindowPosition::Manual, {}, 0, 0,
+	WindowClass::View3DMain, WindowClass::None,
+	{WindowDefaultFlag::NoClose},
+	_nested_view3d_main_widgets
+);
+
+/**
+ * Show the map in 3D in place of the main view, or stop doing so, as the setting says.
+ * Called when the main window is made and when the setting changes.
+ */
+void UpdateView3DMainView()
+{
+	/* Without a 32bpp blitter there is no 3D image to show, so the 2D view stays. */
+	bool wanted = _settings_client.gui.view3d_main && _game_mode != GameMode::Menu && GetMainWindow() != nullptr &&
+			BlitterFactory::GetCurrentBlitter()->GetScreenDepth() == 32;
+	Window *w = FindWindowById(WindowClass::View3DMain, 0);
+	if (!wanted) {
+		if (w != nullptr) w->Close();
+		return;
+	}
+	if (w != nullptr) return;
+	/* There is one renderer, so the 3D window makes way. */
+	CloseWindowById(WindowClass::View3D, 0);
+	_view3d_backend.clear();
+	new View3DWindow(_view3d_main_desc, 0);
+}
+
 /**
  * Open the 3D view, or bring it to the front.
  * @param backend Graphics API to use ("vulkan", "opengl" or "metal"); empty to pick automatically.
  */
 void ShowView3DWindow(std::string_view backend)
 {
+	/* The main view is in 3D already. */
+	if (FindWindowById(WindowClass::View3DMain, 0) != nullptr) return;
 	if (backend != _view3d_backend) {
 		/* Switching graphics API needs a new renderer. */
 		CloseWindowById(WindowClass::View3D, 0);

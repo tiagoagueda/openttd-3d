@@ -15,6 +15,13 @@ After cloning, fetch the package with `git submodule update --init`. Without it 
 
 ## Using it
 
+Turn on "Show the map in 3D" in the settings (Interface, Viewports; `view3d_main` in `openttd.cfg` and in the console).
+The main view is then drawn in 3D, full screen behind the toolbars, in every game until the setting is turned off again.
+The arrow keys, the minimap, "go to location" buttons, following a vehicle and the zoom buttons of the toolbar all work on it, because it follows the 2D main view, which stays in step underneath (`FollowMainView()` and `MoveMainView()` in `view3d_gui.cpp`).
+It is a window of class `View3DMain` that covers the main window and stays below all other windows; when the 3D renderer cannot start, an error says why and the 2D view shows again.
+
+The 3D view can also be opened as a window of its own, next to the 2D main view:
+
 1. Start or load a game.
 2. Open the console (the key left of `1`, or the `?` menu), and type `view3d`.
 
@@ -28,8 +35,8 @@ To force one, type `view3d vulkan` or `view3d opengl`.
 | Drag with the right mouse button | Move over the map |
 | Ctrl + drag with the right mouse button | Rotate and tilt the camera |
 | Mouse wheel | Zoom in or out, towards the spot below the cursor |
-| Page Up / Page Down (window selected) | Turn a quarter to the left or right |
-| Home (window selected) | Look from the north again at the angle of the 2D view |
+| Page Up / Page Down | Turn a quarter to the left or right |
+| Home | Look from the north again at the angle of the 2D view |
 
 Zooming and turning glide rather than jump, and the camera follows the height of the ground smoothly while moving.
 
