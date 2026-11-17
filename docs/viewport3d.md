@@ -206,7 +206,13 @@ The existing game is touched in a few small places:
 
 ## Roadmap
 
-Textures for the landscape, the coast, the water, roads and the ground beside tracks are in. Next, in this order unless plans change: textures for the 3D models and the ground of stations and industries, day and night (light that follows the time of day, lit windows and lamps), and weather and seasons (snow, rain, autumn colours).
+Textures for the landscape, the coast, the water, roads and the ground beside tracks are in. Next, in this order unless plans change (agreed 2026-11-17):
+
+1. Fix what turns up while playing the game in 3D.
+2. Replace the last ground made of 2D sprites: industries, level crossings, depots, NewGRF stations and half-tile foundations.
+3. Textures for the 3D models.
+4. Day and night: light that follows the time of day, lit windows and lamps.
+5. Weather and seasons: snow, rain, autumn colours.
 
 ## Changing the shaders
 
