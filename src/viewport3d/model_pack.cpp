@@ -179,7 +179,7 @@ ModelPack::ModelPack()
 				{"road_stop", ModelKind::RoadStop}, {"object", ModelKind::Object}, {"airport_tile", ModelKind::AirportTile},
 				{"dock", ModelKind::Dock}, {"buoy", ModelKind::Buoy}, {"rail_depot", ModelKind::RailDepot},
 				{"road_depot", ModelKind::RoadDepot}, {"ship_depot", ModelKind::ShipDepot},
-				{"tree", ModelKind::Tree}, {"field", ModelKind::Field}, {"rough", ModelKind::Rough}, {"rocks", ModelKind::Rocks}, {"effect", ModelKind::Effect}, {"track", ModelKind::Track},
+				{"tree", ModelKind::Tree}, {"field", ModelKind::Field}, {"rough", ModelKind::Rough}, {"rocks", ModelKind::Rocks}, {"effect", ModelKind::Effect}, {"track", ModelKind::Track}, {"signal", ModelKind::Signal},
 			}, loaded);
 		}
 

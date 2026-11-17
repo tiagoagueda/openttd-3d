@@ -691,6 +691,88 @@ bool GetTileModels(TileIndex tile, const ModelPack &pack, std::vector<ModelInsta
 }
 
 /**
+ * Add 3D signals on a rail tile, where the 2D game draws its signal sprites.
+ * @param tile The tile, a plain rail tile with signals.
+ * @param pack The package of 3D models.
+ * @param mesh The mesh to add to.
+ * @param[out] places Where the 2D game puts the bounding boxes of the signals that got a model, in world coordinates.
+ */
+static void AddSignalModels(Tile tile, const ModelPack &pack, TerrainChunkMesh &mesh, std::vector<std::pair<int, int>> &places)
+{
+	/* Where the 2D game puts signals, by position as in DrawSingleSignal(); the first half for the left side. */
+	static constexpr uint8_t POSITIONS[2][12][2] = {
+		{{8, 5}, {14, 1}, {1, 14}, {9, 11}, {1, 0}, {3, 10}, {11, 4}, {14, 14}, {11, 3}, {4, 13}, {3, 4}, {11, 13}},
+		{{14, 1}, {12, 10}, {4, 6}, {1, 14}, {10, 4}, {0, 1}, {14, 14}, {5, 12}, {11, 13}, {4, 3}, {13, 4}, {3, 11}},
+	};
+	/* The direction a signal faces, towards the trains it is for, by the image offsets of DrawSignals(). */
+	static constexpr float D = 0.70710678f;
+	static constexpr float FACING[8][2] = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}, {-D, D}, {D, -D}, {D, D}, {-D, -D}};
+	enum Image : uint8_t { SW, NE, SE, NW, E, W, S, N };
+	struct Signal { uint8_t bit; Image image; uint8_t pos; Track track; };
+	static constexpr Signal LEFT[] = {{2, N, 0, Track::Left}, {3, S, 1, Track::Left}};
+	static constexpr Signal RIGHT[] = {{0, N, 2, Track::Right}, {1, S, 3, Track::Right}};
+	static constexpr Signal UPPER[] = {{3, W, 4, Track::Upper}, {2, E, 5, Track::Upper}};
+	static constexpr Signal LOWER[] = {{1, W, 6, Track::Lower}, {0, E, 7, Track::Lower}};
+	static constexpr Signal X[] = {{3, SW, 8, Track::X}, {2, NE, 9, Track::X}};
+	static constexpr Signal Y[] = {{3, SE, 10, Track::Y}, {2, NW, 11, Track::Y}};
+
+	TrackBits rails = GetTrackBits(tile);
+	std::vector<std::span<const Signal>> groups;
+	if (rails.Test(Track::Y)) {
+		groups.emplace_back(Y);
+	} else if (rails.Test(Track::X)) {
+		groups.emplace_back(X);
+	} else {
+		if (rails.Test(Track::Left)) groups.emplace_back(LEFT);
+		if (rails.Test(Track::Right)) groups.emplace_back(RIGHT);
+		if (rails.Test(Track::Upper)) groups.emplace_back(UPPER);
+		if (rails.Test(Track::Lower)) groups.emplace_back(LOWER);
+	}
+
+	bool right = _settings_game.construction.train_signal_side == TrainSignalSide::Right ||
+			(_settings_game.construction.train_signal_side == TrainSignalSide::RoadVehicleDrivingSide && _settings_game.vehicle.road_side == RoadVehicleDrivingSide::Right);
+	for (std::span<const Signal> group : groups) {
+		for (const Signal &signal : group) {
+			if (!IsSignalPresent(tile, signal.bit)) continue;
+			uint type = to_underlying(GetSignalType(tile, signal.track));
+			uint variant = to_underlying(GetSignalVariant(tile, signal.track));
+			uint state = to_underlying(GetSingleSignalState(tile, signal.bit));
+			const ModelPack::Entry *entry = pack.Find(ModelKind::Signal, 0, type * 4 + variant * 2 + state);
+			if (entry == nullptr) continue;
+
+			int x = TileX(tile) * TILE_SIZE + POSITIONS[right][signal.pos][0];
+			int y = TileY(tile) * TILE_SIZE + POSITIONS[right][signal.pos][1];
+			places.emplace_back(x, y);
+
+			/* The height of the track at the signal, as in GetSafeSlopeZ(). */
+			int zx = x, zy = y;
+			switch (signal.track) {
+				case Track::Upper: zx &= ~0xF; zy &= ~0xF; break;
+				case Track::Lower: zx |= 0xF; zy |= 0xF; break;
+				case Track::Left: zx |= 0xF; zy &= ~0xF; break;
+				case Track::Right: zx &= ~0xF; zy |= 0xF; break;
+				default: break;
+			}
+			float z = GetSlopePixelZ(zx, zy) * WORLD_Z_SCALE;
+
+			/* The models have the track on their right; signals on the left side of the track are mirrored. */
+			float s = entry->scale;
+			float m = right ? s : -s;
+			auto [dx, dy] = FACING[signal.image];
+			ModelInstance &instance = mesh.models.emplace_back();
+			instance.model = entry->model;
+			instance.transform.m = {
+				dx * s, dy * s, 0, 0,
+				-dy * m, dx * m, 0, 0,
+				0, 0, s, 0,
+				x + 0.5f, y + 0.5f, z, 1,
+			};
+			instance.tint = {1, 1, 1, 1};
+		}
+	}
+}
+
+/**
  * Add what the 2D game draws for a tile that has more on it than landscape, such as tracks, roads and buildings.
  * Sprites that the 2D game draws flat on the ground become the ground texture of the tile.
  * Everything else becomes sprites that stand upright at the front of their bounding box.
@@ -717,6 +799,13 @@ static TileGround AddTileSprites(uint x, uint y, const std::array<uint8_t, 4> &h
 	bool replaced = !ground_only && pack != nullptr && !pack->IsEmpty() && AddTileModel(tile, *pack, mesh.models);
 	_tile_parts = nullptr;
 
+	/* Signals with a 3D model replace the sprites the 2D game draws for them. */
+	static std::vector<std::pair<int, int>> signal_places;
+	signal_places.clear();
+	if (!ground_only && !replaced && pack != nullptr && !pack->IsEmpty() && IsTileType(tile, TileType::Railway) && IsPlainRail(tile) && HasSignals(tile)) {
+		AddSignalModels(Tile(tile), *pack, mesh, signal_places);
+	}
+
 	int tile_x = x * TILE_SIZE;
 	int tile_y = y * TILE_SIZE;
 	auto [slope, tile_z] = GetTilePixelSlope(tile);
@@ -741,6 +830,8 @@ static TileGround AddTileSprites(uint x, uint y, const std::array<uint8_t, 4> &h
 			continue;
 		}
 		if (ground_only || (replaced && !group.foundation)) continue;
+		if (group.xmin == group.xmax && group.ymin == group.ymax &&
+				std::ranges::find(signal_places, std::pair<int, int>{group.xmin, group.ymin}) != signal_places.end()) continue;
 
 		/* The sprite stands in the middle of its bounding box, so it covers the place it stands on from all sides. */
 		int size_x = group.xmax + 1 - group.xmin;
