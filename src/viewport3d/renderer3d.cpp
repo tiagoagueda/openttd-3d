@@ -594,9 +594,17 @@ void Renderer3D::Render(uint width, uint height, const Camera3D &camera, std::sp
 			}
 		}
 
+		/* Smooth the edges of hills, rails and models with 4x multisampling where the GPU can do it; the image is
+		 * resolved to a single sample before it is copied for reading back. */
+		uint64_t msaa = BGFX_TEXTURE_RT_MSAA_X4;
+		if (!bgfx::isTextureValid(0, false, 1, bgfx::TextureFormat::BGRA8, BGFX_TEXTURE_RT_MSAA_X4) ||
+				!bgfx::isTextureValid(0, false, 1, depth_format, BGFX_TEXTURE_RT_MSAA_X4 | BGFX_TEXTURE_RT_WRITE_ONLY)) {
+			msaa = BGFX_TEXTURE_RT;
+		}
+
 		bgfx::TextureHandle attachments[] = {
-			bgfx::createTexture2D(static_cast<uint16_t>(width), static_cast<uint16_t>(height), false, 1, bgfx::TextureFormat::BGRA8, BGFX_TEXTURE_RT | BGFX_SAMPLER_U_CLAMP | BGFX_SAMPLER_V_CLAMP),
-			bgfx::createTexture2D(static_cast<uint16_t>(width), static_cast<uint16_t>(height), false, 1, depth_format, BGFX_TEXTURE_RT_WRITE_ONLY),
+			bgfx::createTexture2D(static_cast<uint16_t>(width), static_cast<uint16_t>(height), false, 1, bgfx::TextureFormat::BGRA8, msaa | BGFX_SAMPLER_U_CLAMP | BGFX_SAMPLER_V_CLAMP),
+			bgfx::createTexture2D(static_cast<uint16_t>(width), static_cast<uint16_t>(height), false, 1, depth_format, (msaa & BGFX_TEXTURE_RT_MSAA_MASK) | BGFX_TEXTURE_RT_WRITE_ONLY),
 		};
 		impl.framebuffer = bgfx::createFrameBuffer(static_cast<uint8_t>(std::size(attachments)), attachments, true);
 		impl.readback = bgfx::createTexture2D(static_cast<uint16_t>(width), static_cast<uint16_t>(height), false, 1, bgfx::TextureFormat::BGRA8, BGFX_TEXTURE_BLIT_DST | BGFX_TEXTURE_READ_BACK);
