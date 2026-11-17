@@ -78,6 +78,16 @@ uint ModelPack::LoadModel(const std::string &filename, std::map<std::string, uin
 		std::string error = "file not found";
 		if (data.has_value() && LoadGlbModel(*data, model, error)) {
 			it->second = static_cast<uint>(this->models.size());
+			std::array<float, 6> box{0, 0, 0, 0, 0, 0};
+			if (!model.vertices.empty()) {
+				const ModelVertex &first = model.vertices.front();
+				box = {first.x, first.y, first.z, first.x, first.y, first.z};
+				for (const ModelVertex &v : model.vertices) {
+					box[0] = std::min(box[0], v.x); box[1] = std::min(box[1], v.y); box[2] = std::min(box[2], v.z);
+					box[3] = std::max(box[3], v.x); box[4] = std::max(box[4], v.y); box[5] = std::max(box[5], v.z);
+				}
+			}
+			this->bounds.push_back(box);
 			this->models.push_back(std::move(model));
 		} else {
 			Debug(Facility::Misc, Severity::Error, "[viewport3d] cannot use model '{}': {}", filename, error);

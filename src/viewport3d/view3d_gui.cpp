@@ -295,18 +295,91 @@ public:
 			}
 			low = distance;
 		}
-		if (high < 0) return true;
 
 		/* Narrow it down to where the line meets the ground. */
-		for (int i = 0; i < 10; i++) {
-			float middle = (low + high) / 2;
-			(above_ground(middle) < 0 ? high : low) = middle;
+		if (high >= 0) {
+			for (int i = 0; i < 10; i++) {
+				float middle = (low + high) / 2;
+				(above_ground(middle) < 0 ? high : low) = middle;
+			}
 		}
+
+		/* A building in front of that spot is picked rather than the ground it hides. */
+		float building = this->FindBuildingOnLine(eye, direction, start, high >= 0 ? high : end);
+		if (building >= 0) high = building;
+		if (high < 0) return true;
 
 		Vec3 hit = eye + direction * high;
 		if (hit.x < 0 || hit.y < 0 || hit.x >= Map::MaxX() * TILE_SIZE || hit.y >= Map::MaxY() * TILE_SIZE) return true;
 		pt = {static_cast<int>(hit.x), static_cast<int>(hit.y)};
 		return true;
+	}
+
+	/**
+	 * Find the first building with a 3D model along a line of sight.
+	 * @param eye Where the line starts.
+	 * @param direction Its direction, of length one.
+	 * @param start Distance along the line from where to look.
+	 * @param end Distance along the line where to stop looking, such as where it meets the ground.
+	 * @return Distance along the line to a point just inside the box around the first building, or -1 when there is none.
+	 */
+	float FindBuildingOnLine(const Vec3 &eye, const Vec3 &direction, float start, float end) const
+	{
+		if (this->model_pack == nullptr || this->model_pack->IsEmpty() || end <= start) return -1;
+
+		/* The tiles the line passes over, and their northern neighbours, whose models can reach over them. */
+		static std::vector<TileIndex> tiles;
+		tiles.clear();
+		for (float distance = start; distance <= end + TILE_SIZE; distance += TILE_SIZE * 0.25f) {
+			Vec3 p = eye + direction * std::min(distance, end);
+			if (p.x < 0 || p.y < 0) continue;
+			uint tx = static_cast<uint>(p.x) / TILE_SIZE, ty = static_cast<uint>(p.y) / TILE_SIZE;
+			for (uint dy = 0; dy < 2; dy++) {
+				for (uint dx = 0; dx < 2; dx++) {
+					if (tx < dx || ty < dy || tx - dx >= Map::MaxX() || ty - dy >= Map::MaxY()) continue;
+					TileIndex t = TileXY(tx - dx, ty - dy);
+					if (std::ranges::find(tiles, t) == tiles.end()) tiles.push_back(t);
+				}
+			}
+		}
+
+		static std::vector<ModelInstance> models;
+		static std::vector<AnimatedPart> parts;
+		float best = -1;
+		for (TileIndex t : tiles) {
+			if (!GetTileModels(t, *this->model_pack, models, parts)) continue;
+			for (const ModelInstance &instance : models) {
+				/* The box around the model in world units, along the axes of the world. */
+				const std::array<float, 6> &b = this->model_pack->GetBounds(instance.model);
+				const auto &m = instance.transform.m;
+				Vec3 lo{1e9f, 1e9f, 1e9f}, hi{-1e9f, -1e9f, -1e9f};
+				for (uint c = 0; c < 8; c++) {
+					float x = b[(c & 1) ? 3 : 0], y = b[(c & 2) ? 4 : 1], z = b[(c & 4) ? 5 : 2];
+					Vec3 w{m[0] * x + m[4] * y + m[8] * z + m[12], m[1] * x + m[5] * y + m[9] * z + m[13], m[2] * x + m[6] * y + m[10] * z + m[14]};
+					lo = {std::min(lo.x, w.x), std::min(lo.y, w.y), std::min(lo.z, w.z)};
+					hi = {std::max(hi.x, w.x), std::max(hi.y, w.y), std::max(hi.z, w.z)};
+				}
+				/* Where the line enters and leaves the box. */
+				float enter = start, leave = end;
+				const float o[3] = {eye.x, eye.y, eye.z}, d[3] = {direction.x, direction.y, direction.z};
+				const float l[3] = {lo.x, lo.y, lo.z}, h[3] = {hi.x, hi.y, hi.z};
+				for (int i = 0; i < 3 && enter <= leave; i++) {
+					if (std::abs(d[i]) < 1e-6f) {
+						if (o[i] < l[i] || o[i] > h[i]) enter = leave + 1;
+						continue;
+					}
+					float t0 = (l[i] - o[i]) / d[i], t1 = (h[i] - o[i]) / d[i];
+					if (t0 > t1) std::swap(t0, t1);
+					enter = std::max(enter, t0);
+					leave = std::min(leave, t1);
+				}
+				if (enter > leave) continue;
+				/* A little way in, so the spot is on the tiles of the building and not on the edge of its box. */
+				float inside = std::min(enter + 0.5f, (enter + leave) / 2);
+				if (best < 0 || inside < best) best = inside;
+			}
+		}
+		return best;
 	}
 
 	void DrawWidget(const Rect &r, WidgetID widget) const override

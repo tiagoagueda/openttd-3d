@@ -155,7 +155,7 @@ The existing game is touched in a few small places:
 * The ground textures and sprites are taken from the game when the window opens or when they are first needed. After changing NewGRFs in a running game, close and reopen the window.
 * The shadows of aircraft are not drawn yet.
 * Names and signs are always drawn on top, also when a hill is in front of their place, and all of them in view are shown however far away they are.
-* The tile below the cursor is found on the bare terrain, so behind a tall building the tile that the building hides is picked.
+* The tile below the cursor is the first building with a model along the line of sight (using the box around its model), or else the terrain; bridges, vehicles and buildings drawn with sprites are not looked at.
 * What is in front of what is decided per sprite, so now and then a vehicle shows through the corner of a building it passes behind.
 * Buildings without a model that are made of several sprites or cover several tiles can come apart when the camera is rotated, and tiles on half-tile foundations draw their ground as an upright sprite too.
 * Transparency options of the 2D game are followed, but see-through sprites are left out rather than drawn see-through.

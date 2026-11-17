@@ -87,6 +87,13 @@ public:
 	/** All models of the package. */
 	std::span<const Model3D> GetModels() const { return this->models; }
 
+	/**
+	 * The box around a model, in the frame of the model.
+	 * @param model Index into GetModels().
+	 * @return Lowest x, y, z and highest x, y, z.
+	 */
+	const std::array<float, 6> &GetBounds(uint model) const { return this->bounds[model]; }
+
 	static constexpr uint FAR_SAME = UINT_MAX; ///< GetFarModel(): the model looks the same from far away.
 	static constexpr uint FAR_HIDDEN = UINT_MAX - 1; ///< GetFarModel(): the model is too small to draw from far away.
 
@@ -115,6 +122,7 @@ private:
 
 	std::string name; ///< Name of the package.
 	std::vector<Model3D> models; ///< The models.
+	std::vector<std::array<float, 6>> bounds; ///< For each model, the box around it; see GetBounds().
 	std::vector<uint> far; ///< For each model, what to draw far away; see GetFarModel().
 	std::map<Key, Entry> entries; ///< What has a model.
 };
