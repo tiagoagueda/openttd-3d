@@ -21,6 +21,47 @@
 #include "../safeguards.h"
 
 /**
+ * Let the blitter draw sprites over each other into an image that covers exactly the diamond of a tile.
+ * @param sprites The ground sprites, in the order the 2D game draws them, relative to where it draws the northern corner of the tile.
+ * @param[out] width Width of the image.
+ * @param[out] height Height of the image.
+ * @return The pixels, in the format of 32bpp blitters; transparent where nothing was drawn.
+ */
+std::vector<uint32_t> GroundTextures::DrawDiamond(std::span<const SpritePart> sprites, int &width, int &height) const
+{
+	const ZoomLevel zoom = this->zoom;
+	/* Size of the sprites compared to normal zoom, at which the diamond is 64 pixels wide and 31 high. */
+	const int scale = UnScaleByZoom(4, zoom);
+	width = 64 * scale;
+	/* Raised corners are drawn up to two height levels of 8 pixels above the tile's origin. */
+	const int margin = 16 * scale;
+	height = 31 * scale + margin + scale;
+
+	std::vector<uint32_t> diamond(static_cast<size_t>(width) * height, 0);
+	DrawPixelInfo dpi;
+	dpi.dst_ptr = diamond.data();
+	dpi.pitch = width;
+	dpi.left = 0;
+	dpi.top = 0;
+	dpi.width = width;
+	dpi.height = height;
+	dpi.zoom = zoom;
+
+	AutoRestoreBackup dpi_backup(_cur_dpi, &dpi);
+	/* Keep the blitters with palette animation from writing to the animation buffer of the screen. */
+	AutoRestoreBackup anim_backup(_screen_disable_anim, true);
+	/* The tile's origin, its northern corner, is one (unzoomed) pixel left of the diamond's centre line. */
+	for (const SpritePart &part : sprites) {
+		/* Sprites that make what is below them see-through cannot be drawn onto nothing. */
+		if (HasBit(part.sprite, PALETTE_MODIFIER_TRANSPARENT)) continue;
+		/* Clipping is relative to the position of the sprite, here in pixels at the most detailed zoom level. */
+		SubSprite sub{part.clip_left * static_cast<int>(ZOOM_BASE), part.clip_top * static_cast<int>(ZOOM_BASE), (part.clip_right + 1) * static_cast<int>(ZOOM_BASE) - 1, (part.clip_bottom + 1) * static_cast<int>(ZOOM_BASE) - 1};
+		DrawSprite(part.sprite, part.pal, width / 2 - scale + UnScaleByZoom(part.x, zoom), margin + UnScaleByZoom(part.y, zoom), part.clipped ? &sub : nullptr, zoom);
+	}
+	return diamond;
+}
+
+/**
  * Turn the sprites of a ground tile into a square texture.
  *
  * In the 2D game a flat tile is a diamond of 64 by 31 pixels (at normal zoom). The texture is that
@@ -30,44 +71,22 @@
  * @param sprites The ground sprites, in the order the 2D game draws them, relative to where it draws the northern corner of the tile.
  * @param heights Heights of the northern, western, eastern and southern corner, in height levels above the lowest.
  * @param[out] texture The pixels of the texture.
+ * @param[out] mix If not \c nullptr and mixing: the mix of the texture, see #GroundMix; the texture then has its colours
+ *                 multiplied by how much of the pixel they cover.
+ * @param[out] under If not \c nullptr and mixing: the texture of the package for the landscape in the sprites.
  * @return Whether the sprites could be used.
  */
-bool GroundTextures::Render(std::span<const SpritePart> sprites, const std::array<uint8_t, 4> &heights, std::vector<uint32_t> &texture)
+bool GroundTextures::Render(std::span<const SpritePart> sprites, const std::array<uint8_t, 4> &heights, std::vector<uint32_t> &texture, std::vector<uint32_t> *mix, uint8_t *under)
 {
 	const ZoomLevel zoom = this->zoom;
 	const uint size = this->size;
 
 	/* Size of the sprites compared to normal zoom, at which the diamond is 64 pixels wide and 31 high. */
 	const int scale = UnScaleByZoom(4, zoom);
-	const int diamond_width = 64 * scale;
 	/* Raised corners are drawn up to two height levels of 8 pixels above the tile's origin. */
 	const int margin = 16 * scale;
-	const int diamond_height = 31 * scale + margin + scale;
-
-	/* Let the blitter draw the sprites over each other into an image that covers exactly the diamond. */
-	std::vector<uint32_t> diamond(static_cast<size_t>(diamond_width) * diamond_height, 0);
-	{
-		DrawPixelInfo dpi;
-		dpi.dst_ptr = diamond.data();
-		dpi.pitch = diamond_width;
-		dpi.left = 0;
-		dpi.top = 0;
-		dpi.width = diamond_width;
-		dpi.height = diamond_height;
-		dpi.zoom = zoom;
-
-		AutoRestoreBackup dpi_backup(_cur_dpi, &dpi);
-		/* Keep the blitters with palette animation from writing to the animation buffer of the screen. */
-		AutoRestoreBackup anim_backup(_screen_disable_anim, true);
-		/* The tile's origin, its northern corner, is one (unzoomed) pixel left of the diamond's centre line. */
-		for (const SpritePart &part : sprites) {
-			/* Sprites that make what is below them see-through cannot be drawn onto nothing. */
-			if (HasBit(part.sprite, PALETTE_MODIFIER_TRANSPARENT)) continue;
-			/* Clipping is relative to the position of the sprite, here in pixels at the most detailed zoom level. */
-			SubSprite sub{part.clip_left * static_cast<int>(ZOOM_BASE), part.clip_top * static_cast<int>(ZOOM_BASE), (part.clip_right + 1) * static_cast<int>(ZOOM_BASE) - 1, (part.clip_bottom + 1) * static_cast<int>(ZOOM_BASE) - 1};
-			DrawSprite(part.sprite, part.pal, diamond_width / 2 - scale + UnScaleByZoom(part.x, zoom), margin + UnScaleByZoom(part.y, zoom), part.clipped ? &sub : nullptr, zoom);
-		}
-	}
+	int diamond_width, diamond_height;
+	std::vector<uint32_t> diamond = this->DrawDiamond(sprites, diamond_width, diamond_height);
 
 	const float hn = heights[0], hw = heights[1], he = heights[2], hs = heights[3];
 	/* Height of the surface in height levels; the tile is split in two triangles the same way as in the terrain mesh. */
@@ -85,7 +104,12 @@ bool GroundTextures::Render(std::span<const SpritePart> sprites, const std::arra
 	float centre_x, centre_y;
 	project(0.5f, 0.5f, centre_x, centre_y);
 
-	auto sample = [&](float u, float v, uint &b, uint &g, uint &r) {
+	/* Bare landscape in the sprites makes way for the textures of the package. */
+	const bool classify = this->mixing && mix != nullptr;
+	std::array<uint, 4> landscape_votes{};
+
+	/* Look up a point of the tile in the image. Returns the colour, or nothing when there is no pixel; landscape is the texture of the package it stands for, or 0. */
+	auto sample = [&](float u, float v, uint8_t &landscape) -> std::optional<uint32_t> {
 		float fx, fy;
 		project(u, v, fx, fy);
 		/* The very corners of the diamond are not in the sprite; move towards the centre until there is a pixel. */
@@ -95,27 +119,54 @@ bool GroundTextures::Render(std::span<const SpritePart> sprites, const std::arra
 			int y = Clamp(static_cast<int>(fy + (centre_y - fy) * t), 0, diamond_height - 1);
 			uint32_t pixel = diamond[static_cast<size_t>(y) * diamond_width + x];
 			if ((pixel >> 24) == 0) continue;
-			b += pixel & 0xFF;
-			g += (pixel >> 8) & 0xFF;
-			r += (pixel >> 16) & 0xFF;
-			return true;
+			landscape = 0;
+			if (classify) {
+				auto it = this->landscape_colours.find(pixel | 0xFF000000);
+				if (it != this->landscape_colours.end()) landscape = it->second;
+			}
+			return pixel;
 		}
-		return false;
+		return std::nullopt;
 	};
 
 	texture.assign(static_cast<size_t>(size) * size, 0);
+	if (classify) mix->assign(static_cast<size_t>(size) * size, 0);
 	for (uint ty = 0; ty < size; ty++) {
 		for (uint tx = 0; tx < size; tx++) {
 			/* Average four samples per pixel; the diamond has fewer pixels than the texture along one diagonal and more along the other. */
-			uint b = 0, g = 0, r = 0, count = 0;
+			uint b = 0, g = 0, r = 0, count = 0, land = 0;
 			for (float dy : {0.25f, 0.75f}) {
 				for (float dx : {0.25f, 0.75f}) {
-					if (sample((tx + dx) / size, (ty + dy) / size, b, g, r)) count++;
+					uint8_t landscape;
+					std::optional<uint32_t> pixel = sample((tx + dx) / size, (ty + dy) / size, landscape);
+					if (!pixel.has_value()) continue;
+					count++;
+					if (landscape != 0) {
+						land++;
+						landscape_votes[landscape == GROUND_TEXTURE_GRASS + 3 ? 1 : (landscape == GROUND_TEXTURE_GRASS ? 2 : 3)]++;
+						continue;
+					}
+					b += *pixel & 0xFF;
+					g += (*pixel >> 8) & 0xFF;
+					r += (*pixel >> 16) & 0xFF;
 				}
 			}
 			if (count == 0) return false;
-			texture[static_cast<size_t>(ty) * size + tx] = 0xFF000000 | ((r / count) << 16) | ((g / count) << 8) | (b / count);
+			size_t i = static_cast<size_t>(ty) * size + tx;
+			if (classify) {
+				/* Colours are multiplied by how much of the pixel they cover, so that filtering blends them right with the landscape. */
+				uint alpha = (255 * (count - land) + count / 2) / count;
+				texture[i] = (alpha << 24) | ((r / count) << 16) | ((g / count) << 8) | (b / count);
+				(*mix)[i] = ((255 - alpha) << GroundMix::LAND);
+			} else {
+				texture[i] = 0xFF000000 | ((r / count) << 16) | ((g / count) << 8) | (b / count);
+			}
 		}
+	}
+	if (classify && under != nullptr) {
+		/* The landscape that most of the tile shows. */
+		static constexpr uint8_t LAYERS[4] = {GROUND_TEXTURE_GRASS + 3, GROUND_TEXTURE_GRASS + 3, GROUND_TEXTURE_GRASS, GROUND_TEXTURE_SNOW_DESERT + 3};
+		*under = LAYERS[std::max_element(landscape_votes.begin() + 1, landscape_votes.end()) - landscape_votes.begin()];
 	}
 	return true;
 }
@@ -129,9 +180,12 @@ bool GroundTextures::Render(std::span<const SpritePart> sprites, const std::arra
  */
 bool GroundTextures::Build(uint layer, std::span<const SpritePart> sprites, const std::array<uint8_t, 4> &heights)
 {
-	std::vector<uint32_t> texture;
-	if (!this->Render(sprites, heights, texture)) return false;
-	this->pending.push_back({layer, std::move(texture)});
+	std::vector<uint32_t> texture, mix;
+	uint8_t under = GROUND_TEXTURE_GRASS + 3;
+	if (!this->Render(sprites, heights, texture, &mix, &under)) return false;
+	if (layer >= this->under.size()) this->under.resize(layer + 1, GROUND_TEXTURE_GRASS + 3);
+	this->under[layer] = under;
+	this->pending.push_back({layer, std::move(texture), std::move(mix)});
 	return true;
 }
 
@@ -260,7 +314,155 @@ std::vector<GroundTextures::Pending> GroundTextures::MakeTerrainTextures(const M
 	layers.push_back({GROUND_TEXTURE_WATER, tinted(image("water", "water"), SPR_FLAT_WATER_TILE)});
 	/* The beach has its own colour; the 2D game has no sprite of only sand to take it from. */
 	layers.push_back({GROUND_TEXTURE_BEACH, image("sand", "sand")});
+	/* Roads, tracks and pavements have their own colours too. */
+	layers.push_back({GROUND_TEXTURE_ASPHALT, image("asphalt", "soil")});
+	layers.push_back({GROUND_TEXTURE_GRAVEL, image("gravel", "soil")});
+	layers.push_back({GROUND_TEXTURE_PAVING, image("paving", "soil")});
 	return layers;
+}
+
+/**
+ * Mix the ground textures of the model package into the textures made from sprites from now on:
+ * where those sprites show bare landscape, the landscape of the package shows instead.
+ * Must be called before the first texture is made from sprites.
+ */
+void GroundTextures::UseTerrain()
+{
+	assert(this->layers.empty() && this->patterns.empty());
+	this->mixing = true;
+	this->landscape_colours.clear();
+
+	/* The colours of the landscape sprites, on all slopes; each slope has its own shades. Later kinds do not take colours that are taken. */
+	auto collect = [&](SpriteID first, uint8_t layer) {
+		for (uint slope = 0; slope < 19; slope++) {
+			SpritePart part{.sprite = first + slope, .pal = PAL_NONE};
+			int width, height;
+			for (uint32_t pixel : this->DrawDiamond(std::span<const SpritePart>(&part, 1), width, height)) {
+				if ((pixel >> 24) != 0) this->landscape_colours.try_emplace(pixel | 0xFF000000, layer);
+			}
+		}
+	};
+	collect(SPR_FLAT_GRASS_TILE, GROUND_TEXTURE_GRASS + 3);
+	collect(SPR_FLAT_BARE_LAND, GROUND_TEXTURE_GRASS);
+	collect(SPR_FLAT_1_THIRD_GRASS_TILE, GROUND_TEXTURE_GRASS + 3);
+	collect(SPR_FLAT_2_THIRD_GRASS_TILE, GROUND_TEXTURE_GRASS + 3);
+	/* Only the sub-arctic and sub-tropical climates have snow or desert. */
+	if (_settings_game.game_creation.landscape == LandscapeType::Arctic || _settings_game.game_creation.landscape == LandscapeType::Tropic) {
+		collect(SPR_FLAT_SNOW_DESERT_TILE, GROUND_TEXTURE_SNOW_DESERT + 3);
+		collect(SPR_FLAT_3_QUART_SNOW_DESERT_TILE, GROUND_TEXTURE_SNOW_DESERT + 3);
+	}
+}
+
+/**
+ * Get the layer of a pattern: the ground of a road or of tracks, drawn with the textures of the package alone.
+ * Patterns are flat shapes on the square of the tile, so one serves all slopes.
+ * @param kind What the pattern is of.
+ * @param bits Its road or track bits.
+ * @return The layer, or #GROUND_TEXTURE_NONE when there is no room.
+ */
+uint GroundTextures::GetPattern(PatternKind kind, uint8_t bits)
+{
+	assert(this->mixing);
+	auto [it, inserted] = this->patterns.try_emplace({kind, bits}, GROUND_TEXTURE_NONE);
+	if (!inserted || this->next_layer >= this->max_layers) return it->second;
+
+	/* Distance from a point to the segment from a to b. */
+	auto segment = [](float u, float v, float au, float av, float bu, float bv) {
+		float du = bu - au, dv = bv - av;
+		float t = std::clamp(((u - au) * du + (v - av) * dv) / (du * du + dv * dv), 0.0f, 1.0f);
+		float eu = u - au - du * t, ev = v - av - dv * t;
+		return std::sqrt(eu * eu + ev * ev);
+	};
+	/* How far a point is from the nearest piece of track or road, in tiles. */
+	auto distance = [&](float u, float v) {
+		float nearest = 2.0f;
+		if (kind == PatternKind::Rail) {
+			/* The middle lines of the six tracks, from edge to edge; the same as the pieces of 3D track. */
+			static constexpr float TRACKS[6][4] = {
+				{0, 0.5f, 1, 0.5f}, {0.5f, 0, 0.5f, 1}, {0, 0.5f, 0.5f, 0}, {0.5f, 1, 1, 0.5f}, {0.5f, 0, 1, 0.5f}, {0, 0.5f, 0.5f, 1},
+			};
+			for (uint track = 0; track < 6; track++) {
+				if (!HasBit(bits, track)) continue;
+				const float *t = TRACKS[track];
+				nearest = std::min(nearest, segment(u, v, t[0], t[1], t[2], t[3]));
+			}
+		} else {
+			/* From the middle of the tile to the middle of each edge with a road bit: NW, SW, SE, NE. */
+			static constexpr float ENDS[4][2] = {{0.5f, 0}, {1, 0.5f}, {0.5f, 1}, {0, 0.5f}};
+			for (uint bit = 0; bit < 4; bit++) {
+				if (!HasBit(bits, bit)) continue;
+				nearest = std::min(nearest, segment(u, v, 0.5f, 0.5f, ENDS[bit][0], ENDS[bit][1]));
+			}
+		}
+		return nearest;
+	};
+
+	/* Shares of the textures at a point, from 0 to 1. */
+	auto shares = [&](float u, float v, float &land, float &asphalt, float &gravel, float &paving) {
+		float d = distance(u, v);
+		land = asphalt = gravel = paving = 0;
+		switch (kind) {
+			case PatternKind::Rail:
+				/* A little wider than the bed of the 3D track, so it does not end sharply against the grass. */
+				gravel = d < 0.27f ? 1.0f : (d < 0.36f ? 0.5f : 0.0f);
+				land = 1 - gravel;
+				break;
+			case PatternKind::Road:
+				asphalt = d < 0.29f ? 1.0f : 0.0f;
+				/* A narrow strip of trodden earth along the edge of the road. */
+				gravel = asphalt == 0 && d < 0.33f ? 0.6f : 0.0f;
+				land = 1 - asphalt - gravel;
+				break;
+			case PatternKind::PavedRoad:
+				/* As wide as the road between the 3D kerbs. */
+				asphalt = d < 0.42f ? 1.0f : 0.0f;
+				paving = 1 - asphalt;
+				break;
+		}
+	};
+
+	/* Straight roads have a dashed line down the middle, two dashes per tile so they line up with the next tile. */
+	static constexpr uint8_t ROAD_X = 0b1010, ROAD_Y = 0b0101; // NE and SW, NW and SE
+	const bool lined = kind != PatternKind::Rail && (bits == ROAD_X || bits == ROAD_Y);
+	auto marking = [&](float u, float v) {
+		if (!lined) return 0.0f;
+		float across = bits == ROAD_X ? v : u;
+		float along = bits == ROAD_X ? u : v;
+		float dash = std::abs(along - 0.5f);
+		return std::abs(across - 0.5f) < 0.018f && dash > 0.12f && dash < 0.38f ? 1.0f : 0.0f;
+	};
+
+	/* Sixteen samples per pixel smooth the edges. */
+	static constexpr uint SAMPLES = 4;
+	const uint size = this->size;
+	std::vector<uint32_t> texture(static_cast<size_t>(size) * size, 0);
+	std::vector<uint32_t> mix(static_cast<size_t>(size) * size);
+	for (uint ty = 0; ty < size; ty++) {
+		for (uint tx = 0; tx < size; tx++) {
+			float sum[4] = {};
+			float paint = 0;
+			for (uint sy = 0; sy < SAMPLES; sy++) {
+				for (uint sx = 0; sx < SAMPLES; sx++) {
+					float u = (tx + (sx + 0.5f) / SAMPLES) / size, v = (ty + (sy + 0.5f) / SAMPLES) / size;
+					float share[4];
+					shares(u, v, share[0], share[1], share[2], share[3]);
+					float line = marking(u, v);
+					paint += line;
+					for (uint i = 0; i < 4; i++) sum[i] += share[i] * (1 - line);
+				}
+			}
+			auto byte = [&](float value) { return static_cast<uint32_t>(std::clamp(value * 255.0f / (SAMPLES * SAMPLES) + 0.5f, 0.0f, 255.0f)); };
+			size_t i = static_cast<size_t>(ty) * size + tx;
+			mix[i] = (byte(sum[0]) << GroundMix::LAND) | (byte(sum[1]) << GroundMix::ASPHALT) | (byte(sum[2]) << GroundMix::GRAVEL) | (byte(sum[3]) << GroundMix::PAVING);
+			/* The paint, off-white, multiplied by how much of the pixel it covers. */
+			uint32_t grey = byte(paint * 0.86f);
+			texture[i] = (byte(paint) << 24) | (grey << 16) | (grey << 8) | grey;
+		}
+	}
+
+	it->second = this->next_layer++;
+	this->pending.push_back({it->second, std::move(texture), std::move(mix)});
+	return it->second;
 }
 
 /**

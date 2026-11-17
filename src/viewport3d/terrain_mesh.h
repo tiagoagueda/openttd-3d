@@ -24,7 +24,7 @@ struct TerrainVertex {
 	float y; ///< Position along the y axis in tiles.
 	float z; ///< Height in height levels.
 	uint8_t r, g, b; ///< Colour to multiply the texture with, including the lighting, at half brightness.
-	uint8_t depth; ///< For water: the height of the ground below it, as (height levels + 1) * 64; 0 is deep water. Not used for land.
+	uint8_t depth; ///< For water: the height of the ground below it, as (height levels + 1) * 64; 0 is deep water. For land with a mixed texture (see #GroundMix): the layer of the texture of the model package under it.
 	float texture; ///< The layer of the tile's ground texture.
 	float u; ///< Position within the tile along the x axis, 0 to 1.
 	float v; ///< Position within the tile along the y axis, 0 to 1.

@@ -6,6 +6,9 @@ $input v_color0, v_texcoord0, v_texcoord1, v_haze, v_tile
  * The ground comes from one of two texture arrays. s_terrain has the textures of the model package for the
  * landscape, each spread over several tiles. s_ground has textures made from the sprites of the 2D game, one tile each:
  * everything that is built on the ground and, without textures in the model package, the landscape too.
+ * With textures in the model package, the textures made from sprites are mixed with those: s_mix says how much of the
+ * landscape, asphalt, gravel and paving to add to the colour of the sprites, which is multiplied by how much it covers.
+ * The alpha of the vertex colour then names the landscape.
  * Water moves with small waves, and foam washes along the edge of the water on coasts.
  */
 
@@ -13,6 +16,7 @@ $input v_color0, v_texcoord0, v_texcoord1, v_haze, v_tile
 
 SAMPLER2DARRAY(s_ground, 0);
 SAMPLER2DARRAY(s_terrain, 2);
+SAMPLER2DARRAY(s_mix, 3);
 #include "shadow.sh"
 #include "haze.sh"
 
@@ -21,6 +25,9 @@ uniform vec4 u_water;
 /* x: number of layers that are in s_terrain, 0 without textures in the model package. y: one divided by the tiles per texture.
  * z: layer of the beach. w: layer of the water over coasts. */
 uniform vec4 u_terrain;
+/* x: first layer of s_ground that is mixed with the textures of s_terrain through s_mix. y: layer of asphalt in s_terrain, followed by gravel and paving.
+ * z: the light of flat ground at half brightness, which the colours of sprites already have. */
+uniform vec4 u_layers;
 
 /* Layer of full grass, which the beach turns into higher up. */
 #define LAYER_GRASS 4.0
@@ -60,13 +67,33 @@ void main()
 	float alpha = 1.0;
 	vec3 ground;
 
-	bool shallows = u_terrain.x > 0.5 && abs(layer - u_terrain.w) < 0.5;
-	if (shallows || layer < u_terrain.x - 0.5) {
-		/* The same texture, looked at from much further away, makes some regions lighter and others darker,
-		 * so the eye does not find the texture repeating. */
+	/* The same texture, looked at from much further away, makes some regions lighter and others darker,
+	 * so the eye does not find the texture repeating. */
+	float region = 1.0;
+	if (u_terrain.x > 0.5) {
 		vec2 far = vec2(at.x * 0.8 + at.y * 0.6, at.y * 0.8 - at.x * 0.6) * 0.113;
-		float region = dot(Terrain(far, LAYER_GRASS), vec3_splat(1.0)) / max(dot(TerrainAverage(LAYER_GRASS), vec3_splat(1.0)), 0.01);
+		region = dot(Terrain(far, LAYER_GRASS), vec3_splat(1.0)) / max(dot(TerrainAverage(LAYER_GRASS), vec3_splat(1.0)), 0.01);
 		region = mix(1.0, region, 0.55);
+	}
+
+	/* Textures of s_ground cover one tile each and start over at its edge, so filtering would mix in the far side of the tile
+	 * and draw its outline. Stay away from the edge, further when the texture is drawn smaller.
+	 * With anti-aliasing, pixels on the edge get a position just outside the tile; the position within the tile shows that, where fract() would start over. */
+	float margin = min(max(0.008, 1.5 * max(fwidth(at.x), fwidth(at.y))), 0.5);
+	vec2 inside = at - v_tile.xy + clamp(v_tile.xy, vec2_splat(margin), vec2_splat(1.0 - margin));
+
+	bool shallows = u_terrain.x > 0.5 && abs(layer - u_terrain.w) < 0.5;
+	if (layer > u_layers.x - 0.5) {
+		vec4 sprites = texture2DArray(s_ground, vec3(inside, layer));
+		vec4 share = texture2DArray(s_mix, vec3(inside, layer));
+		float under = floor(v_color0.a * 255.0 + 0.5);
+		ground = share.r * Terrain(at, under) * region
+			+ share.g * Terrain(at, u_layers.y) * mix(1.0, region, 0.4)
+			+ share.b * Terrain(at, u_layers.y + 1.0) * mix(1.0, region, 0.4)
+			+ share.a * Terrain(at, u_layers.y + 2.0);
+		/* The sprites are shaded for their slope already; the vertex colour lights the tile for its slope as well. */
+		ground += sprites.rgb * (u_layers.z / max(v_color0.g, 0.05));
+	} else if (shallows || layer < u_terrain.x - 0.5) {
 
 		if (shallows || abs(layer - u_water.x) < 0.5) {
 			/* How deep the water is: the vertices hold the height of the ground under it.
@@ -111,14 +138,8 @@ void main()
 	} else {
 		bool water = abs(layer - u_water.x) < 0.5;
 		bool coast = layer > u_water.y - 0.5 && layer < u_water.z - 0.5;
-		if (coast) {
-			/* The texture starts over at the edge of the tile, so the filtering would mix the land of the far side into the water at the edge
-			 * and draw the outline of the tile in the water. Stay away from the edge, further when the texture is drawn smaller.
-			 * With anti-aliasing, pixels on the edge get a position just outside the tile; the position within the tile shows that, where fract() would start over. */
-			float margin = min(max(0.008, 1.5 * max(fwidth(at.x), fwidth(at.y))), 0.5);
-			at = at - v_tile.xy + clamp(v_tile.xy, vec2_splat(margin), vec2_splat(1.0 - margin));
-		}
-		ground = texture2DArray(s_ground, vec3(at, layer)).rgb;
+		if (coast) at = inside;
+		ground = texture2DArray(s_ground, vec3(inside, layer)).rgb;
 
 		if (water || coast) {
 			float wet = water ? 1.0 : IsWaterColour(ground);

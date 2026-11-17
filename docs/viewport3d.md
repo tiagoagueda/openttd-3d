@@ -96,6 +96,11 @@ They are larger images that are each spread over several tiles, in a second text
 Grass that grows over bare land, and snow or desert that takes over from grass, are blends of two textures through a mask.
 Reading the textures needs libpng; a build without it keeps the ground made from sprites.
 
+The ground of tiles with things on them is then a mix (`GroundMix` in `ground_textures.h`). A texture made from sprites keeps only the pixels that show something other than plain landscape, multiplied by how much of each pixel they cover; a second texture array with the same layers (`s_mix`) says how much of the landscape, asphalt, gravel and paving of the package to add.
+`GroundTextures::UseTerrain()` collects the colours of the grass, bare land and snow or desert sprites on all slopes, so the landscape around houses, stations and industries is the textured landscape, continuous with the tiles around it; the vertices name which landscape.
+Plain track and plain road of the base game are not made from sprites at all, as the 3D models draw the track and the kerbs (`GetGroundPattern()` in `terrain_mesh.cpp`): a pattern of gravel beside the tracks, or asphalt with grass verges or pavements, with a dashed line down straight roads (`GroundTextures::GetPattern()`).
+Rail with a reservation shown, road works, one-way roads, and road and rail types of NewGRFs keep their sprites.
+
 With those textures a coast is no longer a sprite. The corners of coast tiles that have only sea around them are drawn below sea level (`IsSeaCorner()` in `terrain_mesh.cpp`), so the land goes down under the water: sand near the water, grass from some way up.
 A second quad at sea level is the water over it (`TerrainChunkMesh::water`). Its vertices hold the height of the ground below, from which the shader knows the depth: no water where the ground is above sea level, clear water over the sand, foam along the edge and solid water further out. It is drawn after everything else, blended.
 Rivers that run down into the sea are handled the same way, and the open sea is drawn shallow in corners where it meets land or anything built.
@@ -183,13 +188,13 @@ The existing game is touched in a few small places:
 * Transparency options of the 2D game are followed, but see-through sprites are left out rather than drawn see-through.
 * Tiles with animations that have no model (some industries with NewGRF graphics) rebuild their whole chunk of 64x64 tiles for every animation step; building one chunk takes about 1.5 ms.
 * Sprites far away flicker a little because they have no smaller versions yet.
-* The ground of tiles with tracks, roads, buildings and other things on them is still made from the sprites of the 2D game, so it looks coarser than the landscape around it.
+* The ground of stations, industries, level crossings, depots and other buildings is still made from the sprites of the 2D game where it is not plain landscape, so it looks coarser than roads and the landscape.
 * 3D models have colours per material but no textures yet, vehicles with a model turn in steps of 45 degrees like the sprites do, and liveries other than the company colour are not followed.
 * It has been run on Linux with Mesa's software Vulkan and OpenGL drivers, and on Windows with the Direct3D 11 video driver.
 
 ## Roadmap
 
-Textures for the landscape, the coast and the water are in. Next, in this order unless plans change: textures for the ground under tracks, roads and buildings and for the 3D models, day and night (light that follows the time of day, lit windows and lamps), and weather and seasons (snow, rain, autumn colours).
+Textures for the landscape, the coast, the water, roads and the ground beside tracks are in. Next, in this order unless plans change: textures for the 3D models and the ground of stations and industries, day and night (light that follows the time of day, lit windows and lamps), and weather and seasons (snow, rain, autumn colours).
 
 ## Changing the shaders
 

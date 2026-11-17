@@ -111,6 +111,9 @@ struct Renderer3D::Impl {
 	bgfx::TextureHandle sprite_atlas = BGFX_INVALID_HANDLE; ///< The sprites of the 2D game that are in use.
 	bgfx::UniformHandle ground_sampler = BGFX_INVALID_HANDLE;
 	bgfx::TextureHandle ground_textures = BGFX_INVALID_HANDLE; ///< Texture array with one layer per #GroundTexture.
+	bgfx::UniformHandle mix_sampler = BGFX_INVALID_HANDLE;
+	bgfx::TextureHandle ground_mix = BGFX_INVALID_HANDLE; ///< For each layer of #ground_textures, how much of the textures of the model package to mix in; see #GroundMix.
+	bgfx::UniformHandle layers = BGFX_INVALID_HANDLE; ///< Which layers are mixed, and the layers of road and track.
 	bgfx::UniformHandle terrain_sampler = BGFX_INVALID_HANDLE;
 	bgfx::TextureHandle terrain_textures = BGFX_INVALID_HANDLE; ///< Texture array with the ground textures of the model package, if it has them.
 	bgfx::UniformHandle terrain = BGFX_INVALID_HANDLE; ///< How the ground textures of the model package are used.
@@ -255,6 +258,8 @@ static bgfx::ShaderHandle CreateShader(const ShaderVariants &variants)
 	impl.haze_params = bgfx::createUniform("u_hazeParams", bgfx::UniformType::Vec4);
 	impl.water = bgfx::createUniform("u_water", bgfx::UniformType::Vec4);
 	impl.terrain_sampler = bgfx::createUniform("s_terrain", bgfx::UniformType::Sampler);
+	impl.mix_sampler = bgfx::createUniform("s_mix", bgfx::UniformType::Sampler);
+	impl.layers = bgfx::createUniform("u_layers", bgfx::UniformType::Vec4);
 	impl.terrain = bgfx::createUniform("u_terrain", bgfx::UniformType::Vec4);
 	impl.sky_matrix = bgfx::createUniform("u_skyInvViewProj", bgfx::UniformType::Mat4);
 	impl.sky_colour = bgfx::createUniform("u_skyColour", bgfx::UniformType::Vec4);
@@ -334,7 +339,8 @@ Renderer3D::~Renderer3D()
 	if (bgfx::isValid(impl.sprite_program)) bgfx::destroy(impl.sprite_program);
 	if (bgfx::isValid(impl.ground_textures)) bgfx::destroy(impl.ground_textures);
 	if (bgfx::isValid(impl.terrain_textures)) bgfx::destroy(impl.terrain_textures);
-	for (bgfx::UniformHandle handle : {impl.haze_colour, impl.haze_params, impl.water, impl.sky_matrix, impl.sky_colour, impl.terrain, impl.terrain_sampler}) {
+	if (bgfx::isValid(impl.ground_mix)) bgfx::destroy(impl.ground_mix);
+	for (bgfx::UniformHandle handle : {impl.haze_colour, impl.haze_params, impl.water, impl.sky_matrix, impl.sky_colour, impl.terrain, impl.terrain_sampler, impl.mix_sampler, impl.layers}) {
 		if (bgfx::isValid(handle)) bgfx::destroy(handle);
 	}
 	if (bgfx::isValid(impl.sky_program)) bgfx::destroy(impl.sky_program);
@@ -416,6 +422,12 @@ void Renderer3D::UpdateGroundTextures(GroundTextures &textures)
 	for (GroundTextures::Pending &pending : textures.TakePending()) {
 		assert(pending.pixels.size() == static_cast<size_t>(texture_size) * texture_size);
 		UploadTextureLayer(impl.ground_textures, texture_size, pending.layer, pending.pixels);
+		if (pending.mix.empty()) continue;
+		if (!bgfx::isValid(impl.ground_mix)) {
+			impl.ground_mix = bgfx::createTexture2D(static_cast<uint16_t>(texture_size), static_cast<uint16_t>(texture_size), true, static_cast<uint16_t>(this->GetMaxGroundTextures()),
+				bgfx::TextureFormat::BGRA8, BGFX_SAMPLER_MIN_ANISOTROPIC | BGFX_SAMPLER_MAG_ANISOTROPIC);
+		}
+		UploadTextureLayer(impl.ground_mix, texture_size, pending.layer, pending.mix);
 	}
 }
 
@@ -424,12 +436,13 @@ void Renderer3D::UpdateGroundTextures(GroundTextures &textures)
  * @param size Width and height of each texture; a power of two.
  * @param tiles Along how many tiles each texture is spread.
  * @param textures The textures, for the layers below #GROUND_TEXTURE_TERRAIN_END.
+ * @return Whether the GPU can use them.
  */
-void Renderer3D::SetTerrainTextures(uint size, uint tiles, std::vector<GroundTextures::Pending> &&textures)
+bool Renderer3D::SetTerrainTextures(uint size, uint tiles, std::vector<GroundTextures::Pending> &&textures)
 {
 	Impl &impl = *this->impl;
 	assert(HasExactlyOneBit(size));
-	if (bgfx::getCaps()->limits.maxTextureLayers < GROUND_TEXTURE_TERRAIN_END) return;
+	if (bgfx::getCaps()->limits.maxTextureLayers < GROUND_TEXTURE_TERRAIN_END) return false;
 
 	if (bgfx::isValid(impl.terrain_textures)) bgfx::destroy(impl.terrain_textures);
 	impl.terrain_textures = bgfx::createTexture2D(static_cast<uint16_t>(size), static_cast<uint16_t>(size), true, GROUND_TEXTURE_TERRAIN_END,
@@ -439,6 +452,7 @@ void Renderer3D::SetTerrainTextures(uint size, uint tiles, std::vector<GroundTex
 		UploadTextureLayer(impl.terrain_textures, size, pending.layer, pending.pixels);
 	}
 	impl.terrain_tiles = static_cast<float>(tiles);
+	return true;
 }
 
 /**
@@ -740,6 +754,9 @@ void Renderer3D::Render(uint width, uint height, const Camera3D &camera, std::sp
 	const float terrain[4] = {terrain_textures ? static_cast<float>(GROUND_TEXTURE_TERRAIN_END) : 0.0f, terrain_textures ? 1.0f / impl.terrain_tiles : 1.0f,
 		static_cast<float>(GROUND_TEXTURE_BEACH), static_cast<float>(GROUND_TEXTURE_SHALLOWS)};
 	bgfx::setUniform(impl.terrain, terrain);
+	/* x: first layer that is mixed. y: layer of asphalt, followed by gravel and paving. z: the light of flat ground, as in BuildTerrainChunkMesh(), at half brightness. */
+	const float layers[4] = {terrain_textures && bgfx::isValid(impl.ground_mix) ? static_cast<float>(GROUND_TEXTURE_END) : 4096.0f, static_cast<float>(GROUND_TEXTURE_ASPHALT), 0.5f * (0.45f + 0.80f * 0.6817f), 0};
+	bgfx::setUniform(impl.layers, layers);
 
 	Matrix4 view_proj = proj * view;
 	Matrix4 inverse;
@@ -826,6 +843,7 @@ void Renderer3D::Render(uint width, uint height, const Camera3D &camera, std::sp
 			bgfx::setVertexBuffer(0, chunk.vertices, chunk.num_quads * 4, chunk.num_water * 4);
 			bgfx::setTexture(0, impl.ground_sampler, impl.ground_textures);
 			bgfx::setTexture(2, impl.terrain_sampler, terrain_textures ? impl.terrain_textures : impl.ground_textures);
+			bgfx::setTexture(3, impl.mix_sampler, bgfx::isValid(impl.ground_mix) ? impl.ground_mix : impl.ground_textures);
 			bgfx::setIndexBuffer(impl.quad_indices, 0, chunk.num_water * 6);
 			set_shadow();
 			bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_DEPTH_TEST_LESS | BGFX_STATE_BLEND_FUNC_SEPARATE(BGFX_STATE_BLEND_SRC_ALPHA, BGFX_STATE_BLEND_INV_SRC_ALPHA, BGFX_STATE_BLEND_ZERO, BGFX_STATE_BLEND_ONE));
@@ -837,6 +855,7 @@ void Renderer3D::Render(uint width, uint height, const Camera3D &camera, std::sp
 			bgfx::setVertexBuffer(0, chunk.vertices, 0, chunk.num_quads * 4);
 			bgfx::setTexture(0, impl.ground_sampler, impl.ground_textures);
 			bgfx::setTexture(2, impl.terrain_sampler, terrain_textures ? impl.terrain_textures : impl.ground_textures);
+			bgfx::setTexture(3, impl.mix_sampler, bgfx::isValid(impl.ground_mix) ? impl.ground_mix : impl.ground_textures);
 			bgfx::setIndexBuffer(impl.quad_indices, 0, chunk.num_quads * 6);
 			set_shadow();
 			bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A | BGFX_STATE_WRITE_Z | BGFX_STATE_DEPTH_TEST_LESS);

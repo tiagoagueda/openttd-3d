@@ -121,6 +121,7 @@ class View3DWindow : public Window {
 	std::vector<Renderer3D::ChunkID> visible_chunks; ///< Chunks to draw this frame.
 	TerrainChunkMesh scratch_mesh; ///< Reused while building chunks.
 	std::unique_ptr<GroundTextures> ground_textures; ///< The ground textures that the chunks use.
+	bool terrain_textures = false; ///< Whether the landscape has the ground textures of the model package.
 	std::unique_ptr<SpriteAtlas> atlas; ///< The sprites of the 2D game that the chunks use.
 	std::unique_ptr<ModelPack> model_pack; ///< The package of 3D models, if there is one.
 	std::vector<ModelInstance> vehicle_models; ///< The vehicles in view that are drawn with a 3D model.
@@ -648,7 +649,8 @@ public:
 				this->atlas = std::make_unique<SpriteAtlas>();
 				this->model_pack = std::make_unique<ModelPack>();
 				if (this->model_pack->HasGround()) {
-					this->renderer->SetTerrainTextures(this->model_pack->GetGroundImage("grass")->size, this->model_pack->GetGroundTiles(), this->ground_textures->MakeTerrainTextures(*this->model_pack));
+					this->terrain_textures = this->renderer->SetTerrainTextures(this->model_pack->GetGroundImage("grass")->size, this->model_pack->GetGroundTiles(), this->ground_textures->MakeTerrainTextures(*this->model_pack));
+					if (this->terrain_textures) this->ground_textures->UseTerrain();
 				}
 				uint id = 0;
 				for (const Model3D &model : this->model_pack->GetModels()) {
@@ -682,6 +684,7 @@ public:
 		if (this->ground_textures->IsFull() && now - this->textures_reset > std::chrono::seconds(10)) {
 			this->textures_reset = now;
 			this->ground_textures = std::make_unique<GroundTextures>(this->renderer->GetMaxGroundTextures());
+			if (this->terrain_textures) this->ground_textures->UseTerrain();
 			for (ChunkState &chunk : this->chunks) chunk.dirty = true;
 			this->terrain_changed = true;
 		}

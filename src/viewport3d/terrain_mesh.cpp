@@ -69,6 +69,7 @@ struct TileGround {
 	TerrainColour colour; ///< Colour to multiply the texture with.
 	bool shaded = false; ///< Whether the texture already has the shading of the slope in it.
 	bool foundation = false; ///< Whether the tile stands on a foundation, so its top is flat at the height of its highest corner.
+	uint8_t under = 0; ///< For a mixed texture: the layer of the texture of the model package under it.
 };
 
 static constexpr TerrainColour COLOUR_WHITE{0xff, 0xff, 0xff};
@@ -1523,6 +1524,65 @@ void GetLiveTileModels(TileIndex tile, const ModelPack &pack, std::vector<ModelI
 }
 
 /**
+ * Draw the ground of plain track and road with the textures of the model package alone, rather than from the sprites of the 2D game.
+ * Only where the 3D models stand in for what the sprites show, and nothing else is drawn on the ground.
+ * @param tile The tile.
+ * @param slope Its slope.
+ * @param pack The model package.
+ * @param textures The ground textures.
+ * @param[out] result The ground, when there is a pattern for the tile.
+ * @return Whether there is.
+ */
+static bool GetGroundPattern(TileIndex tile, Slope slope, const ModelPack *pack, GroundTextures &textures, TileGround &result)
+{
+	if (pack == nullptr || pack->IsEmpty() || IsHalftileSlope(slope) || HasTileSelection(tile) || IsBridgeAbove(tile)) return false;
+
+	GroundTextures::PatternKind kind;
+	uint8_t bits;
+	uint8_t under = GROUND_TEXTURE_GRASS + 3;
+	if (IsTileType(tile, TileType::Railway) && IsPlainRail(tile)) {
+		RailType rt = GetRailType(tile);
+		if (GetTrackPiece(rt, false, *pack) == nullptr || GetTrackPiece(rt, true, *pack) == nullptr) return false;
+		/* Railway types of NewGRFs can draw their own ground. */
+		if (GetRailTypeInfo(rt)->UsesOverlay()) return false;
+		/* The reservation of a path is drawn on the track. */
+		if (_settings_client.gui.show_track_reservation && GetRailReservationTrackBits(tile).Any()) return false;
+		switch (GetRailGroundType(tile)) {
+			case RailGroundType::Barren: under = GROUND_TEXTURE_GRASS; break;
+			case RailGroundType::SnowOrDesert: under = GROUND_TEXTURE_SNOW_DESERT + 3; break;
+			case RailGroundType::HalfTileWater: return false;
+			default: break;
+		}
+		kind = GroundTextures::PatternKind::Rail;
+		bits = static_cast<uint8_t>(GetTrackBits(tile).base());
+	} else if (IsTileType(tile, TileType::Road) && IsNormalRoad(tile)) {
+		/* Only the road of the base game; others have their own look. Road works and one-way arrows are drawn on the road. */
+		if (HasRoadWorks(tile) || GetDisallowedRoadDirections(tile).Any()) return false;
+		if (HasRoadTypeRoad(tile) && GetRoadTypeRoad(tile) != ROADTYPE_ROAD) return false;
+		RoadBits tram = HasRoadTypeTram(tile) ? GetRoadBits(tile, RoadTramType::Tram) : RoadBits{};
+		if (tram.Any() && (pack->Find(ModelKind::Roadside, 0, 4) == nullptr || GetRoadTypeTram(tile) != ROADTYPE_TRAM)) return false;
+		Roadside roadside = GetRoadside(tile);
+		bool paved = roadside == Roadside::Paved || roadside == Roadside::StreetLights || roadside == Roadside::Trees;
+		RoadBits road = HasRoadTypeRoad(tile) ? GetRoadBits(tile, RoadTramType::Road) : RoadBits{};
+		kind = paved && road.Any() ? GroundTextures::PatternKind::PavedRoad : GroundTextures::PatternKind::Road;
+		if (IsOnSnowOrDesert(tile)) {
+			under = GROUND_TEXTURE_SNOW_DESERT + 3;
+		} else if (roadside == Roadside::Barren) {
+			under = GROUND_TEXTURE_GRASS;
+		}
+		bits = static_cast<uint8_t>(road.base());
+	} else {
+		return false;
+	}
+
+	uint texture = textures.GetPattern(kind, bits);
+	if (texture == GROUND_TEXTURE_NONE) return false;
+	result = TileGround{texture, COLOUR_WHITE};
+	result.under = under;
+	return true;
+}
+
+/**
  * Add what the 2D game draws for a tile that has more on it than landscape, such as tracks, roads and buildings.
  * Sprites that the 2D game draws flat on the ground become the ground texture of the tile.
  * Everything else becomes sprites that stand upright at the front of their bounding box.
@@ -1649,11 +1709,21 @@ static TileGround AddTileSprites(uint x, uint y, const std::array<uint8_t, 4> &h
 	}
 
 	TileGround result;
-	if (ground.empty()) {
+	if (!ground_only && textures.IsMixing() && GetGroundPattern(tile, slope, pack, textures, result)) {
+		/* Drawn with the textures of the model package alone. */
+	} else if (ground.empty()) {
 		result = ground_only ? GetTileGround(Tile(tile), x, y, false) : TileGround{GROUND_TEXTURE_GRASS, COLOUR_WHITE};
 	} else {
 		uint texture = textures.Get(ground, flat_foundation ? std::array<uint8_t, 4>{} : heights);
-		result = texture == GROUND_TEXTURE_NONE ? TileGround{GROUND_TEXTURE_NONE, TerrainColour{0x80, 0x80, 0x80}} : TileGround{texture, COLOUR_WHITE, true};
+		if (texture == GROUND_TEXTURE_NONE) {
+			result = TileGround{GROUND_TEXTURE_NONE, TerrainColour{0x80, 0x80, 0x80}};
+		} else if (textures.IsMixing()) {
+			/* The sprites have the shading of the slope in them, but the textures mixed in do not; the shader evens that out. */
+			result = TileGround{texture, COLOUR_WHITE};
+			result.under = textures.GetUnder(texture);
+		} else {
+			result = TileGround{texture, COLOUR_WHITE, true};
+		}
 	}
 	result.foundation = flat_foundation;
 	return result;
@@ -1682,7 +1752,7 @@ void BuildTerrainChunkMesh(uint chunk_x, uint chunk_y, GroundTextures &textures,
 	mesh.sprites.clear();
 
 	/* With ground textures in the model package, coasts are land that goes down into the water. */
-	const bool pack_ground = pack != nullptr && pack->HasGround();
+	const bool pack_ground = textures.IsMixing();
 	mesh.models.clear();
 	mesh.parts.clear();
 	mesh.live.clear();
@@ -1760,7 +1830,7 @@ void BuildTerrainChunkMesh(uint chunk_x, uint chunk_y, GroundTextures &textures,
 			uint8_t b = static_cast<uint8_t>(std::clamp(ground.colour.b * light, 0.0f, 255.0f));
 
 			auto vertex = [&](uint vx, uint vy, float h) {
-				return TerrainVertex{static_cast<float>(vx), static_cast<float>(vy), h, r, g, b, 0, static_cast<float>(ground.texture), static_cast<float>(vx - x), static_cast<float>(vy - y)};
+				return TerrainVertex{static_cast<float>(vx), static_cast<float>(vy), h, r, g, b, ground.under, static_cast<float>(ground.texture), static_cast<float>(vx - x), static_cast<float>(vy - y)};
 			};
 			if (ground.foundation) {
 				/* Walls from the flat top of the foundation down to the ground around it. */
