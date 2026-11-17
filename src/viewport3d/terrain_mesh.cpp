@@ -1200,16 +1200,24 @@ static bool AddTileModel(TileIndex tile, const ModelPack &pack, std::vector<Mode
 
 	switch (GetTileType(tile)) {
 		case TileType::House: {
-			if (!IsHouseCompleted(tile)) return false;
 			/* Buildings of several tiles have a model for their northern tile. */
 			HouseID house = GetHouseType(tile);
 			TileIndex north = tile + GetHouseNorthPart(house);
 			const HouseSpec *hs = HouseSpec::Get(house);
+			uint size_x = hs->building_flags.Any(BUILDING_2_TILES_X) ? 2 : 1;
+			uint size_y = hs->building_flags.Any(BUILDING_2_TILES_Y) ? 2 : 1;
+			if (!IsHouseCompleted(tile)) {
+				/* Houses of NewGRFs may draw their own building sites. */
+				if (hs->grf_prop.HasGrfFile()) return false;
+				uint plot = (size_x - 1) + (size_y - 1) * 2;
+				const ModelPack::Entry *site = pack.Find(ModelKind::Construction, 0, GetHouseBuildingStage(tile) * 4 + plot);
+				if (site == nullptr) return false;
+				if (north == tile) PlaceModel(*site, tile, size_x, size_y, DiagDirection::SW, ModelPack::GetTint(Colours::White), models);
+				return true;
+			}
 			const ModelPack::Entry *entry = pack.Find(ModelKind::House, hs->grf_prop, house);
 			if (entry == nullptr) return false;
 			if (north == tile) {
-				uint size_x = hs->building_flags.Any(BUILDING_2_TILES_X) ? 2 : 1;
-				uint size_y = hs->building_flags.Any(BUILDING_2_TILES_Y) ? 2 : 1;
 				uint hash = TileHash2Bit(TileX(tile), TileY(tile));
 				Colours colour = hs->grf_prop.HasGrfFile() ? hs->random_colour[hash] : HOUSE_COLOURS[hash];
 				PlaceModel(*entry, tile, size_x, size_y, DiagDirection::SW, ModelPack::GetTint(colour), models);
@@ -1218,8 +1226,16 @@ static bool AddTileModel(TileIndex tile, const ModelPack &pack, std::vector<Mode
 		}
 
 		case TileType::Industry: {
-			if (!IsIndustryCompleted(tile)) return false;
 			IndustryGfx gfx = GetIndustryGfx(tile);
+			if (!IsIndustryCompleted(tile)) {
+				if (GetIndustryTileSpec(gfx)->grf_prop.HasGrfFile()) return false;
+				const ModelPack::Entry *site = pack.Find(ModelKind::Construction, 0, GetIndustryConstructionStage(tile) * 4);
+				if (site == nullptr) return false;
+				/* Water industries, like oil rigs, are built without a building site. */
+				if (IsTileOnWater(tile)) return false;
+				PlaceModel(*site, tile, 1, 1, DiagDirection::SW, ModelPack::GetTint(Colours::White), models);
+				return true;
+			}
 			const ModelPack::Entry *entry = pack.Find(ModelKind::IndustryTile, GetIndustryTileSpec(gfx)->grf_prop, gfx);
 			if (entry == nullptr) return false;
 			if (entry->snow != UINT_MAX && _settings_game.game_creation.landscape == LandscapeType::Arctic) {
@@ -1265,6 +1281,12 @@ static bool AddTileModel(TileIndex tile, const ModelPack &pack, std::vector<Mode
 			} else if (IsBuoy(tile)) {
 				entry = pack.Find(ModelKind::Buoy, 0, 0);
 				front = DiagDirection::SW;
+			} else if (IsRailWaypoint(tile) && GetStationSpec(tile) == nullptr) {
+				entry = pack.Find(ModelKind::Waypoint, 0, 0);
+				front = GetRailStationAxis(tile) == Axis::X ? DiagDirection::SW : DiagDirection::NW;
+			} else if (IsRoadWaypoint(tile) && GetRoadStopSpec(tile) == nullptr) {
+				entry = pack.Find(ModelKind::Waypoint, 0, 1);
+				front = GetDriveThroughStopAxis(tile) == Axis::X ? DiagDirection::SW : DiagDirection::NW;
 			}
 			if (entry == nullptr) return false;
 			PlaceModel(*entry, tile, 1, 1, front, GetOwnerTint(IsBuoy(tile) ? OWNER_NONE : GetTileOwner(tile)), models);
@@ -1293,6 +1315,12 @@ static bool AddTileModel(TileIndex tile, const ModelPack &pack, std::vector<Mode
 		}
 
 		case TileType::Water: {
+			if (IsLock(tile)) {
+				const ModelPack::Entry *entry = pack.Find(ModelKind::Lock, 0, to_underlying(GetLockPart(tile)));
+				if (entry == nullptr) return false;
+				PlaceModel(*entry, tile, 1, 1, GetLockDirection(tile), GetOwnerTint(GetTileOwner(tile)), models);
+				return true;
+			}
 			if (!IsShipDepot(tile)) return false;
 			const ModelPack::Entry *entry = pack.Find(ModelKind::ShipDepot, 0, 0);
 			if (entry == nullptr) return false;

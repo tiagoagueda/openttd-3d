@@ -20,6 +20,7 @@
 #include "../company_func.h"
 #include "../engine_base.h"
 #include "../palette_func.h"
+#include "../disaster_vehicle.h"
 #include "../roadveh.h"
 #include "../train.h"
 
@@ -217,6 +218,86 @@ static bool AddVehicleModel(const Vehicle *v, const ModelPack *pack, std::vector
 }
 
 /**
+ * Put a model on the map, turned around the vertical axis.
+ * @param entry The model.
+ * @param v The vehicle it stands for; the model stands at its position.
+ * @param yaw Where the front of the model points, in radians from the x axis.
+ * @param models The 3D models to draw, to add to.
+ * @return The placed model.
+ */
+static ModelInstance &PlaceVehicleModel(const ModelPack::Entry &entry, const Vehicle *v, float yaw, std::vector<ModelInstance> &models)
+{
+	float s = entry.scale;
+	float c = std::cos(yaw) * s;
+	float n = std::sin(yaw) * s;
+	ModelInstance &instance = models.emplace_back();
+	instance.model = entry.model;
+	instance.transform.m = {
+		c, n, 0, 0,
+		-n, c, 0, 0,
+		0, 0, s, 0,
+		static_cast<float>(v->x_pos), static_cast<float>(v->y_pos), v->z_pos * WORLD_Z_SCALE, 1,
+	};
+	instance.tint = {1, 1, 1, 1};
+	instance.load = 0;
+	return instance;
+}
+
+/**
+ * Draw a disaster, such as a zeppelin or a submarine, with a model, when the package has one.
+ * Their shadows are left out, like those of aircraft.
+ * @param v The disaster vehicle.
+ * @param pack The package of 3D models, or \c nullptr.
+ * @param models The 3D models to draw, to add to.
+ * @return Whether the disaster has a model.
+ */
+static bool AddDisasterModel(const Vehicle *v, const ModelPack *pack, std::vector<ModelInstance> &models)
+{
+	if (pack == nullptr) return false;
+	const ModelPack::Entry *entry = pack->Find(ModelKind::Disaster, 0, v->subtype);
+	if (entry == nullptr) return false;
+
+	auto [smooth, inserted] = _smooth_vehicles.try_emplace(v->index, SmoothVehicle{0, 0, 0});
+	bool continued = !inserted && smooth->second.seen + 1 == _smooth_image;
+	smooth->second.seen = _smooth_image;
+
+	float yaw = 0;
+	if (v->direction < Direction::End) {
+		static constexpr float D = 0.70710678f;
+		static constexpr float HEADINGS[8][2] = {
+			{-D, -D}, {-1, 0}, {-D, D}, {0, 1}, {D, D}, {1, 0}, {D, -D}, {0, -1},
+		};
+		const float *heading = HEADINGS[to_underlying(v->direction)];
+		yaw = std::atan2(heading[1], heading[0]);
+	}
+	if (v->subtype == ST_HELICOPTER_ROTORS || v->subtype == ST_SMALL_UFO || v->subtype == ST_BIG_UFO) {
+		/* Rotors and flying saucers spin. */
+		if (continued) smooth->second.rotor_angle = WrapAngle(smooth->second.rotor_angle + _smooth_seconds * (v->subtype == ST_HELICOPTER_ROTORS ? 30.0f : 1.5f));
+		yaw = smooth->second.rotor_angle;
+	}
+	PlaceVehicleModel(*entry, v, yaw, models);
+	return true;
+}
+
+/**
+ * Draw the bulldozer of road works with a model, when the package has one.
+ * @param v The effect vehicle of the bulldozer.
+ * @param pack The package of 3D models.
+ * @param models The 3D models to draw, to add to.
+ * @return Whether the bulldozer has a model.
+ */
+static bool AddBulldozerModel(const Vehicle *v, const ModelPack &pack, std::vector<ModelInstance> &models)
+{
+	const ModelPack::Entry *entry = pack.Find(ModelKind::Effect, 0, EV_BULLDOZER);
+	if (entry == nullptr) return false;
+	/* The sprite tells which way it faces: north-east, south-east, south-west or north-west. */
+	static constexpr float YAWS[4] = {3.14159265f, 1.57079633f, 0.0f, -1.57079633f};
+	uint view = (v->sprite_cache.sprite_seq.seq[0].sprite - SPR_BULLDOZER_NE) & 3;
+	PlaceVehicleModel(*entry, v, YAWS[view], models);
+	return true;
+}
+
+/**
  * Draw smoke, steam and sparks as soft 3D puffs that grow and fade, when the package has a model for them.
  * @param v The effect vehicle.
  * @param pack The package of 3D models, or \c nullptr.
@@ -240,8 +321,12 @@ static bool AddEffectModel(const Vehicle *v, const ModelPack *pack, std::vector<
 		{EV_BREAKDOWN_SMOKE, {{0.30f, 0.30f, 0.30f, 0.7f}, 0.8f, 0.4f, 3.0f}},
 		{EV_BREAKDOWN_SMOKE_AIRCRAFT, {{0.30f, 0.30f, 0.30f, 0.7f}, 0.8f, 0.4f, 3.0f}},
 		{EV_COPPER_MINE_SMOKE, {{0.62f, 0.52f, 0.46f, 0.75f}, 0.8f, 0.4f, 3.0f}},
+		{EV_EXPLOSION_LARGE, {{1.0f, 0.55f, 0.15f, 0.95f}, 1.4f, 1.6f, 1.2f}},
+		{EV_EXPLOSION_SMALL, {{1.0f, 0.62f, 0.20f, 0.95f}, 0.6f, 1.2f, 0.8f}},
+		{EV_BUBBLE, {{0.80f, 0.92f, 1.0f, 0.6f}, 0.35f, 0.05f, 4.0f}},
 	};
 	if (pack == nullptr) return false;
+	if (v->subtype == EV_BULLDOZER) return AddBulldozerModel(v, *pack, models);
 	auto puff = PUFFS.find(v->subtype);
 	if (puff == PUFFS.end()) return false;
 	const ModelPack::Entry *entry = pack->Find(ModelKind::Effect, 0, v->subtype);
@@ -347,7 +432,12 @@ void BuildVehicleSprites(const Camera3D &camera, const Frustum3D &frustum, Sprit
 		float nearer = (v->bounds.extent.x + v->bounds.extent.y) * 0.5f + 2.0f;
 		const AtlasSprite &sprite = atlas.Get(parts);
 		/* The sprite still tells where the vehicle can be clicked when a model is drawn in its place. */
-		bool modelled = v->type == VehicleType::Effect ? AddEffectModel(v, pack, models) : AddVehicleModel(v, pack, models);
+		bool modelled;
+		switch (v->type) {
+			case VehicleType::Effect: modelled = AddEffectModel(v, pack, models); break;
+			case VehicleType::Disaster: modelled = AddDisasterModel(v, pack, models); break;
+			default: modelled = AddVehicleModel(v, pack, models); break;
+		}
 		if (!modelled) AddUprightSprite(sprite, x, y, z, nearer, vertices);
 		if (sprite.valid && !v->vehstatus.Test(VehState::Unclickable)) {
 			places.push_back({v->index, x, y, z, static_cast<float>(sprite.left), static_cast<float>(sprite.top), static_cast<float>(sprite.width), static_cast<float>(sprite.height)});

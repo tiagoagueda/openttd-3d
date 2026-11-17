@@ -134,7 +134,11 @@ A rail vehicle model lies along the line between the vehicles in front of and be
 
 Models cast shadows from the sun, which comes from the same direction as the light on the terrain. Each image first draws the models, as depth only, into a shadow map that looks from the sun at the area around the point the camera looks at (`GetShadowView()` in `renderer3d.cpp`); terrain, models and sprites are then darker where the map holds something between them and the sun (`shaders/shadow.sh`). Aircraft in the air cast their shadow this way too. Terrain and sprites, such as trees, cast shadows too: terrain from a little further away from the sun, and sprites turned to face the sun. Shadows fade out towards the edge of the map, so a camera far away sees none in the distance. After changing a shader, run `shaders/compile_shaders.sh`.
 
-Smoke, steam and sparks (effect vehicles) are drawn as see-through 3D puffs (`effect` in the index) that grow and fade while they are in view (`AddEffectModel()` in `vehicle_sprites.cpp`); see-through models are blended over what is behind them and cast no shadow. Other effects keep their sprites.
+Smoke, steam and sparks (effect vehicles) are drawn as see-through 3D puffs (`effect` in the index) that grow and fade while they are in view (`AddEffectModel()` in `vehicle_sprites.cpp`); see-through models are blended over what is behind them and cast no shadow. Explosions are orange puffs, bubbles of the bubble generator light blue ones, and the bulldozer of road works is a model of its own (effect 8), turned the way its sprite faces.
+
+Disasters (zeppelin, UFOs, planes, helicopter and its rotor, submarines) have models by disaster vehicle type (`disaster`, `AddDisasterModel()`); rotors and UFOs spin. Their shadows are left out, like those of aircraft.
+
+Houses and industries that are still being built show building sites (`construction`): one model per stage of the work and size of the plot, with scaffolding, walls and timbers that grow from stage to stage. Base-game rail and road waypoints (`waypoint`) and canal locks (`lock`, by part) have models too.
 
 The sky is one triangle behind everything (`vs_sky`, `fs_sky`), pale at the horizon and deeper blue above; terrain, sprites and models fade into the colour of the horizon with distance (`shaders/haze.sh`). Water moves with small waves, and foam washes along the edge of the water on coast tiles (`fs_terrain.sc`; `u_water` tells which ground textures are water and the time, `u_terrain` how the ground textures of the model package are used).
 

@@ -49,6 +49,10 @@ enum class ModelKind : uint8_t {
 	Crossing, ///< Level crossings: 0 open, 1 closed.
 	Roadside, ///< Along roads: 0 street lamp, 1 roadside tree, 2 pavement, 3 pavement corner, 4 tram rails.
 	Fence, ///< Fences: 0 along railways, 1 to 6 the edges of fields by fence type.
+	Construction, ///< Building sites of houses and industries: stage * 4 + plot, with plot 0 one tile, 1 two along x, 2 two along y, 3 two by two.
+	Waypoint, ///< Waypoints: 0 on a railway, 1 on a road.
+	Lock, ///< Canal locks: 0 the middle, 1 the lower end, 2 the upper end.
+	Disaster, ///< Disaster vehicles, by disaster vehicle type.
 };
 
 /**
