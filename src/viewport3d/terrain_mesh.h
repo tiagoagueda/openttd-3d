@@ -89,6 +89,8 @@ class SpriteAtlas;
 struct AtlasSprite;
 
 bool GetTileModels(TileIndex tile, const ModelPack &pack, std::vector<ModelInstance> &models, std::vector<AnimatedPart> &parts);
+struct View3DPreview;
+void AddPreviewModel(const View3DPreview &preview, TileIndex tile, uint track, const ModelPack &pack, std::vector<ModelInstance> &models);
 bool HasLiveTileModels(TileIndex tile);
 bool GetTileChangeKey(TileIndex tile, uint64_t &key);
 void GetLiveTileModels(TileIndex tile, const ModelPack &pack, std::vector<ModelInstance> &models);

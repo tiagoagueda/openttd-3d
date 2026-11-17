@@ -2140,3 +2140,31 @@ DropDownList GetRailTypeDropDownList(bool for_replacement, bool all_option)
 
 	return list;
 }
+
+#ifdef WITH_VIEWPORT3D
+#include "viewport3d/view3d_gui.h"
+
+/**
+ * What the rail toolbar is about to build, for the preview in the 3D view.
+ * @param[out] preview What it is.
+ * @return Whether there is something to show: a depot, or a rail station of the default class.
+ */
+bool GetRailToolPreview(View3DPreview &preview)
+{
+	const BuildRailToolbarWindow *w = dynamic_cast<const BuildRailToolbarWindow *>(_thd.GetCallbackWnd());
+	if (w == nullptr) return false;
+	switch (w->last_user_action) {
+		case WID_RAT_BUILD_DEPOT:
+			preview.kind = View3DPreview::Kind::RailDepot;
+			preview.direction = _build_depot_direction;
+			return true;
+		case WID_RAT_BUILD_STATION:
+			if (_station_gui.sel_class != STAT_CLASS_DFLT) return false;
+			preview.kind = View3DPreview::Kind::RailStation;
+			preview.axis = _station_gui.axis;
+			return true;
+		default:
+			return false;
+	}
+}
+#endif /* WITH_VIEWPORT3D */

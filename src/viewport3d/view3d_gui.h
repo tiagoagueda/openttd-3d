@@ -12,6 +12,26 @@
 
 #include "../core/geometry_type.hpp"
 #include "../tile_type.h"
+#include "../direction_type.h"
+
+/** What a build tool is about to build, so the 3D view can show it before it is built. */
+struct View3DPreview {
+	enum class Kind : uint8_t {
+		None, ///< Nothing to show.
+		RailDepot, ///< A train depot facing #direction.
+		RoadDepot, ///< A road vehicle depot facing #direction.
+		RailStation, ///< Rail station tiles along #axis.
+		RoadStop, ///< Road stops; a bay facing #direction, or a drive-through stop along the axis of #direction.
+	};
+	Kind kind = Kind::None; ///< What is about to be built.
+	DiagDirection direction = DiagDirection::NE; ///< Which way it faces.
+	Axis axis = Axis::X; ///< Along which axis it lies.
+	bool truck = false; ///< For road stops: a lorry stop rather than a bus stop.
+	bool drive_through = false; ///< For road stops: a drive-through stop rather than a bay.
+};
+
+bool GetRailToolPreview(View3DPreview &preview);
+bool GetRoadToolPreview(View3DPreview &preview);
 
 void ShowView3DWindow(std::string_view backend = {});
 void MarkTileDirtyForView3D(TileIndex tile);

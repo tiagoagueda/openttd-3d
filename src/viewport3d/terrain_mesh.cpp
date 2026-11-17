@@ -45,6 +45,7 @@
 #include "../tunnelbridge_map.h"
 #include "../road_map.h"
 #include "../road_func.h"
+#include "view3d_gui.h"
 #include "../newgrf_roadtype.h"
 #include "../station_map.h"
 #include "../town.h"
@@ -1288,6 +1289,43 @@ bool GetTileModels(TileIndex tile, const ModelPack &pack, std::vector<ModelInsta
 	bool replaced = AddTileModel(tile, pack, models);
 	_tile_parts = nullptr;
 	return replaced;
+}
+
+/**
+ * Add a see-through model of what a build tool is about to build on a tile.
+ * @param preview What is about to be built.
+ * @param tile The tile.
+ * @param track For rail stations, which track of the station the tile is on, counted across the platforms.
+ * @param pack The package of 3D models.
+ * @param models The models to add to.
+ */
+void AddPreviewModel(const View3DPreview &preview, TileIndex tile, uint track, const ModelPack &pack, std::vector<ModelInstance> &models)
+{
+	const ModelPack::Entry *entry = nullptr;
+	DiagDirection front = preview.direction;
+	switch (preview.kind) {
+		case View3DPreview::Kind::RailDepot:
+			entry = pack.Find(ModelKind::RailDepot, 0, 0);
+			break;
+		case View3DPreview::Kind::RoadDepot:
+			entry = pack.Find(ModelKind::RoadDepot, 0, 0);
+			break;
+		case View3DPreview::Kind::RailStation:
+			/* Every other track gets the station building, the others a bare platform. */
+			entry = pack.Find(ModelKind::RailStation, 0, track % 2 == 0 ? 1 : 0);
+			front = preview.axis == Axis::X ? DiagDirection::SW : DiagDirection::NW;
+			break;
+		case View3DPreview::Kind::RoadStop:
+			entry = pack.Find(ModelKind::RoadStop, 0, (preview.drive_through ? 2 : 0) + (preview.truck ? 1 : 0));
+			if (preview.drive_through) front = preview.axis == Axis::X ? DiagDirection::SW : DiagDirection::NW;
+			break;
+		default:
+			break;
+	}
+	if (entry == nullptr) return;
+	std::array<float, 4> tint = GetOwnerTint(_local_company);
+	tint[3] = 0.55f;
+	PlaceModel(*entry, tile, 1, 1, front, tint, models);
 }
 
 /**

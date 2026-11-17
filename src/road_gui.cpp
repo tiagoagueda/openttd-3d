@@ -2002,3 +2002,35 @@ void SetDefaultRoadGui()
 	_last_built_roadtype = GetDefaultRoadType(RoadTramType::Road);
 	_last_built_tramtype = GetDefaultRoadType(RoadTramType::Tram);
 }
+
+#ifdef WITH_VIEWPORT3D
+#include "viewport3d/view3d_gui.h"
+
+/**
+ * What the road toolbar is about to build, for the preview in the 3D view.
+ * @param[out] preview What it is.
+ * @return Whether there is something to show: a depot, or a road stop of the default class.
+ */
+bool GetRoadToolPreview(View3DPreview &preview)
+{
+	const BuildRoadToolbarWindow *w = dynamic_cast<const BuildRoadToolbarWindow *>(_thd.GetCallbackWnd());
+	if (w == nullptr) return false;
+	switch (w->last_started_action) {
+		case WID_ROT_DEPOT:
+			preview.kind = View3DPreview::Kind::RoadDepot;
+			preview.direction = _road_depot_orientation;
+			return true;
+		case WID_ROT_BUS_STATION:
+		case WID_ROT_TRUCK_STATION:
+			if (_roadstop_gui.sel_class != ROADSTOP_CLASS_DFLT) return false;
+			preview.kind = View3DPreview::Kind::RoadStop;
+			preview.truck = w->last_started_action == WID_ROT_TRUCK_STATION;
+			preview.drive_through = _roadstop_gui.orientation >= DiagDirection::End;
+			preview.direction = preview.drive_through ? _roadstop_gui.orientation - DiagDirection::End : _roadstop_gui.orientation;
+			preview.axis = DiagDirToAxis(preview.direction);
+			return true;
+		default:
+			return false;
+	}
+}
+#endif /* WITH_VIEWPORT3D */

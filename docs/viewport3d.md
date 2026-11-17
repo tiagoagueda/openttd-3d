@@ -35,6 +35,7 @@ Zooming and turning glide rather than jump, and the camera follows the height of
 
 Pick a tool from the toolbars of the game as usual, then click or drag in the 3D view.
 The tile selection of the tool is shown in both the 2D and the 3D view.
+While placing a train or road vehicle depot, a rail station or a road stop of the default class, the 3D view also shows a see-through model of it on the selected tiles (`GetRailToolPreview()` in `rail_gui.cpp`, `GetRoadToolPreview()` in `road_gui.cpp`, `AddPreviewModel()` in `terrain_mesh.cpp`).
 
 Changes to the map, such as terraforming, show up in the 3D view right away.
 

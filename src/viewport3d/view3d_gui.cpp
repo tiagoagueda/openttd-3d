@@ -25,6 +25,7 @@
 #include "../vehicle_base.h"
 #include "../core/backup_type.hpp"
 #include "../viewport_type.h"
+#include "../tilehighlight_func.h"
 #include "../window_func.h"
 #include "../window_gui.h"
 
@@ -514,6 +515,25 @@ public:
 		}
 	}
 
+	/** Add see-through models of what the active build tool is about to build, on the tiles it has selected. */
+	void AddPreviewModels()
+	{
+		if (this->model_pack == nullptr || this->model_pack->IsEmpty()) return;
+		if ((_thd.drawstyle & HT_DRAG_MASK) != HT_RECT || _thd.pos.x < 0 || _thd.pos.y < 0) return;
+		View3DPreview preview;
+		if (!GetRailToolPreview(preview) && !GetRoadToolPreview(preview)) return;
+
+		uint x0 = _thd.pos.x / TILE_SIZE, y0 = _thd.pos.y / TILE_SIZE;
+		uint w = std::max(1, _thd.size.x / static_cast<int>(TILE_SIZE)), h = std::max(1, _thd.size.y / static_cast<int>(TILE_SIZE));
+		/* A large drag would put a lot of models on the screen; the selection on the ground still shows it. */
+		if (w * h > 256) return;
+		for (uint y = y0; y < y0 + h && y < Map::SizeY(); y++) {
+			for (uint x = x0; x < x0 + w && x < Map::SizeX(); x++) {
+				AddPreviewModel(preview, TileXY(x, y), preview.axis == Axis::X ? y - y0 : x - x0, *this->model_pack, this->vehicle_models);
+			}
+		}
+	}
+
 	/**
 	 * Let the camera glide towards where it should be.
 	 * @param delta_ms Milliseconds since the last time.
@@ -608,6 +628,7 @@ public:
 			for (const AnimatedPart &part : this->chunks[id].parts) this->vehicle_models.push_back(part.Place(seconds));
 			for (const auto &[tile, models] : this->chunks[id].live) this->vehicle_models.insert(this->vehicle_models.end(), models.begin(), models.end());
 		}
+		this->AddPreviewModels();
 		uint64_t hash = 0xcbf29ce484222325ULL;
 		const uint8_t *data = reinterpret_cast<const uint8_t *>(this->vehicle_sprites.data());
 		for (size_t i = 0; i < this->vehicle_sprites.size() * sizeof(SpriteVertex); i++) {
