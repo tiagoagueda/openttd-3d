@@ -27,7 +27,11 @@ To force one, type `view3d vulkan` or `view3d opengl`.
 | Left mouse button | Use the selected build tool, or open the window of the vehicle, name, sign or tile below the cursor, like in the 2D views |
 | Drag with the right mouse button | Move over the map |
 | Ctrl + drag with the right mouse button | Rotate and tilt the camera |
-| Mouse wheel | Zoom |
+| Mouse wheel | Zoom in or out, towards the spot below the cursor |
+| Page Up / Page Down (window selected) | Turn a quarter to the left or right |
+| Home (window selected) | Look from the north again at the angle of the 2D view |
+
+Zooming and turning glide rather than jump, and the camera follows the height of the ground smoothly while moving.
 
 Pick a tool from the toolbars of the game as usual, then click or drag in the 3D view.
 The tile selection of the tool is shown in both the 2D and the 3D view.

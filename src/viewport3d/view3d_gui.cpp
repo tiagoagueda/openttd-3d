@@ -97,6 +97,12 @@ class View3DWindow : public Window {
 	std::string error; ///< Why the renderer could not be created.
 
 	Camera3D camera; ///< Where we look from.
+	/* The camera glides towards these, so zooming and turning are smooth. */
+	float goal_distance = Camera3D{}.distance; ///< Distance the camera zooms to.
+	float goal_yaw = Camera3D{}.yaw; ///< Direction the camera turns to.
+	float goal_pitch = Camera3D{}.pitch; ///< Angle the camera tilts to.
+	bool zoom_anchored = false; ///< Whether zooming keeps #zoom_anchor in place on the screen.
+	Vec3 zoom_anchor{}; ///< Spot on the ground below the cursor when zooming started.
 	bool view_changed = true; ///< Whether the camera or image size changed since the last render.
 	bool terrain_changed = true; ///< Whether chunks need to be (re)built.
 
@@ -257,52 +263,11 @@ public:
 		if (FindWindowFromPt(_cursor.pos.x, _cursor.pos.y) != this) return false;
 
 		pt = {-1, -1};
-		if (this->renderer == nullptr) return true;
-		const NWidgetBase *view = this->GetWidget<NWidgetBase>(WID_V3D_VIEW);
-		int x = _cursor.pos.x - this->left - view->pos_x;
-		int y = _cursor.pos.y - this->top - view->pos_y;
-		if (x < 0 || y < 0 || x >= static_cast<int>(view->current_x) || y >= static_cast<int>(view->current_y)) return true;
-
-		/* The line of sight through the cursor. */
-		Vec3 eye = this->camera.GetEye();
-		Vec3 forward = Normalise(this->camera.target - eye);
-		Vec3 side = Normalise(Cross(forward, Vec3{0, 0, 1}));
-		Vec3 up = Cross(side, forward);
-		float half_height = std::tan(Camera3D::FOV_Y / 2);
-		float half_width = half_height * view->current_x / view->current_y;
-		Vec3 direction = Normalise(forward
-				+ side * (((x + 0.5f) / view->current_x * 2 - 1) * half_width)
-				+ up * ((1 - (y + 0.5f) / view->current_y * 2) * half_height));
-		if (direction.z > -0.001f) return true; // Looking at the sky.
-
-		/* Walk along the line where it is low enough to meet the ground, until it goes below the ground. */
-		static constexpr float STEP = 2.0f;
-		float max_height = _settings_game.construction.map_height_limit * HEIGHT_LEVEL_SIZE;
-		float start = std::max(0.0f, (eye.z - max_height) / -direction.z);
-		float end = eye.z / -direction.z;
-		auto above_ground = [&](float distance) {
-			Vec3 p = eye + direction * distance;
-			return p.z - GetGroundHeight(p.x, p.y);
-		};
-		if (above_ground(start) < 0) return true;
-
-		float low = start;
-		float high = -1;
-		for (float distance = start + STEP; distance < end + STEP; distance += STEP) {
-			if (above_ground(distance) < 0) {
-				high = distance;
-				break;
-			}
-			low = distance;
-		}
-
-		/* Narrow it down to where the line meets the ground. */
-		if (high >= 0) {
-			for (int i = 0; i < 10; i++) {
-				float middle = (low + high) / 2;
-				(above_ground(middle) < 0 ? high : low) = middle;
-			}
-		}
+		Vec3 eye, direction;
+		if (!this->GetCursorLine(eye, direction)) return true;
+		float start, end;
+		float high = this->FindGroundOnLine(eye, direction, start, end);
+		if (start > end) return true;
 
 		/* A building in front of that spot is picked rather than the ground it hides. */
 		float building = this->FindBuildingOnLine(eye, direction, start, high >= 0 ? high : end);
@@ -313,6 +278,75 @@ public:
 		if (hit.x < 0 || hit.y < 0 || hit.x >= Map::MaxX() * TILE_SIZE || hit.y >= Map::MaxY() * TILE_SIZE) return true;
 		pt = {static_cast<int>(hit.x), static_cast<int>(hit.y)};
 		return true;
+	}
+
+	/**
+	 * Get the line of sight through the cursor.
+	 * @param[out] eye Where the line starts.
+	 * @param[out] direction Its direction, of length one.
+	 * @return Whether the cursor is over the 3D image and the line goes down towards the ground.
+	 */
+	bool GetCursorLine(Vec3 &eye, Vec3 &direction) const
+	{
+		if (this->renderer == nullptr) return false;
+		const NWidgetBase *view = this->GetWidget<NWidgetBase>(WID_V3D_VIEW);
+		int x = _cursor.pos.x - this->left - view->pos_x;
+		int y = _cursor.pos.y - this->top - view->pos_y;
+		if (x < 0 || y < 0 || x >= static_cast<int>(view->current_x) || y >= static_cast<int>(view->current_y)) return false;
+
+		eye = this->camera.GetEye();
+		Vec3 forward = Normalise(this->camera.target - eye);
+		Vec3 side = Normalise(Cross(forward, Vec3{0, 0, 1}));
+		Vec3 up = Cross(side, forward);
+		float half_height = std::tan(Camera3D::FOV_Y / 2);
+		float half_width = half_height * view->current_x / view->current_y;
+		direction = Normalise(forward
+				+ side * (((x + 0.5f) / view->current_x * 2 - 1) * half_width)
+				+ up * ((1 - (y + 0.5f) / view->current_y * 2) * half_height));
+		return direction.z < -0.001f; // Otherwise it looks at the sky.
+	}
+
+	/**
+	 * Find where a line of sight meets the ground.
+	 * @param eye Where the line starts.
+	 * @param direction Its direction, of length one, going down.
+	 * @param[out] start Distance along the line where it gets low enough to meet the ground; more than \p end when the line starts below the ground.
+	 * @param[out] end Distance along the line where it reaches height 0.
+	 * @return Distance along the line to the ground, or -1 when it does not meet the ground on the map.
+	 */
+	static float FindGroundOnLine(const Vec3 &eye, const Vec3 &direction, float &start, float &end)
+	{
+		/* Walk along the line where it is low enough to meet the ground, until it goes below the ground. */
+		static constexpr float STEP = 2.0f;
+		float max_height = _settings_game.construction.map_height_limit * HEIGHT_LEVEL_SIZE;
+		start = std::max(0.0f, (eye.z - max_height) / -direction.z);
+		end = eye.z / -direction.z;
+		auto above_ground = [&](float distance) {
+			Vec3 p = eye + direction * distance;
+			return p.z - GetGroundHeight(p.x, p.y);
+		};
+		if (above_ground(start) < 0) {
+			end = start - 1;
+			return -1;
+		}
+
+		float low = start;
+		float high = -1;
+		for (float distance = start + STEP; distance < end + STEP; distance += STEP) {
+			if (above_ground(distance) < 0) {
+				high = distance;
+				break;
+			}
+			low = distance;
+		}
+		if (high < 0) return -1;
+
+		/* Narrow it down to where the line meets the ground. */
+		for (int i = 0; i < 10; i++) {
+			float middle = (low + high) / 2;
+			(above_ground(middle) < 0 ? high : low) = middle;
+		}
+		return high;
 	}
 
 	/**
@@ -432,6 +466,8 @@ public:
 			static constexpr float RADIANS_PER_PIXEL = 0.006f;
 			this->camera.yaw -= delta.x * RADIANS_PER_PIXEL;
 			this->camera.pitch += delta.y * RADIANS_PER_PIXEL;
+			this->goal_yaw = this->camera.yaw;
+			this->goal_pitch = Clamp(this->camera.pitch, Camera3D::MIN_PITCH, Camera3D::MAX_PITCH);
 		} else {
 			/* Move over the map: one pixel is this many world units at the target. */
 			const NWidgetBase *view = this->GetWidget<NWidgetBase>(WID_V3D_VIEW);
@@ -439,6 +475,7 @@ public:
 			/* The ground is seen at an angle, so vertical movement covers more of it. */
 			float forward_scale = scale / std::max(0.2f, std::sin(this->camera.pitch));
 			this->camera.target = this->camera.target + this->camera.GetRight() * (delta.x * scale) - this->camera.GetForward() * (delta.y * forward_scale);
+			this->zoom_anchored = false;
 		}
 		this->ClampCamera();
 	}
@@ -446,11 +483,79 @@ public:
 	void OnMouseWheel(int wheel, WidgetID widget) override
 	{
 		if (widget != WID_V3D_VIEW) return;
-		this->camera.distance *= std::pow(1.15f, static_cast<float>(wheel));
-		this->ClampCamera();
+		this->goal_distance = Clamp(this->goal_distance * std::pow(1.25f, static_cast<float>(wheel)), Camera3D::MIN_DISTANCE, Camera3D::MAX_DISTANCE);
+		/* Zoom towards the spot below the cursor, like maps do. */
+		Vec3 eye, direction;
+		float start, end;
+		float ground = this->GetCursorLine(eye, direction) ? FindGroundOnLine(eye, direction, start, end) : -1;
+		this->zoom_anchored = ground >= 0;
+		if (this->zoom_anchored) this->zoom_anchor = eye + direction * ground;
 	}
 
-	void OnRealtimeTick([[maybe_unused]] uint delta_ms) override
+	EventState OnKeyPress([[maybe_unused]] char32_t key, uint16_t keycode) override
+	{
+		/* The directions the 2D view can be seen from: north at the top, and turned by quarters. */
+		static constexpr float QUARTER = 1.5707963f;
+		static constexpr float CLASSIC = 0.7853982f;
+		float nearest = CLASSIC + std::round((this->goal_yaw - CLASSIC) / QUARTER) * QUARTER;
+		switch (keycode) {
+			case WKC_PAGEUP: // Turn a quarter to the left.
+				this->goal_yaw = nearest + QUARTER;
+				return EventState::Handled;
+			case WKC_PAGEDOWN: // Turn a quarter to the right.
+				this->goal_yaw = nearest - QUARTER;
+				return EventState::Handled;
+			case WKC_HOME: // Back to the view of the 2D game.
+				this->goal_yaw = CLASSIC + std::round((this->goal_yaw - CLASSIC) / (4 * QUARTER)) * (4 * QUARTER);
+				this->goal_pitch = Camera3D{}.pitch;
+				return EventState::Handled;
+			default:
+				return EventState::NotHandled;
+		}
+	}
+
+	/**
+	 * Let the camera glide towards where it should be.
+	 * @param delta_ms Milliseconds since the last time.
+	 */
+	void MoveCamera(uint delta_ms)
+	{
+		float alpha = 1.0f - std::exp(-static_cast<float>(delta_ms) / 90.0f);
+		bool moved = false;
+
+		float ratio = this->goal_distance / this->camera.distance;
+		if (std::abs(ratio - 1) > 0.001f) {
+			float distance = std::abs(ratio - 1) < 0.002f ? this->goal_distance : this->camera.distance * std::pow(ratio, alpha);
+			if (this->zoom_anchored) {
+				/* Keep the spot below the cursor where it is on the screen. */
+				float f = distance / this->camera.distance;
+				this->camera.target.x = this->zoom_anchor.x + (this->camera.target.x - this->zoom_anchor.x) * f;
+				this->camera.target.y = this->zoom_anchor.y + (this->camera.target.y - this->zoom_anchor.y) * f;
+			}
+			this->camera.distance = distance;
+			moved = true;
+		} else {
+			this->zoom_anchored = false;
+		}
+
+		for (auto [value, goal] : {std::pair<float *, float>{&this->camera.yaw, this->goal_yaw}, {&this->camera.pitch, this->goal_pitch}}) {
+			float diff = goal - *value;
+			if (std::abs(diff) < 0.0005f) continue;
+			*value = std::abs(diff) < 0.001f ? goal : *value + diff * alpha;
+			moved = true;
+		}
+
+		/* Follow the height of the ground below the target smoothly, rather than jumping from tile to tile. */
+		float ground = std::max(0.0f, GetGroundHeight(this->camera.target.x, this->camera.target.y));
+		if (std::abs(ground - this->camera.target.z) > 0.01f) {
+			this->camera.target.z += (ground - this->camera.target.z) * alpha;
+			moved = true;
+		}
+
+		if (moved) this->ClampCamera();
+	}
+
+	void OnRealtimeTick(uint delta_ms) override
 	{
 		if (this->IsShaded()) return;
 
@@ -475,6 +580,7 @@ public:
 		}
 		if (this->renderer == nullptr) return;
 
+		this->MoveCamera(delta_ms);
 		if (this->renderer->Poll()) this->SetWidgetDirty(WID_V3D_VIEW);
 		if (this->renderer->IsBusy()) return;
 
@@ -666,6 +772,7 @@ private:
 		}
 		this->camera.target = {static_cast<float>(centre.x), static_cast<float>(centre.y), 0};
 		this->ClampCamera();
+		this->camera.target.z = std::max(0.0f, GetGroundHeight(this->camera.target.x, this->camera.target.y));
 	}
 
 	/** Keep the camera within sensible limits and on the ground. */
@@ -676,8 +783,6 @@ private:
 		this->camera.target.x = Clamp(this->camera.target.x, 0.0f, static_cast<float>(Map::MaxX() * TILE_SIZE));
 		this->camera.target.y = Clamp(this->camera.target.y, 0.0f, static_cast<float>(Map::MaxY() * TILE_SIZE));
 
-		TileIndex tile = TileXY(std::min(static_cast<uint>(this->camera.target.x) / TILE_SIZE, Map::MaxX()), std::min(static_cast<uint>(this->camera.target.y) / TILE_SIZE, Map::MaxY()));
-		this->camera.target.z = TileHeight(tile) * HEIGHT_LEVEL_SIZE;
 		this->view_changed = true;
 	}
 

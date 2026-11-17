@@ -779,7 +779,7 @@ STR_HIGHSCORE_PRESIDENT_OF_COMPANY_ACHIEVES_STATUS              :{BIG_FONT}{WHIT
 
 # 3D view window
 STR_VIEW3D_CAPTION                                              :{WHITE}3D view (experimental)
-STR_VIEW3D_STATUS                                               :{BLACK}{RAW_STRING} - right-drag to move, Ctrl+right-drag to rotate, wheel to zoom
+STR_VIEW3D_STATUS                                               :{BLACK}{RAW_STRING} - right-drag to move, Ctrl+right-drag to rotate, wheel to zoom, Page Up/Down to turn
 STR_VIEW3D_ERROR_NO_RENDERER                                    :{WHITE}The 3D view could not start. {RAW_STRING}
 STR_VIEW3D_ERROR_BLITTER                                        :{WHITE}The 3D view needs a 32bpp blitter
 
