@@ -66,6 +66,7 @@ public:
 		uint rotor = UINT_MAX; ///< Index into GetModels() of the main rotor of a helicopter, or \c UINT_MAX.
 		std::array<float, 3> rotor_at{}; ///< Where the hub of the rotor is, in the frame of the model.
 		std::vector<ModelPart> parts; ///< Parts that move all the time.
+		uint snow = UINT_MAX; ///< Index into GetModels() of the version in sub-arctic climate, where the 2D game draws it snowy, or \c UINT_MAX.
 	};
 	using Entry = VehicleModel;
 

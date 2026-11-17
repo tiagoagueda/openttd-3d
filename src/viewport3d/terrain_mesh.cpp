@@ -498,6 +498,12 @@ static bool AddTileModel(TileIndex tile, const ModelPack &pack, std::vector<Mode
 			IndustryGfx gfx = GetIndustryGfx(tile);
 			const ModelPack::Entry *entry = pack.Find(ModelKind::IndustryTile, GetIndustryTileSpec(gfx)->grf_prop, gfx);
 			if (entry == nullptr) return false;
+			if (entry->snow != UINT_MAX && _settings_game.game_creation.landscape == LandscapeType::Arctic) {
+				ModelPack::Entry snowy = *entry;
+				snowy.model = entry->snow;
+				PlaceModel(snowy, tile, 1, 1, DiagDirection::SW, ModelPack::GetTint(Industry::GetByTile(tile)->random_colour), models);
+				return true;
+			}
 			PlaceModel(*entry, tile, 1, 1, DiagDirection::SW, ModelPack::GetTint(Industry::GetByTile(tile)->random_colour), models);
 			return true;
 		}

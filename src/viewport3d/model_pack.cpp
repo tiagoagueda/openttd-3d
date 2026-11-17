@@ -113,6 +113,9 @@ void ModelPack::ReadEntries(const nlohmann::json &list, std::initializer_list<st
 			if (entry.contains("rotor_at")) rotor_at = entry.at("rotor_at").get<std::array<float, 3>>();
 		}
 
+		/* The version for the sub-arctic climate, such as a forest with snow on its trees. */
+		uint snow = entry.contains("snow") ? this->LoadModel(entry.at("snow").get<std::string>(), loaded) : UINT_MAX;
+
 		/* Parts that move. */
 		std::vector<ModelPart> parts;
 		if (entry.contains("parts")) {
@@ -140,7 +143,7 @@ void ModelPack::ReadEntries(const nlohmann::json &list, std::initializer_list<st
 
 		float scale = entry.value("scale", 1.0f);
 		for (const auto &id : entry.at("ids")) {
-			this->entries[{kind->second, grfid, id.get<uint16_t>()}] = {model, scale, rotor, rotor_at, parts};
+			this->entries[{kind->second, grfid, id.get<uint16_t>()}] = {model, scale, rotor, rotor_at, parts, snow};
 		}
 	}
 }
