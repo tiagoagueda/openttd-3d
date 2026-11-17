@@ -10,6 +10,8 @@
 #ifndef VIEWPORT3D_TERRAIN_MESH_H
 #define VIEWPORT3D_TERRAIN_MESH_H
 
+#include <map>
+
 #include "model3d.h"
 #include "../tile_type.h"
 
@@ -77,6 +79,7 @@ struct TerrainChunkMesh {
 	uint max_height = 0; ///< Highest height level in the chunk.
 	std::vector<ModelInstance> models; ///< 3D models standing on the terrain, in place of sprites.
 	std::vector<AnimatedPart> parts; ///< Parts of those models that move.
+	std::map<TileIndex, std::vector<ModelInstance>> live; ///< Models that change often, like signals, by tile; drawn anew for every image, so a change does not rebuild the chunk.
 	uint64_t hash = 0; ///< Hash over the vertices, to detect whether a rebuild changed anything.
 };
 
@@ -86,6 +89,9 @@ class SpriteAtlas;
 struct AtlasSprite;
 
 bool GetTileModels(TileIndex tile, const ModelPack &pack, std::vector<ModelInstance> &models, std::vector<AnimatedPart> &parts);
+bool HasLiveTileModels(TileIndex tile);
+bool GetTileChangeKey(TileIndex tile, uint64_t &key);
+void GetLiveTileModels(TileIndex tile, const ModelPack &pack, std::vector<ModelInstance> &models);
 void AddUprightSprite(const AtlasSprite &sprite, float x, float y, float z, float nearer, std::vector<SpriteVertex> &vertices);
 
 void BuildTerrainChunkMesh(uint chunk_x, uint chunk_y, GroundTextures &textures, SpriteAtlas &atlas, const ModelPack *pack, TerrainChunkMesh &mesh);

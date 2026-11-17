@@ -51,11 +51,38 @@ class View3DWindow : public Window {
 	struct ChunkState {
 		bool built = false; ///< Whether the chunk is on the GPU.
 		bool dirty = false; ///< Whether a tile in the chunk changed since it was built.
+		bool slow = false; ///< Whether grass, fields or trees in the chunk grew since it was built.
+		std::chrono::steady_clock::time_point slow_since; ///< When the first of those slow changes happened.
 		uint64_t hash = 0; ///< Hash of the geometry on the GPU.
 		uint min_height = 0; ///< Lowest height level in the chunk; only valid when built.
 		uint max_height = 0; ///< Highest height level in the chunk; only valid when built.
 		std::vector<AnimatedPart> parts; ///< Parts of models in the chunk that move.
+		std::map<TileIndex, std::vector<ModelInstance>> live; ///< Models in the chunk that change often, by tile.
 	};
+	std::map<TileIndex, uint64_t> tile_keys; ///< Rail tiles and level crossings in built chunks, by GetTileChangeKey().
+	std::vector<uint16_t> built_tiles; ///< Type and height of every tile when its chunk was last built, by tile index.
+	static constexpr std::chrono::seconds SLOW_CHANGE_DELAY{3}; ///< How long slow changes wait before their chunk is rebuilt.
+
+	/**
+	 * Pack what tells a slow change of a tile from a fast one.
+	 * @param tile The tile.
+	 * @return Its type and height.
+	 */
+	static uint16_t GetBuiltTileState(TileIndex tile)
+	{
+		return static_cast<uint16_t>(to_underlying(GetTileType(tile)) << 8 | TileHeight(tile));
+	}
+
+	/**
+	 * Whether a tile with this state only changes slowly and on its own: grass, fields, rough land, snow and trees.
+	 * @param state The state from GetBuiltTileState().
+	 * @return True for bare land and trees.
+	 */
+	static bool IsSlowTileState(uint16_t state)
+	{
+		TileType type = static_cast<TileType>(state >> 8);
+		return type == TileType::Clear || type == TileType::Trees;
+	}
 
 	/** What a tile with a 3D model was last drawn with. */
 	struct TileModels {
@@ -117,6 +144,41 @@ public:
 	 */
 	void MarkTileDirty(TileIndex tile)
 	{
+		/* Trains change rail tiles and level crossings all the time, mostly in ways that do not change the terrain
+		 * chunk: then only the signals and barriers of the tile are looked up again. */
+		uint64_t key;
+		if (this->model_pack != nullptr && !this->model_pack->IsEmpty() && IsValidTile(tile) && GetTileChangeKey(tile, key)) {
+			auto [it, inserted] = this->tile_keys.try_emplace(tile, key);
+			uint cx = TileX(tile) / TERRAIN_CHUNK_SIZE, cy = TileY(tile) / TERRAIN_CHUNK_SIZE;
+			ChunkState *chunk = (cx < this->chunks_x && cy < this->chunks_y) ? &this->chunks[cy * this->chunks_x + cx] : nullptr;
+			if (!inserted && it->second == key && chunk != nullptr && chunk->built && !chunk->dirty) {
+				if (HasLiveTileModels(tile)) {
+					GetLiveTileModels(tile, *this->model_pack, chunk->live[tile]);
+				}
+				return;
+			}
+			it->second = key;
+		}
+
+		/* Grass, fields and trees grow all over the map all the time. They do not have to show at once: their chunk is
+		 * rebuilt a little later, together with the other growth in it. */
+		if (IsValidTile(tile) && tile.base() < this->built_tiles.size()) {
+			uint16_t before = this->built_tiles[tile.base()];
+			uint16_t now = GetBuiltTileState(tile);
+			/* Trees also spread onto bare land and die back to it, on the same height. */
+			if ((before & 0xFF) == (now & 0xFF) && IsSlowTileState(before) && IsSlowTileState(now)) {
+				uint cx = TileX(tile) / TERRAIN_CHUNK_SIZE, cy = TileY(tile) / TERRAIN_CHUNK_SIZE;
+				if (cx < this->chunks_x && cy < this->chunks_y) {
+					ChunkState &chunk = this->chunks[cy * this->chunks_x + cx];
+					if (chunk.built && !chunk.slow) {
+						chunk.slow = true;
+						chunk.slow_since = std::chrono::steady_clock::now();
+					}
+					return;
+				}
+			}
+		}
+
 		/* Animated buildings tell about every frame of their animation. When they are drawn with a model that stays
 		 * the same, nothing needs to be rebuilt; the moving parts of models move by themselves. */
 		if (this->model_pack != nullptr && !this->model_pack->IsEmpty() && IsValidTile(tile)) {
@@ -144,6 +206,26 @@ public:
 			}
 		}
 		this->terrain_changed = true;
+	}
+
+	/**
+	 * Remember the state of the rail tiles and level crossings of a chunk that was just built, to tell later which
+	 * changes to them need the chunk to be built again.
+	 * @param cx X coordinate of the chunk, in chunks.
+	 * @param cy Y coordinate of the chunk, in chunks.
+	 */
+	void RememberTileKeys(uint cx, uint cy)
+	{
+		if (this->built_tiles.size() != Map::Size()) this->built_tiles.assign(Map::Size(), 0);
+		uint x_end = std::min((cx + 1) * TERRAIN_CHUNK_SIZE, Map::SizeX());
+		uint y_end = std::min((cy + 1) * TERRAIN_CHUNK_SIZE, Map::SizeY());
+		for (uint y = cy * TERRAIN_CHUNK_SIZE; y < y_end; y++) {
+			for (uint x = cx * TERRAIN_CHUNK_SIZE; x < x_end; x++) {
+				uint64_t key;
+				if (GetTileChangeKey(TileXY(x, y), key)) this->tile_keys[TileXY(x, y)] = key;
+				this->built_tiles[TileXY(x, y).base()] = GetBuiltTileState(TileXY(x, y));
+			}
+		}
 	}
 
 	/**
@@ -345,6 +427,7 @@ public:
 		float seconds = std::chrono::duration<float>(now - this->opened).count();
 		for (Renderer3D::ChunkID id : this->visible_chunks) {
 			for (const AnimatedPart &part : this->chunks[id].parts) this->vehicle_models.push_back(part.Place(seconds));
+			for (const auto &[tile, models] : this->chunks[id].live) this->vehicle_models.insert(this->vehicle_models.end(), models.begin(), models.end());
 		}
 		uint64_t hash = 0xcbf29ce484222325ULL;
 		const uint8_t *data = reinterpret_cast<const uint8_t *>(this->vehicle_sprites.data());
@@ -546,6 +629,10 @@ private:
 		this->visible_chunks.clear();
 		bool changed = false;
 		bool out_of_time = false;
+		/* Only one chunk a frame is rebuilt for slow changes, so they never stall a frame. */
+		bool slow_built = false;
+		auto now = start;
+		bool slow_waiting = false;
 
 		for (uint cy = 0; cy < this->chunks_y; cy++) {
 			for (uint cx = 0; cx < this->chunks_x; cx++) {
@@ -560,8 +647,10 @@ private:
 				}
 				if (!frustum.IntersectsBox(min, max)) continue;
 
-				if (!chunk.built || chunk.dirty) {
-					if (out_of_time) {
+				bool slow_due = chunk.slow && now - chunk.slow_since > SLOW_CHANGE_DELAY;
+				if (chunk.slow && !slow_due) slow_waiting = true;
+				if (!chunk.built || chunk.dirty || slow_due) {
+					if (out_of_time || (slow_due && !chunk.dirty && slow_built)) {
 						/* Draw what we have for now; the rest follows in the next frames. */
 						if (chunk.built) this->visible_chunks.push_back(id);
 						continue;
@@ -573,11 +662,15 @@ private:
 						changed = true;
 					}
 					chunk.built = true;
+					if (slow_due && !chunk.dirty) slow_built = true;
 					chunk.dirty = false;
+					chunk.slow = false;
 					chunk.hash = this->scratch_mesh.hash;
 					chunk.min_height = this->scratch_mesh.min_height;
 					chunk.max_height = this->scratch_mesh.max_height;
 					chunk.parts = this->scratch_mesh.parts;
+					chunk.live = this->scratch_mesh.live;
+					this->RememberTileKeys(cx, cy);
 
 					if (std::chrono::steady_clock::now() - start > BUILD_BUDGET) out_of_time = true;
 				}
@@ -586,7 +679,7 @@ private:
 		}
 
 		/* Chunks that are dirty but out of view stay dirty, and are rebuilt when they come into view. */
-		this->terrain_changed = out_of_time;
+		this->terrain_changed = out_of_time || slow_waiting || slow_built;
 		return changed;
 	}
 

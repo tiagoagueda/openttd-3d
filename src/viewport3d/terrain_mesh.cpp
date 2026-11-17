@@ -1007,17 +1007,32 @@ static bool AddTunnelModel(TileIndex tile, const ModelPack &pack, std::vector<Mo
  * @param models The models to add to.
  * @return Whether the package has a model for level crossings.
  */
-static bool AddCrossingModel(TileIndex tile, const ModelPack &pack, std::vector<ModelInstance> &models)
+static bool AddCrossingModel(TileIndex tile, const ModelPack &pack, std::vector<ModelInstance> &models);
+
+/**
+ * Add the barriers of a level crossing, open or closed.
+ * @param tile The tile, a level crossing.
+ * @param pack The package of 3D models.
+ * @param models The models to add to.
+ */
+static void AddCrossingBarriers(TileIndex tile, const ModelPack &pack, std::vector<ModelInstance> &models)
 {
 	const ModelPack::Entry *entry = pack.Find(ModelKind::Crossing, 0, IsCrossingBarred(tile) ? 1 : 0);
+	if (entry == nullptr || GetTrackPiece(GetRailType(tile), false, pack) == nullptr) return;
+	bool along_x = GetCrossingRailAxis(tile) == Axis::X;
+	AddTurnedModel(*entry, tile, along_x ? 1.0f : 0.0f, along_x ? 0.0f : 1.0f, GetTileMaxPixelZ(tile) * WORLD_Z_SCALE, models);
+}
+
+static bool AddCrossingModel(TileIndex tile, const ModelPack &pack, std::vector<ModelInstance> &models)
+{
+	const ModelPack::Entry *entry = pack.Find(ModelKind::Crossing, 0, 0);
 	const ModelPack::Entry *track = GetTrackPiece(GetRailType(tile), false, pack);
 	if (entry == nullptr || track == nullptr) return false;
+	/* The barriers come and go with every train; they are live models (GetLiveTileModels()). */
 	bool along_x = GetCrossingRailAxis(tile) == Axis::X;
 	float ux = along_x ? 1.0f : 0.0f, uy = along_x ? 0.0f : 1.0f;
 	uint x = TileX(tile), y = TileY(tile);
 	int px = x * TILE_SIZE, py = y * TILE_SIZE;
-	float z = GetTileMaxPixelZ(tile) * WORLD_Z_SCALE;
-	AddTurnedModel(*entry, tile, ux, uy, z, models);
 	/* The track follows the ground from edge to edge. */
 	float za = GetSlopePixelZ(px + (along_x ? 0 : 8), py + (along_x ? 8 : 0), true) * WORLD_Z_SCALE;
 	float zb = GetSlopePixelZ(px + (along_x ? 15 : 8), py + (along_x ? 8 : 15), true) * WORLD_Z_SCALE;
@@ -1187,10 +1202,10 @@ bool GetTileModels(TileIndex tile, const ModelPack &pack, std::vector<ModelInsta
  * Add 3D signals on a rail tile, where the 2D game draws its signal sprites.
  * @param tile The tile, a plain rail tile with signals.
  * @param pack The package of 3D models.
- * @param mesh The mesh to add to.
+ * @param models The models to add to.
  * @param[out] places Where the 2D game puts the bounding boxes of the signals that got a model, in world coordinates.
  */
-static void AddSignalModels(Tile tile, const ModelPack &pack, TerrainChunkMesh &mesh, std::vector<std::pair<int, int>> &places)
+static void AddSignalModels(Tile tile, const ModelPack &pack, std::vector<ModelInstance> &models, std::vector<std::pair<int, int>> &places)
 {
 	/* Where the 2D game puts signals, by position as in DrawSingleSignal(); the first half for the left side. */
 	static constexpr uint8_t POSITIONS[2][12][2] = {
@@ -1252,7 +1267,7 @@ static void AddSignalModels(Tile tile, const ModelPack &pack, TerrainChunkMesh &
 			float s = entry->scale;
 			float m = right ? s : -s;
 			auto [dx, dy] = FACING[signal.image];
-			ModelInstance &instance = mesh.models.emplace_back();
+			ModelInstance &instance = models.emplace_back();
 			instance.model = entry->model;
 			instance.transform.m = {
 				dx * s, dy * s, 0, 0,
@@ -1262,6 +1277,70 @@ static void AddSignalModels(Tile tile, const ModelPack &pack, TerrainChunkMesh &
 			};
 			instance.tint = {1, 1, 1, 1};
 		}
+	}
+}
+
+/**
+ * Get a key over what of a rail tile or level crossing the 3D view draws in its terrain chunk. Trains change these
+ * tiles all the time in ways that do not change the chunk: they reserve their path, which is not shown unless the
+ * game is set to, and change signals and crossing barriers, which are live models (GetLiveTileModels()).
+ * @param tile The tile.
+ * @param[out] key The key; when it stays the same, the terrain chunk need not be rebuilt for the tile.
+ * @return Whether the tile is of a kind that has such a key.
+ */
+bool GetTileChangeKey(TileIndex tile, uint64_t &key)
+{
+	Tile t(tile);
+	bool rail = IsTileType(t, TileType::Railway);
+	bool crossing = IsTileType(t, TileType::Road) && IsLevelCrossing(t);
+	if (!rail && !crossing) return false;
+	bool reservation = _settings_client.gui.show_track_reservation;
+	uint16_t m2 = t.m2();
+	uint8_t m4 = t.m4(), m5 = t.m5();
+	if (rail && IsPlainRail(t)) {
+		m4 &= 0x0F; // signal states
+		if (!reservation) m2 &= ~0x0F00; // reserved tracks
+	} else if (rail) {
+		if (!reservation) m5 &= ~(1 << 4); // depot reservation
+	} else {
+		m5 &= ~(1 << 5); // barriers down
+		if (!reservation) m5 &= ~(1 << 4); // crossing reservation
+	}
+	key = 0xcbf29ce484222325ULL;
+	for (uint v : {uint{t.type()}, uint{t.height()}, uint{t.m1()}, uint{m2}, uint{t.m3()}, uint{m4}, uint{m5}, uint{t.m6()}, uint{t.m7()}, uint{t.m8()}}) {
+		key = (key ^ v) * 0x100000001b3ULL;
+	}
+	return true;
+}
+
+/**
+ * Whether a tile has models that change often, such as signals and the barriers of level crossings.
+ * @param tile The tile.
+ * @return True for rail tiles with signals and level crossings.
+ */
+bool HasLiveTileModels(TileIndex tile)
+{
+	Tile t(tile);
+	if (IsTileType(t, TileType::Railway)) return IsPlainRail(t) && HasSignals(t);
+	return IsTileType(t, TileType::Road) && IsLevelCrossing(t);
+}
+
+/**
+ * Get the models of a tile that change often, such as signals and the barriers of level crossings.
+ * @param tile The tile.
+ * @param pack The package of 3D models.
+ * @param[out] models The models; previous contents are discarded.
+ */
+void GetLiveTileModels(TileIndex tile, const ModelPack &pack, std::vector<ModelInstance> &models)
+{
+	models.clear();
+	if (pack.IsEmpty() || !HasLiveTileModels(tile)) return;
+	if (IsTileType(tile, TileType::Railway)) {
+		static std::vector<std::pair<int, int>> places;
+		places.clear();
+		AddSignalModels(Tile(tile), pack, models, places);
+	} else {
+		AddCrossingBarriers(tile, pack, models);
 	}
 }
 
@@ -1296,8 +1375,9 @@ static TileGround AddTileSprites(uint x, uint y, const std::array<uint8_t, 4> &h
 	static std::vector<std::pair<int, int>> signal_places;
 	signal_places.clear();
 	if (!ground_only && !replaced && pack != nullptr && !pack->IsEmpty() && IsTileType(tile, TileType::Railway) && IsPlainRail(tile) && HasSignals(tile)) {
-		AddSignalModels(Tile(tile), *pack, mesh, signal_places);
+		AddSignalModels(Tile(tile), *pack, mesh.live[tile], signal_places);
 	}
+	if (replaced && IsTileType(tile, TileType::Road) && IsLevelCrossing(tile)) AddCrossingBarriers(tile, *pack, mesh.live[tile]);
 
 	/* A bridge above the tile with a 3D model replaces what the 2D game draws for the bridge. */
 	uint bridge_first = sprites.bridge_first;
@@ -1406,6 +1486,7 @@ void BuildTerrainChunkMesh(uint chunk_x, uint chunk_y, GroundTextures &textures,
 	mesh.sprites.clear();
 	mesh.models.clear();
 	mesh.parts.clear();
+	mesh.live.clear();
 	mesh.vertices.reserve(TERRAIN_CHUNK_SIZE * TERRAIN_CHUNK_SIZE * 4);
 	mesh.min_height = UINT_MAX;
 	mesh.max_height = 0;
