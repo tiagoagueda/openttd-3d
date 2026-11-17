@@ -57,7 +57,26 @@ struct TileSprites {
 
 void CollectTileSprites(TileIndex tile, TileSprites &sprites);
 bool HasTileSelection(TileIndex tile);
-void DrawView3DSigns(bool small, const View3DProjectProc &project);
-bool HandleView3DClicked(const Vehicle *v, Point click, bool small, const View3DProjectProc &project);
+/** A town name, station name or sign, which the 3D view shows on a board that stands on the map. */
+struct View3DLabel {
+	/** What the label names. */
+	enum class Kind : uint8_t {
+		Town, ///< A town.
+		Sign, ///< A sign placed by a player or script.
+		Station, ///< A station or waypoint.
+	};
+	int x = 0; ///< Where it stands along the x axis, in world units.
+	int y = 0; ///< Where it stands along the y axis, in world units.
+	int z = 0; ///< Height of its bottom edge in the 2D views, in the z units of the game.
+	uint width = 0; ///< Width of its image in pixels.
+	uint height = 0; ///< Height of its image in pixels.
+	std::string key; ///< Tells labels that look different apart: the text, colour and flags.
+	Kind kind = Kind::Town; ///< What it names.
+	uint32_t id = 0; ///< Index of the town, sign or station.
+};
+
+void GetView3DLabels(std::vector<View3DLabel> &labels);
+void DrawView3DLabel(size_t index);
+bool HandleView3DClicked(const Vehicle *v, const View3DLabel *label);
 
 #endif /* VIEWPORT3D_TILE_SPRITES_H */

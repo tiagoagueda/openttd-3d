@@ -18,6 +18,39 @@
 
 #include "../safeguards.h"
 
+/**
+ * Copy an image into the atlas, giving transparent pixels the colour of a neighbour,
+ * so filtering the texture does not darken the outline of what is drawn.
+ * @param image The image, as drawn by the blitter.
+ * @param width Its width.
+ * @param height Its height.
+ * @param dest Where its top left corner goes in the atlas.
+ */
+static void CopyCell(const std::vector<uint32_t> &image, uint width, uint height, uint32_t *dest)
+{
+	for (uint y = 0; y < height; y++) {
+		for (uint x = 0; x < width; x++) {
+			uint32_t pixel = image[static_cast<size_t>(y) * width + x];
+			if ((pixel >> 24) != 0) {
+				pixel |= 0xFF000000;
+			} else {
+				pixel = 0;
+				static constexpr int NEIGHBOURS[][2] = {{-1, 0}, {1, 0}, {0, -1}, {0, 1}, {-1, -1}, {1, -1}, {-1, 1}, {1, 1}};
+				for (const auto &offset : NEIGHBOURS) {
+					uint nx = x + offset[0];
+					uint ny = y + offset[1];
+					if (nx >= width || ny >= height) continue;
+					uint32_t neighbour = image[static_cast<size_t>(ny) * width + nx];
+					if ((neighbour >> 24) == 0) continue;
+					pixel = neighbour & 0x00FFFFFF;
+					break;
+				}
+			}
+			dest[static_cast<size_t>(y) * SpriteAtlas::WIDTH + x] = pixel;
+		}
+	}
+}
+
 SpriteAtlas::SpriteAtlas() : pixels(static_cast<size_t>(WIDTH) * HEIGHT, 0)
 {
 	/* Twice the normal size is a fair balance between sharpness and the room the sprites take. */
@@ -75,7 +108,7 @@ const AtlasSprite &SpriteAtlas::Get(std::span<const SpritePart> parts)
 		this->shelf_y += this->shelf_height;
 		this->shelf_height = 0;
 	}
-	if (this->shelf_y + cell_height > HEIGHT) return entry;
+	if (this->shelf_y + cell_height > HEIGHT - LABEL_ROWS) return entry;
 
 	/* Let the blitter draw the sprites into an empty image, so what stays transparent can be told from what is drawn. */
 	std::vector<uint32_t> image(static_cast<size_t>(cell_width) * cell_height, 0);
@@ -100,28 +133,7 @@ const AtlasSprite &SpriteAtlas::Get(std::span<const SpritePart> parts)
 		}
 	}
 
-	/* Give transparent pixels the colour of a neighbour, so filtering the texture does not darken the outline of the sprite. */
-	for (uint y = 0; y < cell_height; y++) {
-		for (uint x = 0; x < cell_width; x++) {
-			uint32_t pixel = image[static_cast<size_t>(y) * cell_width + x];
-			if ((pixel >> 24) != 0) {
-				pixel |= 0xFF000000;
-			} else {
-				pixel = 0;
-				static constexpr int NEIGHBOURS[][2] = {{-1, 0}, {1, 0}, {0, -1}, {0, 1}, {-1, -1}, {1, -1}, {-1, 1}, {1, 1}};
-				for (const auto &offset : NEIGHBOURS) {
-					uint nx = x + offset[0];
-					uint ny = y + offset[1];
-					if (nx >= cell_width || ny >= cell_height) continue;
-					uint32_t neighbour = image[static_cast<size_t>(ny) * cell_width + nx];
-					if ((neighbour >> 24) == 0) continue;
-					pixel = neighbour & 0x00FFFFFF;
-					break;
-				}
-			}
-			this->pixels[static_cast<size_t>(this->shelf_y + y) * WIDTH + this->shelf_x + x] = pixel;
-		}
-	}
+	CopyCell(image, cell_width, cell_height, this->pixels.data() + static_cast<size_t>(this->shelf_y) * WIDTH + this->shelf_x);
 
 	float scale = static_cast<float>(UnScaleByZoom(4, this->zoom));
 	entry.valid = true;
@@ -138,5 +150,88 @@ const AtlasSprite &SpriteAtlas::Get(std::span<const SpritePart> parts)
 	this->dirty_bottom = std::max(this->dirty_bottom, this->shelf_y + cell_height);
 	this->shelf_x += cell_width;
 	this->shelf_height = std::max(this->shelf_height, cell_height);
+	return entry;
+}
+
+/**
+ * Get ready for the labels of a new image. When a label did not fit before, the labels start afresh,
+ * so only those still in use take room.
+ */
+void SpriteAtlas::BeginLabels()
+{
+	if (!this->labels_full) return;
+	this->labels_full = false;
+	this->labels.clear();
+	this->label_x = 0;
+	this->label_y = HEIGHT - LABEL_ROWS;
+	this->label_height = 0;
+}
+
+/**
+ * Get a label from the atlas, drawing it when it is not there yet.
+ * Its reference point is the middle of its bottom edge.
+ * @param key Tells labels that look different apart.
+ * @param width Width of the label in pixels.
+ * @param height Height of the label in pixels.
+ * @param draw Draws the label at the top left corner of the current drawing area.
+ * @return Where the label is; not valid when it did not fit.
+ */
+const AtlasSprite &SpriteAtlas::GetLabel(const std::string &key, uint width, uint height, const std::function<void()> &draw)
+{
+	static const AtlasSprite missing{};
+	auto found = this->labels.find(key);
+	if (found != this->labels.end()) return found->second;
+	if (width == 0 || height == 0) return missing;
+
+	uint cell_width = width + 2;
+	uint cell_height = height + 2;
+	if (cell_width > WIDTH) return missing;
+	if (this->label_x + cell_width > WIDTH) {
+		this->label_x = 0;
+		this->label_y += this->label_height;
+		this->label_height = 0;
+	}
+	if (this->label_y + cell_height > HEIGHT) {
+		this->labels_full = true;
+		return missing;
+	}
+
+	std::vector<uint32_t> image(static_cast<size_t>(cell_width) * cell_height, 0);
+	{
+		DrawPixelInfo dpi;
+		dpi.dst_ptr = image.data() + cell_width + 1;
+		dpi.pitch = cell_width;
+		dpi.left = 0;
+		dpi.top = 0;
+		dpi.width = width;
+		dpi.height = height;
+		dpi.zoom = ZoomLevel::Min;
+		AutoRestoreBackup dpi_backup(_cur_dpi, &dpi);
+		AutoRestoreBackup anim_backup(_screen_disable_anim, true);
+		/* Blitters fill rectangles row by row with the pitch of the screen. */
+		AutoRestoreBackup pitch_backup(_screen.pitch, static_cast<int>(cell_width));
+		draw();
+	}
+	/* Labels are solid boards; colours from the palette can come without opacity. */
+	for (uint y = 1; y <= height; y++) {
+		for (uint x = 1; x <= width; x++) image[static_cast<size_t>(y) * cell_width + x] |= 0xFF000000;
+	}
+	CopyCell(image, cell_width, cell_height, this->pixels.data() + static_cast<size_t>(this->label_y) * WIDTH + this->label_x);
+
+	AtlasSprite &entry = this->labels[key];
+	entry.valid = true;
+	entry.u0 = static_cast<float>(this->label_x + 1) / WIDTH;
+	entry.v0 = static_cast<float>(this->label_y + 1) / HEIGHT;
+	entry.u1 = static_cast<float>(this->label_x + 1 + width) / WIDTH;
+	entry.v1 = static_cast<float>(this->label_y + 1 + height) / HEIGHT;
+	entry.left = -(width / 2.0f);
+	entry.top = -static_cast<float>(height);
+	entry.width = static_cast<float>(width);
+	entry.height = static_cast<float>(height);
+
+	this->dirty_top = std::min(this->dirty_top, this->label_y);
+	this->dirty_bottom = std::max(this->dirty_bottom, this->label_y + cell_height);
+	this->label_x += cell_width;
+	this->label_height = std::max(this->label_height, cell_height);
 	return entry;
 }

@@ -4061,100 +4061,117 @@ static void FindView3DSigns(const View3DProjectProc &project, View3DSigns &found
 	}
 }
 
+static std::vector<StringSpriteToDraw> _view3d_label_strings; ///< The texts of the labels of the last GetView3DLabels().
+
 /**
- * Draw the town names, station names and signs over the image of the 3D view, the way the 2D views show them.
- * The current drawing area must be the 3D image.
- * @param small Whether to use the small versions, like the 2D views do when zoomed out.
- * @param project Tells where the 3D view shows a point of the map.
+ * Get the town names, station names and signs that stand on the map in the 3D view, as labels.
+ * The 3D view draws each with DrawView3DLabel() and places it in the world itself.
+ * @param[out] labels The labels; previous contents are discarded.
  */
-void DrawView3DSigns(bool small, const View3DProjectProc &project)
+void GetView3DLabels(std::vector<View3DLabel> &labels)
 {
+	labels.clear();
+	_view3d_label_strings.clear();
 	if (!_vd.string_sprites_to_draw.empty()) return;
 
+	/* Find all of them, wherever they are; the 3D view leaves out what is out of sight. */
+	std::vector<std::array<int, 3>> places;
 	View3DSigns found;
-	FindView3DSigns(project, found);
+	FindView3DSigns([&places](int x, int y, int z, Point &pt) {
+		places.push_back({x, y, z});
+		pt = {0, 0};
+		return true;
+	}, found);
 
-	/* Let the 2D game make the texts as for a viewport that is large enough for all of them, then move them to their place in the 3D image. */
 	DrawPixelInfo dpi{};
 	dpi.left = dpi.top = -(1 << 29);
 	dpi.width = dpi.height = 1 << 30;
 	dpi.zoom = ZoomLevel::Min;
 
-	auto place = [](size_t first, const std::vector<Point> &positions) {
-		if (_vd.string_sprites_to_draw.size() != first + positions.size()) return;
-		for (size_t i = 0; i < positions.size(); i++) {
-			StringSpriteToDraw &ss = _vd.string_sprites_to_draw[first + i];
-			ss.x = positions[i].x - ss.width / 2;
-			ss.y = positions[i].y;
+	size_t place = 0;
+	auto take = [&](View3DLabel::Kind kind, size_t count, auto id_of) {
+		/* The 2D game leaves out names it has no text for; then the order would not match, so leave out the kind. */
+		bool complete = _vd.string_sprites_to_draw.size() == count;
+		for (size_t i = 0; i < count && complete; i++) {
+			const StringSpriteToDraw &ss = _vd.string_sprites_to_draw[i];
+			View3DLabel &label = labels.emplace_back();
+			label.x = places[place + i][0];
+			label.y = places[place + i][1];
+			label.z = places[place + i][2];
+			label.width = ss.width;
+			label.height = WidgetDimensions::scaled.fullbevel.top + GetCharacterHeight(FontSize::Normal) + WidgetDimensions::scaled.fullbevel.bottom;
+			label.key = fmt::format("{}|{}|{}", ss.string, to_underlying(ss.colour), ss.flags.base());
+			label.kind = kind;
+			label.id = id_of(i);
+			_view3d_label_strings.push_back(ss);
 		}
+		place += count;
+		_vd.string_sprites_to_draw.clear();
 	};
-
-	/* Layering order (bottom to top): Town names, signs, stations */
-	ViewportAddTownStrings(&dpi, found.towns, small);
-	place(0, found.town_positions);
-	size_t first = _vd.string_sprites_to_draw.size();
-	ViewportAddSignStrings(&dpi, found.signs, small);
-	place(first, found.sign_positions);
-	first = _vd.string_sprites_to_draw.size();
-	ViewportAddStationStrings(&dpi, found.stations, small);
-	place(first, found.station_positions);
-
-	ViewportDrawStrings(ZoomLevel::Min, &_vd.string_sprites_to_draw);
-	_vd.string_sprites_to_draw.clear();
+	ViewportAddTownStrings(&dpi, found.towns, false);
+	take(View3DLabel::Kind::Town, found.towns.size(), [&](size_t i) { return found.towns[i]->index.base(); });
+	ViewportAddSignStrings(&dpi, found.signs, false);
+	take(View3DLabel::Kind::Sign, found.signs.size(), [&](size_t i) { return found.signs[i]->index.base(); });
+	ViewportAddStationStrings(&dpi, found.stations, false);
+	take(View3DLabel::Kind::Station, found.stations.size(), [&](size_t i) { return found.stations[i]->index.base(); });
 }
 
 /**
- * Check whether a town name, station name or sign in the 3D view was clicked, and open its window.
- * @param click Where in the 3D image was clicked.
- * @param small Whether the small versions are shown.
- * @param project Tells where the 3D view shows a point of the map.
- * @return Whether something was hit.
+ * Draw a label of the last GetView3DLabels() at the top left corner of the current drawing area.
+ * Town names, which the 2D views show without a frame, get a dark board, so they can be read against anything behind them.
+ * @param index Which label.
  */
-static bool CheckClickOnView3DSign(Point click, bool small, const View3DProjectProc &project)
+void DrawView3DLabel(size_t index)
 {
-	View3DSigns found;
-	FindView3DSigns(project, found);
+	if (index >= _view3d_label_strings.size()) return;
+	StringSpriteToDraw ss = _view3d_label_strings[index];
+	ss.x = 0;
+	ss.y = 0;
+	if (!ss.flags.Any({ViewportStringFlag::ColourRect, ViewportStringFlag::TransparentRect})) {
+		int h = WidgetDimensions::scaled.fullbevel.top + GetCharacterHeight(FontSize::Normal) + WidgetDimensions::scaled.fullbevel.bottom;
+		DrawFrameRect(0, 0, ss.width - 1, h - 1, Colours::Brown, {});
+		GfxFillRect(1, 1, ss.width - 2, h - 2, GetColourGradient(Colours::Brown, Shade::Darkest));
+		ss.flags.Set(ViewportStringFlag::Shadow);
+	} else if (ss.flags.Test(ViewportStringFlag::TransparentRect)) {
+		/* See-through frames would show the atlas behind them; give them a solid one. */
+		ss.flags.Reset(ViewportStringFlag::TransparentRect).Set(ViewportStringFlag::ColourRect);
+	}
+	StringSpriteToDrawVector list{ss};
+	ViewportDrawStrings(ZoomLevel::Min, &list);
+}
 
-	int height = WidgetDimensions::scaled.fullbevel.top + GetCharacterHeight(small ? FontSize::Small : FontSize::Normal) + WidgetDimensions::scaled.fullbevel.bottom;
-	auto hit = [&](const ViewportSign &sign, const Point &pt) {
-		int half_width = (small ? sign.width_small : sign.width_normal) / 2;
-		return click.y >= pt.y && click.y < pt.y + height && click.x >= pt.x - half_width && click.x < pt.x + half_width;
-	};
-
-	/* What is drawn on top goes first, and of each kind the one that is drawn last. */
-	for (size_t i = found.stations.size(); i-- > 0;) {
-		const BaseStation *st = found.stations[i];
-		if (!hit(st->sign, found.station_positions[i])) continue;
-		if (Station::IsExpected(st)) {
-			ShowStationViewWindow(st->index);
-		} else {
-			ShowWaypointWindow(Waypoint::From(st));
-		}
-		return true;
+/**
+ * Open the window of what a label of the 3D view names.
+ * @param label The label.
+ */
+void OpenView3DLabel(const View3DLabel &label)
+{
+	switch (label.kind) {
+		case View3DLabel::Kind::Town:
+			if (Town::IsValidID(label.id)) ShowTownViewWindow(static_cast<TownID>(label.id));
+			break;
+		case View3DLabel::Kind::Sign:
+			if (Sign::IsValidID(label.id)) HandleClickOnSign(Sign::Get(label.id));
+			break;
+		case View3DLabel::Kind::Station:
+			if (!BaseStation::IsValidID(label.id)) break;
+			if (Station::IsValidID(label.id)) {
+				ShowStationViewWindow(static_cast<StationID>(label.id));
+			} else {
+				ShowWaypointWindow(Waypoint::Get(label.id));
+			}
+			break;
 	}
-	for (size_t i = found.towns.size(); i-- > 0;) {
-		if (!hit(found.towns[i]->cache.sign, found.town_positions[i])) continue;
-		ShowTownViewWindow(found.towns[i]->index);
-		return true;
-	}
-	for (size_t i = found.signs.size(); i-- > 0;) {
-		if (!hit(found.signs[i]->sign, found.sign_positions[i])) continue;
-		HandleClickOnSign(found.signs[i]);
-		return true;
-	}
-	return false;
 }
 
 /**
  * The 3D view was clicked: use the active build tool at the tile below the cursor, or open the window of what was clicked.
  * This is what HandleViewportClicked() does for the 2D views.
  * @param v The vehicle below the cursor, if any.
- * @param click Where in the 3D image was clicked.
- * @param small Whether the small versions of names and signs are shown.
- * @param project Tells where the 3D view shows a point of the map.
+ * @param label The town name, station name or sign below the cursor, if any.
  * @return Whether the click did something.
  */
-bool HandleView3DClicked(const Vehicle *v, Point click, bool small, const View3DProjectProc &project)
+bool HandleView3DClicked(const Vehicle *v, const View3DLabel *label)
 {
 	if (_thd.place_mode & HT_VEHICLE) {
 		if (v != nullptr && VehicleClicked(v)) return true;
@@ -4166,7 +4183,10 @@ bool HandleView3DClicked(const Vehicle *v, Point click, bool small, const View3D
 		return true;
 	}
 
-	if (CheckClickOnView3DSign(click, small, project)) return true;
+	if (label != nullptr) {
+		OpenView3DLabel(*label);
+		return true;
+	}
 
 	Point pt = GetTileBelowCursor();
 	bool result = pt.x != -1 && ClickTile(TileVirtXY(pt.x, pt.y));

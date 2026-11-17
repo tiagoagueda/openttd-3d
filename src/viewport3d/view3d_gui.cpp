@@ -129,6 +129,16 @@ class View3DWindow : public Window {
 	std::vector<VehicleSpritePlace> vehicle_places; ///< Where the vehicles in view are, to find the one below the cursor.
 	uint64_t vehicle_hash = 0; ///< Hash of the vehicles in the last image, to see whether any moved.
 
+	/** Where a label is in the last image, to find the one below the cursor. */
+	struct LabelPlace {
+		View3DLabel label; ///< The label.
+		float left, top, right, bottom; ///< Its corners in the image, in pixels.
+		float depth; ///< Distance from the camera, to pick the nearest of labels that overlap.
+	};
+	std::vector<View3DLabel> labels; ///< The town names, station names and signs; reused for every image.
+	std::vector<LabelPlace> label_places; ///< Where the labels are in the last image.
+	std::chrono::steady_clock::time_point labels_found{}; ///< When the labels were last looked up.
+
 	std::chrono::steady_clock::time_point textures_reset{}; ///< When the ground textures were last started afresh.
 
 public:
@@ -467,7 +477,7 @@ public:
 
 		Point click{_cursor.pos.x - this->left - view->pos_x, _cursor.pos.y - this->top - view->pos_y};
 		Projection projection = this->GetProjection(view->current_x, view->current_y);
-		HandleView3DClicked(this->GetVehicleAt(click, projection), click, this->UseSmallSigns(view->current_y), projection);
+		HandleView3DClicked(this->GetVehicleAt(click, projection), this->GetLabelAt(click));
 	}
 
 	bool OnRightClick(Point, WidgetID widget) override
@@ -571,6 +581,221 @@ public:
 		if (main_window == nullptr || main_window->viewport == nullptr) return;
 		ScrollWindowTo(static_cast<int>(this->camera.target.x), static_cast<int>(this->camera.target.y), -1, main_window, true);
 		this->main_scrollpos = {main_window->viewport->scrollpos_x, main_window->viewport->scrollpos_y};
+	}
+
+	/**
+	 * Stand the town names, station names and signs on the map: each on a board on a post, facing the camera.
+	 * They keep about the size of the 2D views at the spot the camera looks at; nearer ones are larger and further ones smaller.
+	 * @param view_proj World to clip space.
+	 * @param width Width of the image in pixels.
+	 * @param height Height of the image in pixels.
+	 */
+	void AddLabels(const Matrix4 &view_proj, uint width, uint height)
+	{
+		this->label_places.clear();
+		/* Names change seldom, and looking them all up takes a while on big maps, so only a few times a second. */
+		auto now = std::chrono::steady_clock::now();
+		if (now - this->labels_found > std::chrono::milliseconds(400)) {
+			this->labels_found = now;
+			this->atlas->BeginLabels();
+			GetView3DLabels(this->labels);
+		}
+		if (this->labels.empty()) return;
+
+		/* Size of a pixel of the 2D game at the target, in pixels of the image. */
+		float scale = height / (2.0f * this->camera.distance * std::tan(Camera3D::FOV_Y / 2)) * SPRITE_PIXEL_SIZE;
+		/* Zoomed out far, the 2D views use small labels; here they shrink a little instead. */
+		float grow = std::max(0.75f, (scale <= 0.25f ? 0.7f : 1.0f) / scale);
+
+		Frustum3D frustum(view_proj);
+		Projection projection{view_proj, static_cast<float>(width), static_cast<float>(height)};
+		Vec3 right = this->camera.GetRight() * (SPRITE_PIXEL_SIZE * grow);
+		Vec3 eye = this->camera.GetEye();
+		const ModelPack::Entry *post = this->model_pack != nullptr ? this->model_pack->Find(ModelKind::Interface, 0, 0) : nullptr;
+
+		for (size_t i = 0; i < this->labels.size(); i++) {
+			const View3DLabel &label = this->labels[i];
+			/* How high the board stands above the ground, in z units: town names above the houses, stations above their buildings. */
+			static constexpr int LIFT[] = {56, 18, 28}; // town, sign, station
+			float x = static_cast<float>(label.x) + TILE_SIZE / 2.0f;
+			float y = static_cast<float>(label.y) + TILE_SIZE / 2.0f;
+			float ground = std::max(0.0f, GetGroundHeight(x, y));
+			float z = (label.z + LIFT[to_underlying(label.kind)]) * WORLD_Z_SCALE;
+			float top = z + label.height * WORLD_Z_SCALE * grow;
+
+			Vec3 half = right * (label.width * 0.5f);
+			Vec3 lo{x - std::abs(half.x), y - std::abs(half.y), ground};
+			Vec3 hi{x + std::abs(half.x), y + std::abs(half.y), top};
+			if (!frustum.IntersectsBox(lo, hi)) continue;
+
+			const AtlasSprite &sprite = this->atlas->GetLabel(label.key, label.width, label.height, [i]() { DrawView3DLabel(i); });
+			if (!sprite.valid) continue;
+
+			/* The board: the offsets are in pixels of the 2D game, made larger or smaller by grow. */
+			float vx = x / TILE_SIZE, vy = y / TILE_SIZE, vz = z / HEIGHT_LEVEL_SIZE;
+			float l = sprite.left * grow, r = (sprite.left + sprite.width) * grow, t = sprite.height * grow;
+			/* Labels count as a little nearer, so the buildings they stand among do not cut into them; 1000 marks them as labels. */
+			static constexpr float NEARER = 1000.0f + 24.0f;
+			this->vehicle_sprites.insert(this->vehicle_sprites.end(), {
+				{vx, vy, vz, l, t, sprite.u0, sprite.v0, NEARER},
+				{vx, vy, vz, r, t, sprite.u1, sprite.v0, NEARER},
+				{vx, vy, vz, l, 0, sprite.u0, sprite.v1, NEARER},
+				{vx, vy, vz, r, 0, sprite.u1, sprite.v1, NEARER},
+			});
+
+			/* The post, from the ground up to the board. */
+			if (post != nullptr && z > ground) {
+				ModelInstance &instance = this->vehicle_models.emplace_back();
+				instance.model = post->model;
+				float w = grow;
+				instance.transform.m = {
+					w, 0, 0, 0,
+					0, w, 0, 0,
+					0, 0, z - ground + 0.5f, 0,
+					x, y, ground, 1,
+				};
+				instance.tint = {1, 1, 1, 1};
+			}
+
+			/* Remember where it is in the image, for clicks. */
+			Vec3 top_left = Vec3{x, y, top} - half;
+			Vec3 bottom_right = Vec3{x, y, z} + half;
+			float x1, y1, x2, y2;
+			if (!projection.Project(top_left.x, top_left.y, top_left.z, x1, y1)) continue;
+			if (!projection.Project(bottom_right.x, bottom_right.y, bottom_right.z, x2, y2)) continue;
+			Vec3 d = Vec3{x, y, z} - eye;
+			this->label_places.push_back({label, std::min(x1, x2), std::min(y1, y2), std::max(x1, x2), std::max(y1, y2), Dot(d, d)});
+		}
+	}
+
+	/**
+	 * Get the height of a corner of a tile.
+	 * @param x X coordinate of the corner, which is the northern corner of tile (x, y).
+	 * @param y Y coordinate of the corner.
+	 * @return The height in world units.
+	 */
+	static float GetCornerHeight(uint x, uint y)
+	{
+		return TileHeight(TileXY(std::min(x, Map::MaxX()), std::min(y, Map::MaxY()))) * HEIGHT_LEVEL_SIZE;
+	}
+
+	/**
+	 * Add one part of the cursor: a model stretched from one corner of a tile to another, following the ground.
+	 * @param entry The model, one unit long along x.
+	 * @param ax X coordinate of the first corner.
+	 * @param ay Y coordinate of the first corner.
+	 * @param bx X coordinate of the second corner.
+	 * @param by Y coordinate of the second corner.
+	 * @param tint Colour of the model.
+	 */
+	void AddCursorEdge(const ModelPack::Entry &entry, uint ax, uint ay, uint bx, uint by, const std::array<float, 4> &tint)
+	{
+		static constexpr float LIFT = 0.15f;
+		Vec3 a{static_cast<float>(ax * TILE_SIZE), static_cast<float>(ay * TILE_SIZE), GetCornerHeight(ax, ay) + LIFT};
+		Vec3 b{static_cast<float>(bx * TILE_SIZE), static_cast<float>(by * TILE_SIZE), GetCornerHeight(bx, by) + LIFT};
+		Vec3 along = b - a;
+		Vec3 side = Normalise(Cross(Vec3{0, 0, 1}, along));
+		ModelInstance &instance = this->vehicle_models.emplace_back();
+		instance.model = entry.model;
+		instance.transform.m = {
+			along.x, along.y, along.z, 0,
+			side.x, side.y, side.z, 0,
+			0, 0, 1, 0,
+			a.x, a.y, a.z, 1,
+		};
+		instance.tint = tint;
+	}
+
+	/**
+	 * Add one part of the cursor that stands upright.
+	 * @param entry The model.
+	 * @param x Position along the x axis in world units.
+	 * @param y Position along the y axis in world units.
+	 * @param z Height in world units.
+	 * @param yaw How far it is turned around the vertical axis, in radians.
+	 * @param tint Colour of the model.
+	 */
+	void AddCursorPart(const ModelPack::Entry &entry, float x, float y, float z, float yaw, const std::array<float, 4> &tint)
+	{
+		float c = std::cos(yaw), s = std::sin(yaw);
+		ModelInstance &instance = this->vehicle_models.emplace_back();
+		instance.model = entry.model;
+		instance.transform.m = {
+			c, s, 0, 0,
+			-s, c, 0, 0,
+			0, 0, 1, 0,
+			x, y, z, 1,
+		};
+		instance.tint = tint;
+	}
+
+	/**
+	 * Add the cursor in the world: a frame around the tiles that a tool has selected, with an arrow that
+	 * hovers over the tile below the mouse; without a tool, brackets on the corners of that tile.
+	 * @param seconds Seconds since the window opened, for the movement of the arrow.
+	 */
+	void AddCursorModels(float seconds)
+	{
+		if (this->model_pack == nullptr || FindWindowFromPt(_cursor.pos.x, _cursor.pos.y) != this) return;
+		const ModelPack::Entry *edge = this->model_pack->Find(ModelKind::Interface, 0, 1);
+		const ModelPack::Entry *corner = this->model_pack->Find(ModelKind::Interface, 0, 2);
+		const ModelPack::Entry *arrow = this->model_pack->Find(ModelKind::Interface, 0, 3);
+		const ModelPack::Entry *bracket = this->model_pack->Find(ModelKind::Interface, 0, 4);
+
+		Point below;
+		if (!this->GetTileBelowCursor(below) || below.x < 0 || below.y < 0) return;
+		uint tx = below.x / TILE_SIZE, ty = below.y / TILE_SIZE;
+		if (tx >= Map::MaxX() || ty >= Map::MaxY()) return;
+
+		static const std::array<float, 4> WHITE = {1.0f, 1.0f, 1.0f, 1.0f};
+		static const std::array<float, 4> YELLOW = {1.0f, 0.82f, 0.25f, 1.0f};
+		HighLightStyle style = _thd.drawstyle & HT_DRAG_MASK;
+		bool tool = _thd.place_mode != HT_NONE || style != HT_NONE;
+
+		if (!tool) {
+			if (bracket == nullptr) return;
+			/* Brackets on the four corners of the tile, pointing inwards. */
+			static constexpr int CORNERS[4][2] = {{0, 0}, {1, 0}, {1, 1}, {0, 1}};
+			for (int i = 0; i < 4; i++) {
+				uint cx = tx + CORNERS[i][0], cy = ty + CORNERS[i][1];
+				float yaw = i * 1.5707963f;
+				this->AddCursorPart(*bracket, static_cast<float>(cx * TILE_SIZE), static_cast<float>(cy * TILE_SIZE), GetCornerHeight(cx, cy) + 0.1f, yaw, WHITE);
+			}
+			return;
+		}
+
+		/* The frame around a rectangle of selected tiles; for tools that build along lines, around the tile below the mouse. */
+		if (edge != nullptr && corner != nullptr) {
+			uint x0 = tx, y0 = ty, x1 = tx + 1, y1 = ty + 1;
+			if ((style == HT_RECT || style == HT_POINT) && _thd.pos.x >= 0 && _thd.pos.y >= 0) {
+				x0 = _thd.pos.x / TILE_SIZE;
+				y0 = _thd.pos.y / TILE_SIZE;
+				x1 = std::min<uint>(x0 + std::max(1, _thd.size.x / static_cast<int>(TILE_SIZE)), Map::MaxX());
+				y1 = std::min<uint>(y0 + std::max(1, _thd.size.y / static_cast<int>(TILE_SIZE)), Map::MaxY());
+			}
+			/* A very large selection would need very many parts; the selection on the ground still shows it. */
+			if ((x1 - x0) + (y1 - y0) <= 512) {
+				for (uint x = x0; x < x1; x++) {
+					this->AddCursorEdge(*edge, x, y0, x + 1, y0, WHITE);
+					this->AddCursorEdge(*edge, x, y1, x + 1, y1, WHITE);
+				}
+				for (uint y = y0; y < y1; y++) {
+					this->AddCursorEdge(*edge, x0, y, x0, y + 1, WHITE);
+					this->AddCursorEdge(*edge, x1, y, x1, y + 1, WHITE);
+				}
+				for (auto [cx, cy] : {std::pair{x0, y0}, {x1, y0}, {x0, y1}, {x1, y1}}) {
+					this->AddCursorPart(*corner, static_cast<float>(cx * TILE_SIZE), static_cast<float>(cy * TILE_SIZE), GetCornerHeight(cx, cy), 0, WHITE);
+				}
+			}
+		}
+
+		/* The arrow, bobbing and turning slowly over the tile below the mouse. */
+		if (arrow != nullptr) {
+			float top = std::max({GetCornerHeight(tx, ty), GetCornerHeight(tx + 1, ty), GetCornerHeight(tx, ty + 1), GetCornerHeight(tx + 1, ty + 1)});
+			/* Above what stands on the tile, so it is not hidden inside a building. */
+			float z = top + 9.0f + 1.2f * std::sin(seconds * 3.0f);
+			this->AddCursorPart(*arrow, (tx + 0.5f) * TILE_SIZE, (ty + 0.5f) * TILE_SIZE, z, seconds * 1.2f, YELLOW);
+		}
 	}
 
 	/** Add see-through models of what the active build tool is about to build, on the tiles it has selected. */
@@ -701,6 +926,8 @@ public:
 			for (const auto &[tile, models] : this->chunks[id].live) this->vehicle_models.insert(this->vehicle_models.end(), models.begin(), models.end());
 		}
 		this->AddPreviewModels();
+		this->AddLabels(view_proj, view->current_x, view->current_y);
+		this->AddCursorModels(seconds);
 		uint64_t hash = 0xcbf29ce484222325ULL;
 		const uint8_t *data = reinterpret_cast<const uint8_t *>(this->vehicle_sprites.data());
 		for (size_t i = 0; i < this->vehicle_sprites.size() * sizeof(SpriteVertex); i++) {
@@ -811,6 +1038,21 @@ private:
 			best = distance;
 		}
 		return found;
+	}
+
+	/**
+	 * Find the label at a place in the image.
+	 * @param pt The place in pixels.
+	 * @return The nearest label there, or \c nullptr when there is none.
+	 */
+	const View3DLabel *GetLabelAt(Point pt) const
+	{
+		const LabelPlace *found = nullptr;
+		for (const LabelPlace &place : this->label_places) {
+			if (pt.x < place.left || pt.x > place.right || pt.y < place.top || pt.y > place.bottom) continue;
+			if (found == nullptr || place.depth < found->depth) found = &place;
+		}
+		return found != nullptr ? &found->label : nullptr;
 	}
 
 	/**
@@ -993,12 +1235,6 @@ private:
 			uint32_t *dst = static_cast<uint32_t *>(blitter->MoveTo(dpi->dst_ptr, left - dpi->left, y - dpi->top));
 			std::copy_n(src, right - left, dst);
 		}
-
-		/* Names and signs go on top, drawn by the 2D game and of the same size wherever they are, like in the 2D views. */
-		DrawPixelInfo sign_dpi;
-		if (!FillDrawPixelInfo(&sign_dpi, r)) return;
-		AutoRestoreBackup dpi_backup(_cur_dpi, &sign_dpi);
-		DrawView3DSigns(this->UseSmallSigns(r.Height()), this->GetProjection(r.Width(), r.Height()));
 	}
 };
 

@@ -125,7 +125,9 @@ To build in the 3D view, the window finds the spot on the ground below the curso
 `GetTileBelowCursor()`, which all build tools of the game use, asks the 3D view first when the cursor is over it, so tools, dragging and the tile selection work without changes to the tools.
 The selection itself is drawn by the 2D game on the ground of a tile, so it arrives in the 3D view as part of the ground texture of that tile.
 
-Names of towns and stations and signs are not part of the 3D image. The window asks the 2D game to draw them on top of the image, at the place where the 3D view shows the spot they belong to (`DrawView3DSigns()`), so they look and are filtered like in the 2D views.
+Names of towns and stations and signs stand in the world: each is a board on a post (`interface` model 0), facing the camera, above the spot it belongs to (`AddLabels()` in `view3d_gui.cpp`). The 2D game makes the list and draws each board's picture (`GetView3DLabels()`, `DrawView3DLabel()` in `viewport.cpp`; town names get a dark board), which goes into rows at the bottom of the sprite atlas that start afresh when they are full (`SpriteAtlas::GetLabel()`). Boards keep about the size of the 2D views at the spot the camera looks at, so nearer ones are larger and further ones smaller; hills hide them, and they are neither shaded nor hazed (the sprite shaders tell them by a nearness of 1000 or more). Clicking a board opens its window.
+
+The cursor is in the world too (`AddCursorModels()`): with a build tool, a white frame with corner posts follows the ground around the selected tiles (or the tile below the mouse for tools that build along lines), and a yellow arrow bobs over the tile below the mouse; without a tool, white brackets mark the corners of that tile. The parts are `interface` models 1 to 4.
 A click first looks for a vehicle of which the sprite is below the cursor, then for a name or sign, then for the tile, in the same order as the 2D views (`HandleView3DClicked()`).
 
 3D models are read from binary glTF files (`model3d.cpp`) listed in the index of the OpenGFX3D package (`model_pack.cpp`).
@@ -173,7 +175,7 @@ A tile with a foundation is drawn flat at the top of the foundation, with stone 
 
 The existing game is touched in a few small places:
 
-* `MarkTileDirtyByTile()` in `viewport.cpp` tells the 3D view which tile changed, `SetSelectionTilesDirty()` tells it where the selection changed, `GetTileBelowCursor()` asks it for the tile below the cursor, and `CollectTileSprites()`, `HasTileSelection()`, `DrawView3DSigns()` and `HandleView3DClicked()` at the end of that file tell it what a tile draws, draw the names and pass on clicks.
+* `MarkTileDirtyByTile()` in `viewport.cpp` tells the 3D view which tile changed, `SetSelectionTilesDirty()` tells it where the selection changed, `GetTileBelowCursor()` asks it for the tile below the cursor, and `CollectTileSprites()`, `HasTileSelection()`, `GetView3DLabels()`, `DrawView3DLabel()` and `HandleView3DClicked()` at the end of that file tell it what a tile draws, make the names and pass on clicks.
 * `console_cmds.cpp` has the `view3d` command.
 * `window_type.h` has the new window class.
 * `lang/english.txt` has the strings of the window.
@@ -185,7 +187,7 @@ The existing game is touched in a few small places:
 * Terrain is built for the part of the map that has been in view and stays in memory until the window is closed. On the very largest maps, looking at all of it uses a lot of memory.
 * The ground textures and sprites are taken from the game when the window opens or when they are first needed. After changing NewGRFs in a running game, close and reopen the window.
 * The shadows of aircraft are not drawn yet.
-* Names and signs are always drawn on top, also when a hill is in front of their place, and all of them in view are shown however far away they are.
+* All names and signs in view are shown however far away they are; zoomed far out they can crowd the view.
 * The tile below the cursor is the first building with a model along the line of sight (using the box around its model), or else the terrain; bridges, vehicles and buildings drawn with sprites are not looked at.
 * What is in front of what is decided per sprite, so now and then a vehicle shows through the corner of a building it passes behind.
 * Buildings without a model that are made of several sprites or cover several tiles can come apart when the camera is rotated, and tiles on half-tile foundations draw their ground as an upright sprite too.

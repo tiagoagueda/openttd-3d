@@ -53,6 +53,7 @@ enum class ModelKind : uint8_t {
 	Waypoint, ///< Waypoints: 0 on a railway, 1 on a road.
 	Lock, ///< Canal locks: 0 the middle, 1 the lower end, 2 the upper end.
 	Disaster, ///< Disaster vehicles, by disaster vehicle type.
+	Interface, ///< Parts of the interface in the world: 0 label post, 1 selection edge, 2 selection corner, 3 cursor arrow, 4 hover bracket.
 };
 
 /**

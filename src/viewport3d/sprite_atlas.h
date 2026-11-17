@@ -11,6 +11,7 @@
 #define VIEWPORT3D_SPRITE_ATLAS_H
 
 #include "tile_sprites.h"
+#include <functional>
 #include "../gfx_type.h"
 #include "../zoom_type.h"
 
@@ -39,6 +40,11 @@ public:
 	const AtlasSprite &Get(SpriteID sprite, PaletteID pal);
 	const AtlasSprite &Get(std::span<const SpritePart> sprites);
 
+	/** Rows at the bottom of the atlas that hold labels: town names, station names and signs. */
+	static constexpr uint LABEL_ROWS = 512;
+	void BeginLabels();
+	const AtlasSprite &GetLabel(const std::string &key, uint width, uint height, const std::function<void()> &draw);
+
 	/** Pixels of the atlas, top row first, in the format of 32bpp blitters. */
 	std::span<const uint32_t> GetPixels() const { return this->pixels; }
 
@@ -64,6 +70,11 @@ private:
 	uint shelf_x = 0; ///< Where the next sprite goes in the current row of sprites.
 	uint shelf_y = 0; ///< Top of the current row of sprites.
 	uint shelf_height = 0; ///< Height of the tallest sprite in the current row.
+	std::map<std::string, AtlasSprite> labels; ///< The labels in the atlas, and the ones that did not fit.
+	uint label_x = 0; ///< Where the next label goes in the current row of labels.
+	uint label_y = HEIGHT - LABEL_ROWS; ///< Top of the current row of labels.
+	uint label_height = 0; ///< Height of the tallest label in the current row.
+	bool labels_full = false; ///< Whether a label did not fit; then the labels start afresh with the next image.
 	uint dirty_top = HEIGHT; ///< First row that changed.
 	uint dirty_bottom = 0; ///< One past the last row that changed.
 };
