@@ -24,6 +24,7 @@
 #include "shaders/fs_model.bin.h"
 #include "shaders/vs_shadow.bin.h"
 #include "shaders/fs_shadow.bin.h"
+#include "shaders/fs_sprite_shadow.bin.h"
 
 #include "../safeguards.h"
 
@@ -79,6 +80,7 @@ struct Renderer3D::Impl {
 	bgfx::UniformHandle model_light = BGFX_INVALID_HANDLE;
 	std::vector<GpuModel> models;
 	bgfx::ProgramHandle shadow_program = BGFX_INVALID_HANDLE; ///< Draws depth into the shadow map.
+	bgfx::ProgramHandle sprite_shadow_program = BGFX_INVALID_HANDLE; ///< Draws sprites, turned towards the sun, into the shadow map.
 	bgfx::FrameBufferHandle shadow_map = BGFX_INVALID_HANDLE; ///< Depth of what casts shadows, seen from the sun.
 	bgfx::UniformHandle shadow_sampler = BGFX_INVALID_HANDLE;
 	bgfx::UniformHandle shadow_matrix = BGFX_INVALID_HANDLE;
@@ -226,6 +228,7 @@ static bgfx::ShaderHandle CreateShader(const ShaderVariants &variants)
 
 	/* The shadow map; without a depth format that can be compared when sampling, there are no shadows, but the shaders still need a map. */
 	impl.shadow_program = bgfx::createProgram(CreateShader(SHADER_VARIANTS(vs_shadow)), CreateShader(SHADER_VARIANTS(fs_shadow)), true);
+	impl.sprite_shadow_program = bgfx::createProgram(CreateShader(SHADER_VARIANTS(vs_sprite)), CreateShader(SHADER_VARIANTS(fs_sprite_shadow)), true);
 	impl.shadow_sampler = bgfx::createUniform("s_shadow", bgfx::UniformType::Sampler);
 	impl.shadow_matrix = bgfx::createUniform("u_shadowMtx", bgfx::UniformType::Mat4);
 	impl.shadow_params = bgfx::createUniform("u_shadowParams", bgfx::UniformType::Vec4);
@@ -273,6 +276,7 @@ Renderer3D::~Renderer3D()
 	if (bgfx::isValid(impl.model_sun)) bgfx::destroy(impl.model_sun);
 	if (bgfx::isValid(impl.model_light)) bgfx::destroy(impl.model_light);
 	if (bgfx::isValid(impl.shadow_program)) bgfx::destroy(impl.shadow_program);
+	if (bgfx::isValid(impl.sprite_shadow_program)) bgfx::destroy(impl.sprite_shadow_program);
 	if (bgfx::isValid(impl.shadow_map)) bgfx::destroy(impl.shadow_map);
 	if (bgfx::isValid(impl.shadow_sampler)) bgfx::destroy(impl.shadow_sampler);
 	if (bgfx::isValid(impl.shadow_matrix)) bgfx::destroy(impl.shadow_matrix);
@@ -438,6 +442,7 @@ struct ShadowView {
 	Matrix4 proj; ///< The sun's view to clip space.
 	Matrix4 sample; ///< World to coordinates in the shadow map.
 	float bias; ///< How much nearer a point must be than what the map holds, to not shadow itself.
+	Vec3 side; ///< Unit vector to the right as seen from the sun, parallel to the ground.
 };
 
 /**
@@ -501,6 +506,7 @@ static ShadowView GetShadowView(const Camera3D &camera, Vec3 sun, bool homogeneo
 	result.sample = crop * result.proj * result.view;
 	/* About a texel and a half of depth. */
 	result.bias = 1.5f * texel / depth + 0.0005f;
+	result.side = side;
 	return result;
 }
 
@@ -580,6 +586,32 @@ void Renderer3D::Render(uint width, uint height, const Camera3D &camera, std::sp
 	model.m[10] = HEIGHT_LEVEL_SIZE;
 	model.m[15] = 1;
 
+	/* What does not have a closed shape, like terrain and sprites, casts its shadow from a little further away from the sun,
+	 * or it would shadow itself where its depth in the map and its own depth are nearly the same. */
+	auto away_from_sun = [&](float distance) {
+		Matrix4 moved = model;
+		moved.m[12] -= MODEL_SUN[0] * distance;
+		moved.m[13] -= MODEL_SUN[1] * distance;
+		moved.m[14] -= MODEL_SUN[2] * distance;
+		return moved;
+	};
+	const Matrix4 terrain_caster = away_from_sun(2.0f);
+	const Matrix4 sprite_caster = away_from_sun(3.0f);
+	/* Sprites turn towards the sun to cast their shadow, and keep their own depth. */
+	const float shadow_sprite_axes[4] = {shadow.side.x * SPRITE_PIXEL_SIZE, shadow.side.y * SPRITE_PIXEL_SIZE, shadow.side.z * SPRITE_PIXEL_SIZE, WORLD_Z_SCALE};
+	const float no_nearer[4] = {0, 0, 0, 0};
+	auto cast_sprites = [&](auto set_buffer, uint32_t count) {
+		if (!impl.shadows) return;
+		bgfx::setTransform(sprite_caster.m.data());
+		set_buffer();
+		bgfx::setTexture(0, impl.sprite_sampler, impl.sprite_atlas);
+		bgfx::setUniform(impl.sprite_axes, shadow_sprite_axes);
+		bgfx::setUniform(impl.sprite_nearer, no_nearer);
+		bgfx::setIndexBuffer(impl.quad_indices, 0, count * 6);
+		bgfx::setState(BGFX_STATE_WRITE_Z | BGFX_STATE_DEPTH_TEST_LESS);
+		bgfx::submit(VIEW_SHADOW, impl.sprite_shadow_program);
+	};
+
 	Vec3 right = camera.GetRight();
 	const float sprite_axes[4] = {right.x * SPRITE_PIXEL_SIZE, right.y * SPRITE_PIXEL_SIZE, right.z * SPRITE_PIXEL_SIZE, WORLD_Z_SCALE};
 
@@ -639,6 +671,14 @@ void Renderer3D::Render(uint width, uint height, const Camera3D &camera, std::sp
 			set_shadow();
 			bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A | BGFX_STATE_WRITE_Z | BGFX_STATE_DEPTH_TEST_LESS);
 			bgfx::submit(VIEW_SCENE, impl.program);
+
+			if (impl.shadows) {
+				bgfx::setTransform(terrain_caster.m.data());
+				bgfx::setVertexBuffer(0, chunk.vertices);
+				bgfx::setIndexBuffer(impl.quad_indices, 0, chunk.num_quads * 6);
+				bgfx::setState(BGFX_STATE_WRITE_Z | BGFX_STATE_DEPTH_TEST_LESS);
+				bgfx::submit(VIEW_SHADOW, impl.shadow_program);
+			}
 		}
 
 		for (const ModelInstance &instance : chunk.models) draw_model(instance);
@@ -653,6 +693,7 @@ void Renderer3D::Render(uint width, uint height, const Camera3D &camera, std::sp
 			set_shadow();
 			bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A | BGFX_STATE_WRITE_Z | BGFX_STATE_DEPTH_TEST_LESS);
 			bgfx::submit(VIEW_SCENE, impl.sprite_program);
+			cast_sprites([&]() { bgfx::setVertexBuffer(0, chunk.sprites); }, chunk.num_sprites);
 		}
 	}
 
@@ -672,6 +713,7 @@ void Renderer3D::Render(uint width, uint height, const Camera3D &camera, std::sp
 		set_shadow();
 		bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A | BGFX_STATE_WRITE_Z | BGFX_STATE_DEPTH_TEST_LESS);
 		bgfx::submit(VIEW_SCENE, impl.sprite_program);
+		cast_sprites([&]() { bgfx::setVertexBuffer(0, &buffer); }, num_sprites);
 	}
 
 	for (const ModelInstance &instance : models) draw_model(instance);

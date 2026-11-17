@@ -47,3 +47,4 @@ compile vs_model vertex
 compile fs_model fragment
 compile vs_shadow vertex
 compile fs_shadow fragment
+compile fs_sprite_shadow fragment
