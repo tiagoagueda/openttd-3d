@@ -167,8 +167,11 @@ The existing game is touched in a few small places:
 * Tiles with animations that have no model (some industries with NewGRF graphics) rebuild their whole chunk of 64x64 tiles for every animation step; building one chunk takes about 1.5 ms.
 * Water is not animated, and sprites far away flicker a little because they have no smaller versions yet.
 * 3D models have colours per material but no textures yet, vehicles with a model turn in steps of 45 degrees like the sprites do, and liveries other than the company colour are not followed.
-* There is no anti-aliasing.
 * It has been run on Linux with Mesa's software Vulkan and OpenGL drivers, and on Windows with the Direct3D 11 video driver.
+
+## Roadmap
+
+Next, in this order unless plans change: textures for the 3D models, day and night (light that follows the time of day, lit windows and lamps), and weather and seasons (snow, rain, autumn colours).
 
 ## Changing the shaders
 
