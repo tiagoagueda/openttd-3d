@@ -40,6 +40,7 @@ struct SpritePart {
 
 /** A sprite with a bounding box in the world, and the sprites that are drawn along with it. */
 struct TileSpriteGroup {
+	bool foundation = false; ///< Whether this is the foundation of the tile.
 	int xmin, ymin, zmin; ///< Lowest corner of the bounding box, in world coordinates.
 	int xmax, ymax, zmax; ///< Highest corner of the bounding box, inclusive.
 	uint first; ///< Index of the first sprite of the group in TileSprites::parts.

@@ -12,7 +12,10 @@
 #include "../debug.h"
 #include "../engine_base.h"
 #include "../fileio_func.h"
+#include "../newgrf_commons.h"
 #include "../newgrf_type.h"
+#include "../palette_func.h"
+#include "../gfx_func.h"
 #include "../3rdparty/nlohmann/json.hpp"
 
 #include "../safeguards.h"
@@ -54,7 +57,59 @@ static std::optional<std::vector<uint8_t>> ReadPackFile(std::string_view filenam
 	return data;
 }
 
-/** Find the package and load it. Without a package, or with a broken one, no vehicle has a model. */
+/**
+ * Read the entries of one list of the index.
+ * @param list The list.
+ * @param kinds The words that the entries may use for "type", and what they mean.
+ * @param loaded Models that were already read, by file name.
+ */
+void ModelPack::ReadEntries(const nlohmann::json &list, std::initializer_list<std::pair<std::string_view, ModelKind>> kinds, std::map<std::string, uint> &loaded)
+{
+	for (const auto &entry : list) {
+		std::string type_name = entry.at("type").get<std::string>();
+		auto kind = std::ranges::find(kinds, type_name, &std::pair<std::string_view, ModelKind>::first);
+		if (kind == kinds.end()) {
+			Debug(Facility::Misc, Severity::Error, "[viewport3d] {}: unknown type '{}'", PACK_INDEX, type_name);
+			continue;
+		}
+
+		/* File names stay within the package. */
+		std::string filename = entry.at("model").get<std::string>();
+		if (filename.empty() || filename.find_first_of("/\\:") != std::string::npos || filename.starts_with(".")) {
+			Debug(Facility::Misc, Severity::Error, "[viewport3d] {}: bad file name '{}'", PACK_INDEX, filename);
+			continue;
+		}
+
+		auto [it, inserted] = loaded.try_emplace(filename, UINT_MAX);
+		if (inserted) {
+			auto data = ReadPackFile(filename);
+			Model3D model;
+			std::string error = "file not found";
+			if (data.has_value() && LoadGlbModel(*data, model, error)) {
+				it->second = static_cast<uint>(this->models.size());
+				this->models.push_back(std::move(model));
+			} else {
+				Debug(Facility::Misc, Severity::Error, "[viewport3d] cannot use model '{}': {}", filename, error);
+			}
+		}
+		if (it->second == UINT_MAX) continue;
+
+		uint32_t grfid = 0;
+		std::string grfid_text = entry.value("grfid", std::string{"0"});
+		auto [end, result] = std::from_chars(grfid_text.data(), grfid_text.data() + grfid_text.size(), grfid, 16);
+		if (result != std::errc{} || end != grfid_text.data() + grfid_text.size()) {
+			Debug(Facility::Misc, Severity::Error, "[viewport3d] {}: bad NewGRF ID '{}'", PACK_INDEX, grfid_text);
+			continue;
+		}
+
+		float scale = entry.value("scale", 1.0f);
+		for (const auto &id : entry.at("ids")) {
+			this->entries[{kind->second, grfid, id.get<uint16_t>()}] = {it->second, scale};
+		}
+	}
+}
+
+/** Find the package and load it. Without a package, or with a broken one, nothing has a model. */
 ModelPack::ModelPack()
 {
 	auto index = ReadPackFile(PACK_INDEX);
@@ -62,65 +117,53 @@ ModelPack::ModelPack()
 
 	try {
 		nlohmann::json json = nlohmann::json::parse(index->begin(), index->end());
-		std::map<std::string, uint> loaded; // Models by file name.
+		std::map<std::string, uint> loaded;
 
-		for (const auto &entry : json.at("vehicles")) {
-			VehicleType type;
-			std::string type_name = entry.at("type").get<std::string>();
-			if (type_name == "train") {
-				type = VehicleType::Train;
-			} else if (type_name == "road") {
-				type = VehicleType::Road;
-			} else if (type_name == "ship") {
-				type = VehicleType::Ship;
-			} else if (type_name == "aircraft") {
-				type = VehicleType::Aircraft;
-			} else {
-				Debug(Facility::Misc, Severity::Error, "[viewport3d] {}: unknown kind of vehicle '{}'", PACK_INDEX, type_name);
-				continue;
-			}
-
-			/* File names stay within the package. */
-			std::string filename = entry.at("model").get<std::string>();
-			if (filename.empty() || filename.find_first_of("/\\:") != std::string::npos || filename.starts_with(".")) {
-				Debug(Facility::Misc, Severity::Error, "[viewport3d] {}: bad file name '{}'", PACK_INDEX, filename);
-				continue;
-			}
-
-			auto [it, inserted] = loaded.try_emplace(filename, UINT_MAX);
-			if (inserted) {
-				auto data = ReadPackFile(filename);
-				Model3D model;
-				std::string error = "file not found";
-				if (data.has_value() && LoadGlbModel(*data, model, error)) {
-					it->second = static_cast<uint>(this->models.size());
-					this->models.push_back(std::move(model));
-				} else {
-					Debug(Facility::Misc, Severity::Error, "[viewport3d] cannot use model '{}': {}", filename, error);
-				}
-			}
-			if (it->second == UINT_MAX) continue;
-
-			uint32_t grfid = 0;
-			std::string grfid_text = entry.value("grfid", std::string{"0"});
-			auto [end, result] = std::from_chars(grfid_text.data(), grfid_text.data() + grfid_text.size(), grfid, 16);
-			if (result != std::errc{} || end != grfid_text.data() + grfid_text.size()) {
-				Debug(Facility::Misc, Severity::Error, "[viewport3d] {}: bad NewGRF ID '{}'", PACK_INDEX, grfid_text);
-				continue;
-			}
-			float scale = entry.value("scale", 1.0f);
-			for (const auto &id : entry.at("ids")) {
-				this->vehicles[{type, grfid, id.get<uint16_t>()}] = {it->second, scale};
-			}
+		if (json.contains("vehicles")) {
+			this->ReadEntries(json.at("vehicles"), {
+				{"train", ModelKind::Train}, {"road", ModelKind::Road}, {"ship", ModelKind::Ship}, {"aircraft", ModelKind::Aircraft},
+			}, loaded);
+		}
+		if (json.contains("buildings")) {
+			this->ReadEntries(json.at("buildings"), {
+				{"house", ModelKind::House}, {"industry_tile", ModelKind::IndustryTile}, {"rail_station", ModelKind::RailStation},
+				{"road_stop", ModelKind::RoadStop}, {"object", ModelKind::Object},
+			}, loaded);
 		}
 
 		this->name = json.value("name", std::string{"OpenGFX3D"});
-		Debug(Facility::Driver, Severity::Error, "[viewport3d] model package '{}': {} models for {} vehicles", this->name, this->models.size(), this->vehicles.size());
+		Debug(Facility::Driver, Severity::Error, "[viewport3d] model package '{}': {} models for {} vehicle and building types", this->name, this->models.size(), this->entries.size());
 	} catch (const std::exception &e) {
 		Debug(Facility::Misc, Severity::Error, "[viewport3d] cannot read {}: {}", PACK_INDEX, e.what());
 		this->models.clear();
-		this->vehicles.clear();
+		this->entries.clear();
 	}
+}
+
+/**
+ * Find the model for something.
+ * @param kind What it is.
+ * @param grfid The NewGRF it is from as a number, 0 for the base game.
+ * @param id Its number within the NewGRF or the base game.
+ * @return The model, or \c nullptr when the package has none for it.
+ */
+const ModelPack::Entry *ModelPack::Find(ModelKind kind, uint32_t grfid, uint16_t id) const
+{
+	auto it = this->entries.find({kind, grfid, id});
+	return it == this->entries.end() ? nullptr : &it->second;
+}
+
+/**
+ * Find the model for something that a NewGRF may have defined.
+ * @param kind What it is.
+ * @param props Where it comes from.
+ * @param base_game_id Its number in the base game, used when no NewGRF defines it.
+ * @return The model, or \c nullptr when the package has none for it.
+ */
+const ModelPack::Entry *ModelPack::Find(ModelKind kind, const GRFFilePropsBase &props, uint16_t base_game_id) const
+{
+	if (props.HasGrfFile()) return this->Find(kind, GetGrfIDNumber(props.grfid), props.local_id);
+	return this->Find(kind, 0, base_game_id);
 }
 
 /**
@@ -130,9 +173,35 @@ ModelPack::ModelPack()
  */
 const ModelPack::VehicleModel *ModelPack::FindVehicle(const Engine *e) const
 {
-	if (this->vehicles.empty() || e == nullptr) return nullptr;
-	GrfID id = e->GetGRFID();
-	uint32_t grfid = static_cast<uint32_t>(id[0]) << 24 | id[1] << 16 | id[2] << 8 | id[3];
-	auto it = this->vehicles.find({e->type, grfid, e->grf_prop.local_id});
-	return it == this->vehicles.end() ? nullptr : &it->second;
+	if (this->entries.empty() || e == nullptr) return nullptr;
+	ModelKind kind;
+	switch (e->type) {
+		case VehicleType::Train: kind = ModelKind::Train; break;
+		case VehicleType::Road: kind = ModelKind::Road; break;
+		case VehicleType::Ship: kind = ModelKind::Ship; break;
+		case VehicleType::Aircraft: kind = ModelKind::Aircraft; break;
+		default: return nullptr;
+	}
+	return this->Find(kind, GetGrfIDNumber(e->GetGRFID()), e->grf_prop.local_id);
+}
+
+/**
+ * Get a NewGRF ID as the number that the game shows for it, and that the index uses.
+ * @param grfid The ID.
+ * @return The number.
+ */
+uint32_t ModelPack::GetGrfIDNumber(GrfID grfid)
+{
+	return static_cast<uint32_t>(grfid[0]) << 24 | grfid[1] << 16 | grfid[2] << 8 | grfid[3];
+}
+
+/**
+ * Get the colour that parts of models named "company" are multiplied with.
+ * @param colour One of the colours of companies, which houses and industries use too.
+ * @return The colour, each channel from 0 to 1.
+ */
+std::array<float, 4> ModelPack::GetTint(Colours colour)
+{
+	const Colour &c = _cur_palette.palette[GetColourGradient(colour, Shade::Normal).p];
+	return {c.r / 255.0f, c.g / 255.0f, c.b / 255.0f, 1};
 }

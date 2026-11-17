@@ -11,21 +11,39 @@
 #define VIEWPORT3D_MODEL_PACK_H
 
 #include "model3d.h"
+#include "../3rdparty/nlohmann/json.hpp"
+#include "../gfx_type.h"
+#include "../newgrf_type.h"
 #include "../vehicle_type.h"
 
 class Engine;
+struct GRFFilePropsBase;
+
+/** What a model of the package replaces. */
+enum class ModelKind : uint8_t {
+	Train, ///< Rail vehicles, by engine.
+	Road, ///< Road vehicles, by engine.
+	Ship, ///< Ships, by engine.
+	Aircraft, ///< Aircraft, by engine.
+	House, ///< Town buildings, by house type.
+	IndustryTile, ///< Tiles of industries, by industry tile type.
+	RailStation, ///< Tiles of railway stations, by station type.
+	RoadStop, ///< Bus and lorry stops, by stop type.
+	Object, ///< Objects such as transmitters and company headquarters, by object type.
+};
 
 /**
- * The OpenGFX3D package: 3D models, and which vehicles they are for.
+ * The OpenGFX3D package: 3D models, and what they replace.
  * Everything without a model keeps the sprites of the 2D game.
  */
 class ModelPack {
 public:
-	/** A model for a vehicle. */
+	/** A model for something on the map. */
 	struct VehicleModel {
 		uint model; ///< Index into GetModels().
 		float scale; ///< World units per unit of the model.
 	};
+	using Entry = VehicleModel;
 
 	ModelPack();
 
@@ -35,14 +53,24 @@ public:
 	/** All models of the package. */
 	std::span<const Model3D> GetModels() const { return this->models; }
 
+	/** Whether the package has any model at all. */
+	bool IsEmpty() const { return this->entries.empty(); }
+
+	const Entry *Find(ModelKind kind, uint32_t grfid, uint16_t id) const;
+	const Entry *Find(ModelKind kind, const GRFFilePropsBase &props, uint16_t base_game_id) const;
 	const VehicleModel *FindVehicle(const Engine *e) const;
 
+	static std::array<float, 4> GetTint(Colours colour);
+	static uint32_t GetGrfIDNumber(GrfID grfid);
+
 private:
-	using VehicleKey = std::tuple<VehicleType, uint32_t, uint16_t>; ///< Kind of vehicle, NewGRF and the number of the vehicle within the NewGRF.
+	void ReadEntries(const nlohmann::json &list, std::initializer_list<std::pair<std::string_view, ModelKind>> kinds, std::map<std::string, uint> &loaded);
+
+	using Key = std::tuple<ModelKind, uint32_t, uint16_t>; ///< What is replaced, the NewGRF it is from (0 for the base game) and its number within the NewGRF.
 
 	std::string name; ///< Name of the package.
 	std::vector<Model3D> models; ///< The models.
-	std::map<VehicleKey, VehicleModel> vehicles; ///< Which vehicles have a model.
+	std::map<Key, Entry> entries; ///< What has a model.
 };
 
 #endif /* VIEWPORT3D_MODEL_PACK_H */

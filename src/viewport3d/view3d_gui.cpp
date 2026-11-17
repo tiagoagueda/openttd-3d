@@ -533,7 +533,7 @@ private:
 						continue;
 					}
 
-					BuildTerrainChunkMesh(cx, cy, *this->ground_textures, *this->atlas, this->scratch_mesh);
+					BuildTerrainChunkMesh(cx, cy, *this->ground_textures, *this->atlas, this->model_pack.get(), this->scratch_mesh);
 					if (!chunk.built || chunk.hash != this->scratch_mesh.hash) {
 						this->renderer->SetChunk(id, this->scratch_mesh);
 						changed = true;

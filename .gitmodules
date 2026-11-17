@@ -1,0 +1,3 @@
+[submodule "bin/opengfx3d"]
+	path = bin/opengfx3d
+	url = https://source.tiagoagueda.com/tiagoagueda/OpenGFX3D.git

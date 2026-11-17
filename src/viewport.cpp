@@ -3931,6 +3931,8 @@ void CollectTileSprites(TileIndex tile, TileSprites &sprites)
 	}
 	for (const ParentSpriteToDraw &ps : _vd.parent_sprites_to_draw) {
 		TileSpriteGroup &group = sprites.groups.emplace_back();
+		int index = static_cast<int>(sprites.groups.size()) - 1;
+		group.foundation = index == _vd.foundation[FoundationPart::Normal] || index == _vd.foundation[FoundationPart::Halftile];
 		group.xmin = ps.xmin;
 		group.ymin = ps.ymin;
 		group.zmin = ps.zmin;

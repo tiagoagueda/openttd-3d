@@ -69,8 +69,7 @@ static bool AddVehicleModel(const Vehicle *v, const ModelPack *pack, std::vector
 
 	instance.tint = {1, 1, 1, 1};
 	if (v->owner < MAX_COMPANIES) {
-		const Colour &colour = _cur_palette.palette[GetColourGradient(_company_colours[v->owner], Shade::Normal).p];
-		instance.tint = {colour.r / 255.0f, colour.g / 255.0f, colour.b / 255.0f, 1};
+		instance.tint = ModelPack::GetTint(_company_colours[v->owner]);
 	}
 	return true;
 }

@@ -8,8 +8,10 @@ Everything is drawn with the graphics of the 2D game, so it follows the base set
 The ground, tracks and roads lie on the terrain. Trees, buildings, stations, industries, signals, bridges, vehicles and the like are flat sprites that stand upright and turn to face the camera.
 From the viewing angle of the 2D game that looks the same as there; from other angles it shows that they are not real 3D models.
 
-Real 3D models come from a package called OpenGFX3D (`bin/opengfx3d/`, see its README). What has a model there is drawn with it, everything else keeps its sprites.
-For now the package has two simple sample models, a bus and a lorry, for the buses and the first lorries of the base game.
+Real 3D models come from a package called OpenGFX3D, a separate repository (https://source.tiagoagueda.com/tiagoagueda/OpenGFX3D) included as a git submodule at `bin/opengfx3d/` (see its README). What has a model there is drawn with it, everything else keeps its sprites.
+For now the package has simple sample models: a bus and a lorry, the common houses, flats, offices, shops and church of the base game's temperate towns, the factory, rail station platforms, buildings and roofs, and bus and lorry stops.
+
+After cloning, fetch the package with `git submodule update --init`. Without it the game builds and runs, but everything is drawn with sprites.
 
 ## Using it
 
@@ -103,6 +105,10 @@ A click first looks for a vehicle of which the sprite is below the cursor, then 
 A vehicle with a model is put on the map at its position, turned to its direction of travel and tilted on slopes, and lit with the same light as the terrain.
 Parts of a model with a material named `company` take the colour of the owner.
 
+A building with a model is part of the terrain chunk it stands on (`AddTileModel()` in `terrain_mesh.cpp`): the sprites the tile draws for the building are left out and the model is put on the highest corner of the footprint, turned to face the way the building faces.
+Houses and industries take the colour the game picked for them, stations, stops and objects that of their owner.
+A tile with a foundation is drawn flat at the top of the foundation, with stone walls down to the terrain around it, so that a model stands on level ground; half-tile foundations still use the sprites.
+
 The existing game is touched in a few small places:
 
 * `MarkTileDirtyByTile()` in `viewport.cpp` tells the 3D view which tile changed, `SetSelectionTilesDirty()` tells it where the selection changed, `GetTileBelowCursor()` asks it for the tile below the cursor, and `CollectTileSprites()`, `HasTileSelection()`, `DrawView3DSigns()` and `HandleView3DClicked()` at the end of that file tell it what a tile draws, draw the names and pass on clicks.
@@ -120,7 +126,7 @@ The existing game is touched in a few small places:
 * Names and signs are always drawn on top, also when a hill is in front of their place, and all of them in view are shown however far away they are.
 * The tile below the cursor is found on the bare terrain, so behind a tall building the tile that the building hides is picked.
 * What is in front of what is decided per sprite, so now and then a vehicle shows through the corner of a building it passes behind.
-* Buildings made of several sprites or covering several tiles can come apart when the camera is rotated, and tiles on foundations draw their ground as an upright sprite too.
+* Buildings without a model that are made of several sprites or cover several tiles can come apart when the camera is rotated, and tiles on half-tile foundations draw their ground as an upright sprite too.
 * Transparency options of the 2D game are followed, but see-through sprites are left out rather than drawn see-through.
 * Tiles with animations, such as some industries, rebuild their whole chunk of 64x64 tiles for every animation step.
 * Water is not animated, and sprites far away flicker a little because they have no smaller versions yet.

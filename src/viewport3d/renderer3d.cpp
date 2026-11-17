@@ -54,6 +54,7 @@ struct GpuChunk {
 	uint32_t num_quads = 0; ///< Number of tiles of terrain.
 	bgfx::VertexBufferHandle sprites = BGFX_INVALID_HANDLE; ///< The sprites standing on the terrain.
 	uint32_t num_sprites = 0; ///< Number of sprites.
+	std::vector<ModelInstance> models; ///< 3D models standing on the terrain.
 };
 
 /** GPU buffers of one 3D model. */
@@ -373,6 +374,8 @@ void Renderer3D::SetChunk(ChunkID id, const TerrainChunkMesh &mesh)
 			this->impl->layout);
 	}
 
+	chunk.models = mesh.models;
+
 	chunk.num_sprites = static_cast<uint32_t>(mesh.sprites.size() / 4);
 	if (chunk.num_sprites != 0) {
 		chunk.sprites = bgfx::createVertexBuffer(
@@ -461,6 +464,24 @@ void Renderer3D::Render(uint width, uint height, const Camera3D &camera, std::sp
 	const float sprite_nearer[4] = {(eye.x - camera.target.x) / eye_distance, (eye.y - camera.target.y) / eye_distance, (eye.z - camera.target.z) / eye_distance,
 		WORLD_Z_SCALE / std::max(0.35f, std::sin(camera.pitch))};
 
+	/* The same light as the terrain gets in BuildTerrainChunkMesh(). */
+	static constexpr float MODEL_SUN[4] = {-0.4683f, 0.5620f, 0.6817f, 0};
+	static constexpr float MODEL_LIGHT[4] = {0.45f, 0.80f, 0, 0};
+	auto draw_model = [&](const ModelInstance &instance) {
+		if (instance.model >= impl.models.size()) return;
+		const GpuModel &gpu = impl.models[instance.model];
+		if (!bgfx::isValid(gpu.vertices)) return;
+
+		bgfx::setTransform(instance.transform.m.data());
+		bgfx::setVertexBuffer(0, gpu.vertices);
+		bgfx::setIndexBuffer(gpu.indices);
+		bgfx::setUniform(impl.model_tint, instance.tint.data());
+		bgfx::setUniform(impl.model_sun, MODEL_SUN);
+		bgfx::setUniform(impl.model_light, MODEL_LIGHT);
+		bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A | BGFX_STATE_WRITE_Z | BGFX_STATE_DEPTH_TEST_LESS);
+		bgfx::submit(VIEW_SCENE, impl.model_program);
+	};
+
 	for (ChunkID id : chunks) {
 		auto it = impl.chunks.find(id);
 		if (it == impl.chunks.end()) continue;
@@ -474,6 +495,8 @@ void Renderer3D::Render(uint width, uint height, const Camera3D &camera, std::sp
 			bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A | BGFX_STATE_WRITE_Z | BGFX_STATE_DEPTH_TEST_LESS);
 			bgfx::submit(VIEW_SCENE, impl.program);
 		}
+
+		for (const ModelInstance &instance : chunk.models) draw_model(instance);
 
 		if (bgfx::isValid(chunk.sprites)) {
 			bgfx::setTransform(model.m.data());
@@ -504,23 +527,7 @@ void Renderer3D::Render(uint width, uint height, const Camera3D &camera, std::sp
 		bgfx::submit(VIEW_SCENE, impl.sprite_program);
 	}
 
-	/* The same light as the terrain gets in BuildTerrainChunkMesh(). */
-	static constexpr float MODEL_SUN[4] = {-0.4683f, 0.5620f, 0.6817f, 0};
-	static constexpr float MODEL_LIGHT[4] = {0.45f, 0.80f, 0, 0};
-	for (const ModelInstance &instance : models) {
-		if (instance.model >= impl.models.size()) continue;
-		const GpuModel &gpu = impl.models[instance.model];
-		if (!bgfx::isValid(gpu.vertices)) continue;
-
-		bgfx::setTransform(instance.transform.m.data());
-		bgfx::setVertexBuffer(0, gpu.vertices);
-		bgfx::setIndexBuffer(gpu.indices);
-		bgfx::setUniform(impl.model_tint, instance.tint.data());
-		bgfx::setUniform(impl.model_sun, MODEL_SUN);
-		bgfx::setUniform(impl.model_light, MODEL_LIGHT);
-		bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A | BGFX_STATE_WRITE_Z | BGFX_STATE_DEPTH_TEST_LESS);
-		bgfx::submit(VIEW_SCENE, impl.model_program);
-	}
+	for (const ModelInstance &instance : models) draw_model(instance);
 
 	/* Copy the finished image into a texture the CPU can read, and ask for its contents. */
 	bgfx::blit(VIEW_READBACK, bgfx::TextureRegion{.handle = impl.readback}, bgfx::TextureRegion{.handle = bgfx::getTexture(impl.framebuffer, 0)});

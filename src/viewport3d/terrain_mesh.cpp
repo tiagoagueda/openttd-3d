@@ -27,6 +27,20 @@
 #include "../table/clear_land.h"
 #include "../table/tree_land.h"
 
+#include "model_pack.h"
+#include "../debug.h"
+#include "../company_func.h"
+#include "../house.h"
+#include "../industry.h"
+#include "../industry_map.h"
+#include "../newgrf_object.h"
+#include "../newgrf_roadstop.h"
+#include "../newgrf_station.h"
+#include "../object_base.h"
+#include "../object_map.h"
+#include "../station_map.h"
+#include "../town.h"
+#include "../town_map.h"
 #include "../safeguards.h"
 
 /** Simple RGB colour with floating point channels in the range 0..255. */
@@ -45,6 +59,7 @@ struct TileGround {
 	uint texture; ///< The layer of the texture.
 	TerrainColour colour; ///< Colour to multiply the texture with.
 	bool shaded = false; ///< Whether the texture already has the shading of the slope in it.
+	bool foundation = false; ///< Whether the tile stands on a foundation, so its top is flat at the height of its highest corner.
 };
 
 static constexpr TerrainColour COLOUR_WHITE{0xff, 0xff, 0xff};
@@ -242,6 +257,130 @@ static void AddFences(Tile tile, uint x, uint y, SpriteAtlas &atlas, TerrainChun
 }
 
 /**
+ * Place a 3D model on the map.
+ * @param entry The model.
+ * @param tile The northern tile of what it stands on.
+ * @param size_x Size of what it stands on along the x axis, in tiles.
+ * @param size_y Size of what it stands on along the y axis, in tiles.
+ * @param front The direction the front of the model points to.
+ * @param tint The colour of the parts of the model named "company".
+ * @param models The models to add to.
+ */
+static void PlaceModel(const ModelPack::Entry &entry, TileIndex tile, uint size_x, uint size_y, DiagDirection front, const std::array<float, 4> &tint, std::vector<ModelInstance> &models)
+{
+	/* Which way each direction points on the map. */
+	static constexpr float HEADINGS[4][2] = {{-1, 0}, {0, 1}, {1, 0}, {0, -1}};
+	const float *heading = HEADINGS[to_underlying(front)];
+
+	/* Buildings on slopes stand on a foundation at the height of the highest corner. */
+	int z = 0;
+	for (uint dy = 0; dy < size_y; dy++) {
+		for (uint dx = 0; dx < size_x; dx++) {
+			TileIndex t = TileAddWrap(tile, dx, dy);
+			if (t != INVALID_TILE) z = std::max(z, GetTileMaxPixelZ(t));
+		}
+	}
+
+	ModelInstance &instance = models.emplace_back();
+	instance.model = entry.model;
+	float s = entry.scale;
+	instance.transform.m = {
+		heading[0] * s, heading[1] * s, 0, 0,
+		-heading[1] * s, heading[0] * s, 0, 0,
+		0, 0, s, 0,
+		(TileX(tile) + size_x * 0.5f) * TILE_SIZE, (TileY(tile) + size_y * 0.5f) * TILE_SIZE, z * WORLD_Z_SCALE, 1,
+	};
+	instance.tint = tint;
+}
+
+/**
+ * Tint of things owned by a company, or grey for things owned by nobody.
+ * @param owner The owner.
+ */
+static std::array<float, 4> GetOwnerTint(Owner owner)
+{
+	return ModelPack::GetTint(owner < MAX_COMPANIES ? _company_colours[owner] : Colours::Grey);
+}
+
+/**
+ * Find whether OpenGFX3D has a model for the building on a tile, and add the model when this tile is where it stands.
+ * @param tile The tile.
+ * @param pack The package of 3D models.
+ * @param models The models to add to.
+ * @return Whether the building on the tile is drawn with a model instead of its sprites.
+ */
+static bool AddTileModel(TileIndex tile, const ModelPack &pack, std::vector<ModelInstance> &models)
+{
+	/* The base game's own colours for houses, which have none of their own. */
+	static constexpr Colours HOUSE_COLOURS[4] = {Colours::Cream, Colours::Brown, Colours::Grey, Colours::White};
+
+	switch (GetTileType(tile)) {
+		case TileType::House: {
+			if (!IsHouseCompleted(tile)) return false;
+			/* Buildings of several tiles have a model for their northern tile. */
+			HouseID house = GetHouseType(tile);
+			TileIndex north = tile + GetHouseNorthPart(house);
+			const HouseSpec *hs = HouseSpec::Get(house);
+			const ModelPack::Entry *entry = pack.Find(ModelKind::House, hs->grf_prop, house);
+			if (entry == nullptr) return false;
+			if (north == tile) {
+				uint size_x = hs->building_flags.Any(BUILDING_2_TILES_X) ? 2 : 1;
+				uint size_y = hs->building_flags.Any(BUILDING_2_TILES_Y) ? 2 : 1;
+				uint hash = TileHash2Bit(TileX(tile), TileY(tile));
+				Colours colour = hs->grf_prop.HasGrfFile() ? hs->random_colour[hash] : HOUSE_COLOURS[hash];
+				PlaceModel(*entry, tile, size_x, size_y, DiagDirection::SW, ModelPack::GetTint(colour), models);
+			}
+			return true;
+		}
+
+		case TileType::Industry: {
+			if (!IsIndustryCompleted(tile)) return false;
+			IndustryGfx gfx = GetIndustryGfx(tile);
+			const ModelPack::Entry *entry = pack.Find(ModelKind::IndustryTile, GetIndustryTileSpec(gfx)->grf_prop, gfx);
+			if (entry == nullptr) return false;
+			PlaceModel(*entry, tile, 1, 1, DiagDirection::SW, ModelPack::GetTint(Industry::GetByTile(tile)->random_colour), models);
+			return true;
+		}
+
+		case TileType::Station: {
+			/* Things along a track or road point along it, with the side where the 2D game puts the station building on the right. */
+			const ModelPack::Entry *entry = nullptr;
+			DiagDirection front;
+			if (HasStationRail(tile) && !IsRailWaypoint(tile)) {
+				const StationSpec *spec = GetStationSpec(tile);
+				entry = spec != nullptr ? pack.Find(ModelKind::RailStation, spec->grf_prop, 0) : pack.Find(ModelKind::RailStation, 0, GetStationGfx(tile) / 2);
+				front = GetRailStationAxis(tile) == Axis::X ? DiagDirection::SW : DiagDirection::NW;
+			} else if (IsBayRoadStopTile(tile) || (IsDriveThroughStopTile(tile) && !IsRoadWaypoint(tile))) {
+				const RoadStopSpec *spec = GetRoadStopSpec(tile);
+				bool drive_through = IsDriveThroughStopTile(tile);
+				uint id = (drive_through ? 2 : 0) + (IsTruckStop(tile) ? 1 : 0);
+				entry = spec != nullptr ? pack.Find(ModelKind::RoadStop, spec->grf_prop, 0) : pack.Find(ModelKind::RoadStop, 0, id);
+				/* The front of a bay faces the road. */
+				front = drive_through ? (GetDriveThroughStopAxis(tile) == Axis::X ? DiagDirection::SW : DiagDirection::NW) : GetBayRoadStopDir(tile);
+			}
+			if (entry == nullptr) return false;
+			PlaceModel(*entry, tile, 1, 1, front, GetOwnerTint(GetTileOwner(tile)), models);
+			return true;
+		}
+
+		case TileType::Object: {
+			const Object *o = Object::GetByTile(tile);
+			const ObjectSpec *spec = ObjectSpec::Get(o->type);
+			const ModelPack::Entry *entry = pack.Find(ModelKind::Object, spec->grf_prop, o->type);
+			if (entry == nullptr) return false;
+			if (tile == o->location.tile) {
+				static constexpr DiagDirection VIEWS[4] = {DiagDirection::SW, DiagDirection::NW, DiagDirection::NE, DiagDirection::SE};
+				PlaceModel(*entry, tile, o->location.w, o->location.h, VIEWS[o->view & 3], GetOwnerTint(GetTileOwner(tile)), models);
+			}
+			return true;
+		}
+
+		default:
+			return false;
+	}
+}
+
+/**
  * Add what the 2D game draws for a tile that has more on it than landscape, such as tracks, roads and buildings.
  * Sprites that the 2D game draws flat on the ground become the ground texture of the tile.
  * Everything else becomes sprites that stand upright at the front of their bounding box.
@@ -250,11 +389,12 @@ static void AddFences(Tile tile, uint x, uint y, SpriteAtlas &atlas, TerrainChun
  * @param heights Heights of the northern, western, eastern and southern corner, in height levels above the lowest.
  * @param textures The ground textures.
  * @param atlas The atlas that provides the sprites.
+ * @param pack The package of 3D models, or \c nullptr.
  * @param mesh The mesh to add to.
  * @param ground_only Only look at the ground; used for landscape tiles with a selection on them, which add their trees and fences themselves.
  * @return How to draw the ground of the tile.
  */
-static TileGround AddTileSprites(uint x, uint y, const std::array<uint8_t, 4> &heights, GroundTextures &textures, SpriteAtlas &atlas, TerrainChunkMesh &mesh, bool ground_only = false)
+static TileGround AddTileSprites(uint x, uint y, const std::array<uint8_t, 4> &heights, GroundTextures &textures, SpriteAtlas &atlas, const ModelPack *pack, TerrainChunkMesh &mesh, bool ground_only = false)
 {
 	static TileSprites sprites;
 	static std::vector<SpritePart> group_parts;
@@ -262,13 +402,33 @@ static TileGround AddTileSprites(uint x, uint y, const std::array<uint8_t, 4> &h
 	TileIndex tile = TileXY(x, y);
 	CollectTileSprites(tile, sprites);
 
+	/* A building with a 3D model keeps its ground and foundation, but not its other sprites. */
+	bool replaced = !ground_only && pack != nullptr && !pack->IsEmpty() && AddTileModel(tile, *pack, mesh.models);
+
 	int tile_x = x * TILE_SIZE;
 	int tile_y = y * TILE_SIZE;
-	int tile_z = std::get<1>(GetTilePixelSlope(tile));
+	auto [slope, tile_z] = GetTilePixelSlope(tile);
+
+	/* Foundations under half a tile leave the other half sloped; those keep the foundation sprite. */
+	bool flat_foundation = !IsHalftileSlope(slope) && std::ranges::any_of(sprites.groups, &TileSpriteGroup::foundation);
+	int foundation_z = GetTileMaxPixelZ(tile);
+	static std::vector<SpritePart> ground;
+	ground = sprites.ground;
 
 	uint index = 0;
 	for (const TileSpriteGroup &group : sprites.groups) {
-		if (group.count == 0 || ground_only) continue;
+		if (group.count == 0) continue;
+		if (group.foundation && flat_foundation) {
+			/* The foundation becomes walls of the terrain. What lies on top of it, like tracks, becomes the ground of the tile;
+			 * the 2D game draws that higher up, by the height of the foundation. */
+			for (uint i = group.first + 1; i < group.first + group.count; i++) {
+				SpritePart part = sprites.parts[i];
+				part.y += (foundation_z - tile_z) * ZOOM_BASE;
+				ground.push_back(part);
+			}
+			continue;
+		}
+		if (ground_only || (replaced && !group.foundation)) continue;
 
 		/* The sprite stands in the middle of its bounding box, so it covers the place it stands on from all sides. */
 		int size_x = group.xmax + 1 - group.xmin;
@@ -292,10 +452,15 @@ static TileGround AddTileSprites(uint x, uint y, const std::array<uint8_t, 4> &h
 		AddUprightSprite(atlas.Get(group_parts), centre_x, centre_y, static_cast<float>(group.zmin), nearer, mesh.sprites);
 	}
 
-	if (sprites.ground.empty()) return ground_only ? GetTileGround(Tile(tile), x, y) : TileGround{GROUND_TEXTURE_GRASS, COLOUR_WHITE};
-	uint texture = textures.Get(sprites.ground, heights);
-	if (texture == GROUND_TEXTURE_NONE) return TileGround{GROUND_TEXTURE_NONE, TerrainColour{0x80, 0x80, 0x80}};
-	return TileGround{texture, COLOUR_WHITE, true};
+	TileGround result;
+	if (ground.empty()) {
+		result = ground_only ? GetTileGround(Tile(tile), x, y) : TileGround{GROUND_TEXTURE_GRASS, COLOUR_WHITE};
+	} else {
+		uint texture = textures.Get(ground, flat_foundation ? std::array<uint8_t, 4>{} : heights);
+		result = texture == GROUND_TEXTURE_NONE ? TileGround{GROUND_TEXTURE_NONE, TerrainColour{0x80, 0x80, 0x80}} : TileGround{texture, COLOUR_WHITE, true};
+	}
+	result.foundation = flat_foundation;
+	return result;
 }
 
 /**
@@ -304,9 +469,10 @@ static TileGround AddTileSprites(uint x, uint y, const std::array<uint8_t, 4> &h
  * @param chunk_y Y coordinate of the chunk, in chunks.
  * @param textures The ground textures.
  * @param atlas The atlas that provides the sprites.
+ * @param pack The package of 3D models, or \c nullptr.
  * @param[out] mesh The mesh to fill; previous contents are discarded.
  */
-void BuildTerrainChunkMesh(uint chunk_x, uint chunk_y, GroundTextures &textures, SpriteAtlas &atlas, TerrainChunkMesh &mesh)
+void BuildTerrainChunkMesh(uint chunk_x, uint chunk_y, GroundTextures &textures, SpriteAtlas &atlas, const ModelPack *pack, TerrainChunkMesh &mesh)
 {
 	/* Direction towards the light. It comes from the east, like in the original graphics. */
 	static constexpr float SUN_X = -0.4683f, SUN_Y = 0.5620f, SUN_Z = 0.6817f;
@@ -317,6 +483,7 @@ void BuildTerrainChunkMesh(uint chunk_x, uint chunk_y, GroundTextures &textures,
 
 	mesh.vertices.clear();
 	mesh.sprites.clear();
+	mesh.models.clear();
 	mesh.vertices.reserve(TERRAIN_CHUNK_SIZE * TERRAIN_CHUNK_SIZE * 4);
 	mesh.min_height = UINT_MAX;
 	mesh.max_height = 0;
@@ -365,7 +532,7 @@ void BuildTerrainChunkMesh(uint chunk_x, uint chunk_y, GroundTextures &textures,
 			TileGround ground;
 			if (collect || selected) {
 				int low = std::min({hn, hw, he, hs});
-				ground = AddTileSprites(x, y, {static_cast<uint8_t>(hn - low), static_cast<uint8_t>(hw - low), static_cast<uint8_t>(he - low), static_cast<uint8_t>(hs - low)}, textures, atlas, mesh, selected);
+				ground = AddTileSprites(x, y, {static_cast<uint8_t>(hn - low), static_cast<uint8_t>(hw - low), static_cast<uint8_t>(he - low), static_cast<uint8_t>(hs - low)}, textures, atlas, pack, mesh, selected);
 			} else {
 				ground = GetTileGround(tile, x, y);
 			}
@@ -382,6 +549,28 @@ void BuildTerrainChunkMesh(uint chunk_x, uint chunk_y, GroundTextures &textures,
 			auto vertex = [&](uint vx, uint vy, int h) {
 				return TerrainVertex{static_cast<float>(vx), static_cast<float>(vy), static_cast<float>(h), r, g, b, 0, static_cast<float>(ground.texture)};
 			};
+			if (ground.foundation) {
+				/* Walls from the flat top of the foundation down to the ground around it. */
+				static constexpr TerrainColour STONE{0xa8, 0xa0, 0x90};
+				int top = std::max({hn, hw, he, hs});
+				auto wall = [&](uint ax, uint ay, int ha, uint bx, uint by, int hb, float nx, float ny) {
+					if ((ha == top && hb == top) || mesh.vertices.size() / 4 >= MAX_CHUNK_QUADS - 1) return;
+					float wall_light = (AMBIENT + DIFFUSE * std::max(0.0f, nx * SUN_X + ny * SUN_Y)) * 0.5f;
+					uint8_t wr = static_cast<uint8_t>(std::clamp(STONE.r * wall_light, 0.0f, 255.0f));
+					uint8_t wg = static_cast<uint8_t>(std::clamp(STONE.g * wall_light, 0.0f, 255.0f));
+					uint8_t wb = static_cast<uint8_t>(std::clamp(STONE.b * wall_light, 0.0f, 255.0f));
+					auto corner = [&](uint vx, uint vy, int h) {
+						return TerrainVertex{static_cast<float>(vx), static_cast<float>(vy), static_cast<float>(h), wr, wg, wb, 0, static_cast<float>(GROUND_TEXTURE_NONE)};
+					};
+					mesh.vertices.insert(mesh.vertices.end(), {corner(ax, ay, top), corner(bx, by, top), corner(ax, ay, ha), corner(bx, by, hb)});
+				};
+				wall(x, y, hn, x + 1, y, hw, 0, -1);
+				wall(x + 1, y, hw, x + 1, y + 1, hs, 1, 0);
+				wall(x + 1, y + 1, hs, x, y + 1, he, 0, 1);
+				wall(x, y + 1, he, x, y, hn, -1, 0);
+				hn = hw = he = hs = top;
+			}
+
 			TerrainVertex vn = vertex(x, y, hn);
 			TerrainVertex vw = vertex(x + 1, y, hw);
 			TerrainVertex ve = vertex(x, y + 1, he);
@@ -413,6 +602,11 @@ void BuildTerrainChunkMesh(uint chunk_x, uint chunk_y, GroundTextures &textures,
 	data = reinterpret_cast<const uint8_t *>(mesh.sprites.data());
 	for (size_t i = 0; i < mesh.sprites.size() * sizeof(SpriteVertex); i++) {
 		hash = (hash ^ data[i]) * 0x100000001b3ULL;
+	}
+	for (const ModelInstance &instance : mesh.models) {
+		hash = (hash ^ instance.model) * 0x100000001b3ULL;
+		for (float f : instance.transform.m) hash = (hash ^ std::bit_cast<uint32_t>(f)) * 0x100000001b3ULL;
+		for (float f : instance.tint) hash = (hash ^ std::bit_cast<uint32_t>(f)) * 0x100000001b3ULL;
 	}
 	mesh.hash = hash;
 }

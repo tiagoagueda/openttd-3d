@@ -10,6 +10,8 @@
 #ifndef VIEWPORT3D_TERRAIN_MESH_H
 #define VIEWPORT3D_TERRAIN_MESH_H
 
+#include "model3d.h"
+
 /** Number of tiles along one side of a terrain chunk. */
 static constexpr uint TERRAIN_CHUNK_SIZE = 64;
 
@@ -55,15 +57,17 @@ struct TerrainChunkMesh {
 	std::vector<SpriteVertex> sprites; ///< Four vertices per sprite standing on the terrain, in the same order as for tiles.
 	uint min_height = 0; ///< Lowest height level in the chunk.
 	uint max_height = 0; ///< Highest height level in the chunk.
+	std::vector<ModelInstance> models; ///< 3D models standing on the terrain, in place of sprites.
 	uint64_t hash = 0; ///< Hash over the vertices, to detect whether a rebuild changed anything.
 };
 
 class GroundTextures;
+class ModelPack;
 class SpriteAtlas;
 struct AtlasSprite;
 
 void AddUprightSprite(const AtlasSprite &sprite, float x, float y, float z, float nearer, std::vector<SpriteVertex> &vertices);
 
-void BuildTerrainChunkMesh(uint chunk_x, uint chunk_y, GroundTextures &textures, SpriteAtlas &atlas, TerrainChunkMesh &mesh);
+void BuildTerrainChunkMesh(uint chunk_x, uint chunk_y, GroundTextures &textures, SpriteAtlas &atlas, const ModelPack *pack, TerrainChunkMesh &mesh);
 
 #endif /* VIEWPORT3D_TERRAIN_MESH_H */
