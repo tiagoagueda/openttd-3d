@@ -189,6 +189,124 @@ static void AddTrees(Tile tile, uint x, uint y, SpriteAtlas &atlas, TerrainChunk
 }
 
 /**
+ * Add the trees of a tile as 3D models, at the places where DrawTile_Trees() draws their sprites.
+ * @param tile The tile, which must have trees.
+ * @param x X coordinate of the tile.
+ * @param y Y coordinate of the tile.
+ * @param pack The package of 3D models.
+ * @param mesh The mesh to add to.
+ * @return Whether the package has a model for the trees of this tile; if not, nothing was added.
+ */
+static bool AddTreeModels(Tile tile, uint x, uint y, const ModelPack &pack, TerrainChunkMesh &mesh)
+{
+	uint type = GetTreeType(tile);
+	/* Sub-arctic trees above the snow line look different. */
+	if ((GetTreeGround(tile) == TreeGround::SnowOrDesert || GetTreeGround(tile) == TreeGround::RoughSnow) &&
+			GetTreeDensity(tile) >= 2 && IsInsideMM(type, TREE_SUB_ARCTIC, TREE_RAINFOREST)) {
+		type += 0x40;
+	}
+	const ModelPack::Entry *entry = pack.Find(ModelKind::Tree, 0, type);
+	if (entry == nullptr) return false;
+
+	/* How big a tree is while it grows and dies, by growth stage. */
+	static constexpr float GROWTH_SCALE[] = {0.35f, 0.55f, 0.78f, 1.0f, 0.97f, 0.93f, 0.9f};
+
+	uint tmp = CountBits(TileXY(x, y).base() + x * TILE_SIZE + y * TILE_SIZE);
+	const Coord2D<uint8_t> *positions = _tree_layout_xy[GB(tmp, 2, 2)];
+	auto [slope, base_z] = GetTilePixelSlope(TileXY(x, y));
+
+	uint trees = GetTreeCount(tile);
+	for (uint i = 0; i < trees; i++) {
+		/* Only the last tree of a tile is still growing or dying. */
+		uint stage = to_underlying(i == trees - 1 ? GetTreeGrowth(tile) : TreeGrowthStage::Grown);
+		/* Each tree turns its own way and differs a little in size. */
+		uint32_t hash = (TileXY(x, y).base() * 4 + i) * 2654435761U;
+		float yaw = (hash >> 8 & 0xFFF) / 4096.0f * 6.2831853f;
+		float s = entry->scale * GROWTH_SCALE[std::min<uint>(stage, std::size(GROWTH_SCALE) - 1)] * (0.88f + (hash >> 24) / 255.0f * 0.24f);
+		float c = std::cos(yaw) * s;
+		float n = std::sin(yaw) * s;
+		int z = base_z + GetPartialPixelZ(positions[i].x, positions[i].y, slope);
+
+		ModelInstance &instance = mesh.models.emplace_back();
+		instance.model = entry->model;
+		instance.transform.m = {
+			c, n, 0, 0,
+			-n, c, 0, 0,
+			0, 0, s, 0,
+			static_cast<float>(x * TILE_SIZE + positions[i].x), static_cast<float>(y * TILE_SIZE + positions[i].y), z * WORLD_Z_SCALE, 1,
+		};
+		instance.tint = {1, 1, 1, 1};
+	}
+	return true;
+}
+
+/**
+ * Add a 3D model that lies on the ground of a whole tile, like the crop of a field, tilted along the slope of the tile.
+ * @param entry The model.
+ * @param x X coordinate of the tile.
+ * @param y Y coordinate of the tile.
+ * @param heights Heights of the northern, western, eastern and southern corner, in height levels.
+ * @param quarter_turns How many quarter turns to turn the model by.
+ * @param mesh The mesh to add to.
+ */
+static void AddGroundModel(const ModelPack::Entry &entry, uint x, uint y, const std::array<int, 4> &heights, uint quarter_turns, TerrainChunkMesh &mesh)
+{
+	auto [hn, hw, he, hs] = heights;
+	/* The plane that fits the corners best: its height in the middle, and how much it rises along x and y per world unit. */
+	float zc = (hn + hw + he + hs) * 0.25f * HEIGHT_LEVEL_SIZE;
+	float ax = ((hw + hs) - (hn + he)) * 0.5f * HEIGHT_LEVEL_SIZE / TILE_SIZE;
+	float ay = ((he + hs) - (hn + hw)) * 0.5f * HEIGHT_LEVEL_SIZE / TILE_SIZE;
+	static constexpr float TURNS[4][2] = {{1, 0}, {0, 1}, {-1, 0}, {0, -1}};
+	float c = TURNS[quarter_turns % 4][0] * entry.scale;
+	float n = TURNS[quarter_turns % 4][1] * entry.scale;
+
+	ModelInstance &instance = mesh.models.emplace_back();
+	instance.model = entry.model;
+	instance.transform.m = {
+		c, n, ax * c + ay * n, 0,
+		-n, c, -ax * n + ay * c, 0,
+		0, 0, entry.scale, 0,
+		(x + 0.5f) * TILE_SIZE, (y + 0.5f) * TILE_SIZE, zc, 1,
+	};
+	instance.tint = {1, 1, 1, 1};
+}
+
+/**
+ * Add the 3D model of the landscape of a clear tile: the crop of a field, rough land or rocks.
+ * @param tile The tile, which must be a clear tile.
+ * @param x X coordinate of the tile.
+ * @param y Y coordinate of the tile.
+ * @param heights Heights of the northern, western, eastern and southern corner, in height levels.
+ * @param pack The package of 3D models.
+ * @param mesh The mesh to add to.
+ */
+static void AddClearModel(Tile tile, uint x, uint y, const std::array<int, 4> &heights, const ModelPack &pack, TerrainChunkMesh &mesh)
+{
+	if (IsSnowTile(tile)) return;
+	uint hash = TileHash2Bit(x, y);
+	const ModelPack::Entry *entry = nullptr;
+	uint turns = 0;
+	switch (GetClearGround(tile)) {
+		case ClearGround::Fields:
+			entry = pack.Find(ModelKind::Field, 0, GetFieldType(tile));
+			break;
+		case ClearGround::Rough:
+			entry = pack.Find(ModelKind::Rough, 0, hash);
+			if (entry == nullptr) entry = pack.Find(ModelKind::Rough, 0, 0);
+			turns = TileHash2Bit(y, x);
+			break;
+		case ClearGround::Rocks:
+			entry = pack.Find(ModelKind::Rocks, 0, hash);
+			if (entry == nullptr) entry = pack.Find(ModelKind::Rocks, 0, 0);
+			turns = TileHash2Bit(y, x);
+			break;
+		default:
+			break;
+	}
+	if (entry != nullptr) AddGroundModel(*entry, x, y, heights, turns, mesh);
+}
+
+/**
  * Add a sprite that stands upright along a line on the map, like a fence along the edge of a tile.
  * The sprite is laid on a wall from the ground between two points upwards, such that from the
  * viewing angle of the 2D game it looks exactly like the 2D game draws it.
@@ -283,6 +401,7 @@ ModelInstance AnimatedPart::Place(float seconds) const
 
 	/* Turn around the axis (Rodrigues), then move to where the part belongs. */
 	Vec3 k = Normalise(Vec3{this->axis[0], this->axis[1], this->axis[2]});
+	float lift = this->lift == 0 ? 0 : this->lift * 0.5f * (1 - std::cos(t * 6.2831853f / this->period));
 	float c = std::cos(angle);
 	float s = std::sin(angle);
 	float v = 1 - c;
@@ -291,7 +410,7 @@ ModelInstance AnimatedPart::Place(float seconds) const
 		c + k.x * k.x * v, k.y * k.x * v + k.z * s, k.z * k.x * v - k.y * s, 0,
 		k.x * k.y * v - k.z * s, c + k.y * k.y * v, k.z * k.y * v + k.x * s, 0,
 		k.x * k.z * v + k.y * s, k.y * k.z * v - k.x * s, c + k.z * k.z * v, 0,
-		this->at[0], this->at[1], this->at[2], 1,
+		this->at[0] + k.x * lift, this->at[1] + k.y * lift, this->at[2] + k.z * lift, 1,
 	};
 	ModelInstance instance;
 	instance.model = this->model;
@@ -330,7 +449,7 @@ static void PlaceModel(const ModelPack::Entry &entry, TileIndex tile, uint size_
 	/* Parts of neighbouring buildings move a little out of step, as the 2D game does too. */
 	float phase = (tile.base() * 2654435761U >> 20) / 4096.0f * 4.0f;
 	for (const ModelPack::ModelPart &part : entry.parts) {
-		_tile_parts->push_back({instance.transform, tint, part.model, part.at, part.axis, part.spin, part.swing, part.period, phase});
+		_tile_parts->push_back({instance.transform, tint, part.model, part.at, part.axis, part.spin, part.swing, part.period, part.lift, phase});
 	}
 }
 
@@ -694,8 +813,12 @@ void BuildTerrainChunkMesh(uint chunk_x, uint chunk_y, GroundTextures &textures,
 			}
 
 			if (!collect) {
-				if (IsTileType(tile, TileType::Trees)) AddTrees(tile, x, y, atlas, mesh);
-				if (IsTileType(tile, TileType::Clear) && IsClearGround(tile, ClearGround::Fields)) AddFences(tile, x, y, atlas, mesh);
+				bool models = pack != nullptr && !pack->IsEmpty();
+				if (IsTileType(tile, TileType::Trees) && !(models && AddTreeModels(tile, x, y, *pack, mesh))) AddTrees(tile, x, y, atlas, mesh);
+				if (IsTileType(tile, TileType::Clear)) {
+					if (IsClearGround(tile, ClearGround::Fields)) AddFences(tile, x, y, atlas, mesh);
+					if (models && !ground.foundation) AddClearModel(tile, x, y, {hn, hw, he, hs}, *pack, mesh);
+				}
 			}
 		}
 	}

@@ -125,6 +125,7 @@ void ModelPack::ReadEntries(const nlohmann::json &list, std::initializer_list<st
 				part.spin = item.value("spin", 0.0f);
 				part.swing = item.value("swing", 0.0f);
 				part.period = std::max(0.05f, item.value("period", 1.0f));
+				part.lift = item.value("lift", 0.0f);
 				parts.push_back(part);
 			}
 		}
@@ -165,6 +166,7 @@ ModelPack::ModelPack()
 				{"road_stop", ModelKind::RoadStop}, {"object", ModelKind::Object}, {"airport_tile", ModelKind::AirportTile},
 				{"dock", ModelKind::Dock}, {"buoy", ModelKind::Buoy}, {"rail_depot", ModelKind::RailDepot},
 				{"road_depot", ModelKind::RoadDepot}, {"ship_depot", ModelKind::ShipDepot},
+				{"tree", ModelKind::Tree}, {"field", ModelKind::Field}, {"rough", ModelKind::Rough}, {"rocks", ModelKind::Rocks},
 			}, loaded);
 		}
 

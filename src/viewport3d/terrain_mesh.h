@@ -57,6 +57,7 @@ struct AnimatedPart {
 	float spin; ///< Radians per second it keeps turning by.
 	float swing; ///< Radians it swings to either side.
 	float period; ///< Seconds for one swing back and forth.
+	float lift; ///< How far it moves along its axis and back, once per period.
 	float phase; ///< Seconds the part is ahead of others, so that neighbours do not all move together.
 
 	bool operator==(const AnimatedPart &other) const = default;

@@ -36,6 +36,10 @@ enum class ModelKind : uint8_t {
 	RailDepot, ///< Train depots.
 	RoadDepot, ///< Road vehicle depots.
 	ShipDepot, ///< Ship depots, both tiles together.
+	Tree, ///< One tree, by tree type; sub-arctic trees above the snow line are the type + 0x40.
+	Field, ///< A farm field, by its state from ploughed (0) to harvested with hay (8).
+	Rough, ///< Rough land, by version; the game picks one for each tile.
+	Rocks, ///< Rocky land, by version; the game picks one for each tile.
 };
 
 /**
@@ -52,6 +56,7 @@ public:
 		float spin = 0; ///< Radians per second it keeps turning by.
 		float swing = 0; ///< Radians it swings to either side, back and forth.
 		float period = 1; ///< Seconds for one swing back and forth.
+		float lift = 0; ///< World units it moves along its axis and back, once per period.
 	};
 
 	/** A model for something on the map. */

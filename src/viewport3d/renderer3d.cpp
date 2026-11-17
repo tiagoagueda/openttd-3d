@@ -25,6 +25,8 @@
 #include "shaders/vs_shadow.bin.h"
 #include "shaders/fs_shadow.bin.h"
 #include "shaders/fs_sprite_shadow.bin.h"
+#include "shaders/vs_model_instanced.bin.h"
+#include "shaders/vs_shadow_instanced.bin.h"
 
 #include "../safeguards.h"
 
@@ -81,6 +83,9 @@ struct Renderer3D::Impl {
 	std::vector<GpuModel> models;
 	bgfx::ProgramHandle shadow_program = BGFX_INVALID_HANDLE; ///< Draws depth into the shadow map.
 	bgfx::ProgramHandle sprite_shadow_program = BGFX_INVALID_HANDLE; ///< Draws sprites, turned towards the sun, into the shadow map.
+	bgfx::ProgramHandle model_instanced_program = BGFX_INVALID_HANDLE; ///< Draws many copies of one model at once.
+	bgfx::ProgramHandle shadow_instanced_program = BGFX_INVALID_HANDLE; ///< Draws many copies of one model into the shadow map.
+	std::vector<std::vector<std::array<float, 20>>> batches; ///< For each model, the copies to draw this frame: model matrix and tint.
 	bgfx::FrameBufferHandle shadow_map = BGFX_INVALID_HANDLE; ///< Depth of what casts shadows, seen from the sun.
 	bgfx::UniformHandle shadow_sampler = BGFX_INVALID_HANDLE;
 	bgfx::UniformHandle shadow_matrix = BGFX_INVALID_HANDLE;
@@ -229,6 +234,10 @@ static bgfx::ShaderHandle CreateShader(const ShaderVariants &variants)
 	/* The shadow map; without a depth format that can be compared when sampling, there are no shadows, but the shaders still need a map. */
 	impl.shadow_program = bgfx::createProgram(CreateShader(SHADER_VARIANTS(vs_shadow)), CreateShader(SHADER_VARIANTS(fs_shadow)), true);
 	impl.sprite_shadow_program = bgfx::createProgram(CreateShader(SHADER_VARIANTS(vs_sprite)), CreateShader(SHADER_VARIANTS(fs_sprite_shadow)), true);
+	if (bgfx::getCaps()->limits.maxInstanceData >= 5) {
+		impl.model_instanced_program = bgfx::createProgram(CreateShader(SHADER_VARIANTS(vs_model_instanced)), CreateShader(SHADER_VARIANTS(fs_model)), true);
+		impl.shadow_instanced_program = bgfx::createProgram(CreateShader(SHADER_VARIANTS(vs_shadow_instanced)), CreateShader(SHADER_VARIANTS(fs_shadow)), true);
+	}
 	impl.shadow_sampler = bgfx::createUniform("s_shadow", bgfx::UniformType::Sampler);
 	impl.shadow_matrix = bgfx::createUniform("u_shadowMtx", bgfx::UniformType::Mat4);
 	impl.shadow_params = bgfx::createUniform("u_shadowParams", bgfx::UniformType::Vec4);
@@ -277,6 +286,8 @@ Renderer3D::~Renderer3D()
 	if (bgfx::isValid(impl.model_light)) bgfx::destroy(impl.model_light);
 	if (bgfx::isValid(impl.shadow_program)) bgfx::destroy(impl.shadow_program);
 	if (bgfx::isValid(impl.sprite_shadow_program)) bgfx::destroy(impl.sprite_shadow_program);
+	if (bgfx::isValid(impl.model_instanced_program)) bgfx::destroy(impl.model_instanced_program);
+	if (bgfx::isValid(impl.shadow_instanced_program)) bgfx::destroy(impl.shadow_instanced_program);
 	if (bgfx::isValid(impl.shadow_map)) bgfx::destroy(impl.shadow_map);
 	if (bgfx::isValid(impl.shadow_sampler)) bgfx::destroy(impl.shadow_sampler);
 	if (bgfx::isValid(impl.shadow_matrix)) bgfx::destroy(impl.shadow_matrix);
@@ -624,10 +635,19 @@ void Renderer3D::Render(uint width, uint height, const Camera3D &camera, std::sp
 
 	/* The same light as the terrain gets in BuildTerrainChunkMesh(). */
 	static constexpr float MODEL_LIGHT[4] = {0.45f, 0.80f, 0, 0};
+	/* Copies of the same model are drawn together when the GPU can, which matters for the thousands of trees in a forest. */
+	const bool instancing = bgfx::isValid(impl.model_instanced_program) && bgfx::isValid(impl.shadow_instanced_program);
+	if (impl.batches.size() < impl.models.size()) impl.batches.resize(impl.models.size());
 	auto draw_model = [&](const ModelInstance &instance) {
 		if (instance.model >= impl.models.size()) return;
 		const GpuModel &gpu = impl.models[instance.model];
 		if (!bgfx::isValid(gpu.vertices)) return;
+		const bool batched = instancing && gpu.num_fixed_indices != 0;
+		if (batched) {
+			auto &copy = impl.batches[instance.model].emplace_back();
+			std::copy_n(instance.transform.m.data(), 16, copy.data());
+			std::copy_n(instance.tint.data(), 4, copy.data() + 16);
+		}
 
 		auto submit = [&](const Matrix4 &transform, uint32_t first, uint32_t count) {
 			if (count == 0) return;
@@ -648,7 +668,7 @@ void Renderer3D::Render(uint width, uint height, const Camera3D &camera, std::sp
 			bgfx::setState(BGFX_STATE_WRITE_Z | BGFX_STATE_DEPTH_TEST_LESS);
 			bgfx::submit(VIEW_SHADOW, impl.shadow_program);
 		};
-		submit(instance.transform, 0, gpu.num_fixed_indices);
+		if (!batched) submit(instance.transform, 0, gpu.num_fixed_indices);
 		if (instance.load <= 0) return;
 
 		/* The load sinks along the up axis of the model as the vehicle gets emptier. */
@@ -717,6 +737,38 @@ void Renderer3D::Render(uint width, uint height, const Camera3D &camera, std::sp
 	}
 
 	for (const ModelInstance &instance : models) draw_model(instance);
+
+	static constexpr uint16_t INSTANCE_STRIDE = sizeof(std::array<float, 20>);
+	for (uint id = 0; id < impl.batches.size(); id++) {
+		auto &batch = impl.batches[id];
+		if (batch.empty()) continue;
+		const GpuModel &gpu = impl.models[id];
+		for (size_t first = 0; first < batch.size();) {
+			uint32_t count = bgfx::getAvailInstanceDataBuffer(static_cast<uint32_t>(std::min<size_t>(batch.size() - first, UINT32_MAX)), INSTANCE_STRIDE);
+			if (count == 0) break;
+			bgfx::InstanceDataBuffer copies;
+			bgfx::allocInstanceDataBuffer(&copies, count, INSTANCE_STRIDE);
+			std::copy_n(reinterpret_cast<const uint8_t *>(batch.data() + first), static_cast<size_t>(count) * INSTANCE_STRIDE, copies.data);
+			first += count;
+
+			bgfx::setVertexBuffer(0, gpu.vertices);
+			bgfx::setIndexBuffer(gpu.indices, 0, gpu.num_fixed_indices);
+			bgfx::setInstanceDataBuffer(&copies);
+			bgfx::setUniform(impl.model_sun, MODEL_SUN);
+			bgfx::setUniform(impl.model_light, MODEL_LIGHT);
+			set_shadow();
+			bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A | BGFX_STATE_WRITE_Z | BGFX_STATE_DEPTH_TEST_LESS);
+			bgfx::submit(VIEW_SCENE, impl.model_instanced_program);
+
+			if (!impl.shadows) continue;
+			bgfx::setVertexBuffer(0, gpu.vertices);
+			bgfx::setIndexBuffer(gpu.indices, 0, gpu.num_fixed_indices);
+			bgfx::setInstanceDataBuffer(&copies);
+			bgfx::setState(BGFX_STATE_WRITE_Z | BGFX_STATE_DEPTH_TEST_LESS);
+			bgfx::submit(VIEW_SHADOW, impl.shadow_instanced_program);
+		}
+		batch.clear();
+	}
 
 	/* Copy the finished image into a texture the CPU can read, and ask for its contents. */
 	bgfx::blit(VIEW_READBACK, bgfx::TextureRegion{.handle = impl.readback}, bgfx::TextureRegion{.handle = bgfx::getTexture(impl.framebuffer, 0)});
