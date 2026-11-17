@@ -116,11 +116,11 @@ static TileGround GetTileGround(Tile tile, uint x, uint y)
  * @param z Height in the z units of the game.
  * @param nearer How much nearer to the camera the sprite counts as being when deciding what is in front.
  *               A sprite that stands in the middle of what it shows needs this, or the ground would hide its lower part.
- * @param mesh The mesh to add to.
+ * @param vertices The vertices to add to.
  */
-static void AddUprightSprite(const AtlasSprite &sprite, float x, float y, float z, float nearer, TerrainChunkMesh &mesh)
+void AddUprightSprite(const AtlasSprite &sprite, float x, float y, float z, float nearer, std::vector<SpriteVertex> &vertices)
 {
-	if (!sprite.valid || mesh.sprites.size() >= MAX_CHUNK_QUADS * 4) return;
+	if (!sprite.valid || vertices.size() >= MAX_CHUNK_QUADS * 4) return;
 
 	x /= TILE_SIZE;
 	y /= TILE_SIZE;
@@ -129,7 +129,7 @@ static void AddUprightSprite(const AtlasSprite &sprite, float x, float y, float 
 	float right = sprite.left + sprite.width;
 	float top = -sprite.top;
 	float bottom = -(sprite.top + sprite.height);
-	mesh.sprites.insert(mesh.sprites.end(), {
+	vertices.insert(vertices.end(), {
 		{x, y, z, left, top, sprite.u0, sprite.v0, nearer},
 		{x, y, z, right, top, sprite.u1, sprite.v0, nearer},
 		{x, y, z, left, bottom, sprite.u0, sprite.v1, nearer},
@@ -167,7 +167,7 @@ static void AddTrees(Tile tile, uint x, uint y, SpriteAtlas &atlas, TerrainChunk
 		/* Only the last tree of a tile is still growing or dying. */
 		SpriteID sprite = sprites[i].sprite + to_underlying(i == trees - 1 ? GetTreeGrowth(tile) : TreeGrowthStage::Grown);
 		int z = base_z + GetPartialPixelZ(positions[i].x, positions[i].y, slope);
-		AddUprightSprite(atlas.Get(sprite, sprites[i].pal), static_cast<float>(x * TILE_SIZE + positions[i].x), static_cast<float>(y * TILE_SIZE + positions[i].y), static_cast<float>(z), 0, mesh);
+		AddUprightSprite(atlas.Get(sprite, sprites[i].pal), static_cast<float>(x * TILE_SIZE + positions[i].x), static_cast<float>(y * TILE_SIZE + positions[i].y), static_cast<float>(z), 0, mesh.sprites);
 	}
 }
 
@@ -288,7 +288,7 @@ static TileGround AddTileSprites(uint x, uint y, const std::array<uint8_t, 4> &h
 		 * so the sprite counts as that much nearer. A little extra per sprite puts later sprites of a tile in front of
 		 * earlier ones at the same place, like in the 2D game. */
 		float nearer = (size_x + size_y) * 0.5f + 0.5f * index++;
-		AddUprightSprite(atlas.Get(group_parts), centre_x, centre_y, static_cast<float>(group.zmin), nearer, mesh);
+		AddUprightSprite(atlas.Get(group_parts), centre_x, centre_y, static_cast<float>(group.zmin), nearer, mesh.sprites);
 	}
 
 	if (sprites.ground.empty()) return TileGround{GROUND_TEXTURE_GRASS, COLOUR_WHITE};

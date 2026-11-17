@@ -347,8 +347,9 @@ void Renderer3D::ClearChunks()
  * @param height Height of the image in pixels.
  * @param camera Where to look from.
  * @param chunks The chunks to draw.
+ * @param sprites Sprites to draw that are in no chunk, such as vehicles; four vertices per sprite.
  */
-void Renderer3D::Render(uint width, uint height, const Camera3D &camera, std::span<const ChunkID> chunks)
+void Renderer3D::Render(uint width, uint height, const Camera3D &camera, std::span<const ChunkID> chunks, std::span<const SpriteVertex> sprites)
 {
 	assert(!this->pending);
 	Impl &impl = *this->impl;
@@ -432,6 +433,23 @@ void Renderer3D::Render(uint width, uint height, const Camera3D &camera, std::sp
 			bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A | BGFX_STATE_WRITE_Z | BGFX_STATE_DEPTH_TEST_LESS);
 			bgfx::submit(VIEW_SCENE, impl.sprite_program);
 		}
+	}
+
+	uint32_t num_sprites = static_cast<uint32_t>(std::min<size_t>(sprites.size() / 4, MAX_CHUNK_QUADS));
+	if (num_sprites != 0 && bgfx::getAvailTransientVertexBuffer(num_sprites * 4, impl.sprite_layout) >= num_sprites * 4) {
+		/* These change all the time, so they go in a buffer that only lives for this image. */
+		bgfx::TransientVertexBuffer buffer;
+		bgfx::allocTransientVertexBuffer(&buffer, num_sprites * 4, impl.sprite_layout);
+		std::copy_n(reinterpret_cast<const uint8_t *>(sprites.data()), num_sprites * 4 * sizeof(SpriteVertex), buffer.data);
+
+		bgfx::setTransform(model.m.data());
+		bgfx::setVertexBuffer(0, &buffer);
+		bgfx::setTexture(0, impl.sprite_sampler, impl.sprite_atlas);
+		bgfx::setUniform(impl.sprite_axes, sprite_axes);
+		bgfx::setUniform(impl.sprite_nearer, sprite_nearer);
+		bgfx::setIndexBuffer(impl.quad_indices, 0, num_sprites * 6);
+		bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A | BGFX_STATE_WRITE_Z | BGFX_STATE_DEPTH_TEST_LESS);
+		bgfx::submit(VIEW_SCENE, impl.sprite_program);
 	}
 
 	/* Copy the finished image into a texture the CPU can read, and ask for its contents. */

@@ -3,9 +3,9 @@
 This fork adds a second, 3D view of the map next to the normal 2D game.
 The 2D game, its GUI, the simulation and multiplayer are unchanged: the 3D view only reads the map.
 
-Status: the window shows the map as the 2D game draws it, apart from vehicles and signs, with a free camera.
+Status: the window shows the map and the vehicles as the 2D game draws them, apart from signs, with a free camera.
 Everything is drawn with the graphics of the 2D game, so it follows the base set and NewGRFs in use.
-The ground, tracks and roads lie on the terrain. Trees, buildings, stations, industries, signals, bridges and the like are flat sprites that stand upright and turn to face the camera.
+The ground, tracks and roads lie on the terrain. Trees, buildings, stations, industries, signals, bridges, vehicles and the like are flat sprites that stand upright and turn to face the camera.
 From the viewing angle of the 2D game that looks the same as there; from other angles it shows that they are not real 3D models yet.
 
 ## Using it
@@ -53,6 +53,7 @@ All code lives in `src/viewport3d/`:
 | `terrain_mesh.cpp` | Turns the map array into triangles, in chunks of 64x64 tiles, and picks the ground texture of each tile. Knows nothing about the GPU. |
 | `ground_textures.cpp` | Makes the ground textures from the 2D game's ground sprites when the window opens. |
 | `sprite_atlas.cpp` | Collects the sprites of things that stand on the ground, such as trees and buildings, in one texture. |
+| `vehicle_sprites.cpp` | Makes the sprites of the vehicles in view, anew for every image. |
 | `tile_sprites.h` | Asks a tile which sprites the 2D game draws for it. The implementation is `CollectTileSprites()` in `viewport.cpp`. |
 | `renderer3d.cpp` | The only file that uses bgfx. Draws the chunks into an offscreen image and reads the pixels back. |
 | `camera3d.h` | Orbit camera, matrices and frustum culling. |
@@ -72,6 +73,10 @@ Plain landscape tiles are handled directly. For every other tile, `CollectTileSp
 The sprites the 2D game draws flat on the ground, such as tracks and roads, are pulled straight into a ground texture for that combination of sprites; these textures are made on demand, up to 1024 of them.
 Every sprite with a bounding box, with the sprites drawn along with it, becomes one upright sprite that stands in the middle of that box.
 This way NewGRF houses, industries, stations and objects work without any code of their own.
+
+Vehicles are upright sprites as well, looked up again for every image because they move all the time.
+The 2D game has sprites of each vehicle for eight directions; the 3D view picks the one that fits the side the camera sees, so a vehicle keeps pointing along its track or road when the camera goes around it.
+While vehicles are in view the image is redrawn every game tick; without them it is only redrawn when something changes.
 
 Trees are sprites on upright quads that turn to face the camera. Hedges and fences are sprites on small walls along the edge of their tile.
 Both are sized and placed such that from the viewing angle of the 2D game they look the same as there.
@@ -93,7 +98,8 @@ The existing game is touched in a few small places:
 * A 32bpp or 40bpp blitter is required, which is the default; the 8bpp blitters do not work.
 * Terrain is built for the part of the map that has been in view and stays in memory until the window is closed. On the very largest maps, looking at all of it uses a lot of memory.
 * The ground textures and sprites are taken from the game when the window opens or when they are first needed. After changing NewGRFs in a running game, close and reopen the window.
-* Vehicles, signs and station names are not drawn yet.
+* Signs, station names and the shadows of aircraft are not drawn yet.
+* What is in front of what is decided per sprite, so now and then a vehicle shows through the corner of a building it passes behind.
 * Buildings made of several sprites or covering several tiles can come apart when the camera is rotated, and tiles on foundations draw their ground as an upright sprite too.
 * Transparency options of the 2D game are followed, but see-through sprites are left out rather than drawn see-through.
 * Tiles with animations, such as some industries, rebuild their whole chunk of 64x64 tiles for every animation step.

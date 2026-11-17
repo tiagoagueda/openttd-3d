@@ -9,6 +9,8 @@ add_files(
     terrain_mesh.cpp
     terrain_mesh.h
     tile_sprites.h
+    vehicle_sprites.cpp
+    vehicle_sprites.h
     view3d_gui.cpp
     view3d_gui.h
     CONDITION VIEWPORT3D_ENABLED

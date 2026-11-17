@@ -46,7 +46,7 @@ public:
 	void ClearChunks();
 
 	bool IsBusy() const { return this->pending; }
-	void Render(uint width, uint height, const Camera3D &camera, std::span<const ChunkID> chunks);
+	void Render(uint width, uint height, const Camera3D &camera, std::span<const ChunkID> chunks, std::span<const SpriteVertex> sprites);
 	bool Poll();
 
 	bool HomogeneousDepth() const;

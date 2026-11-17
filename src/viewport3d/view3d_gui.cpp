@@ -11,6 +11,7 @@
 #include "view3d_gui.h"
 #include "camera3d.h"
 #include "renderer3d.h"
+#include "vehicle_sprites.h"
 #include "terrain_mesh.h"
 #include "../blitter/factory.hpp"
 #include "../gfx_func.h"
@@ -65,6 +66,8 @@ class View3DWindow : public Window {
 	TerrainChunkMesh scratch_mesh; ///< Reused while building chunks.
 	std::unique_ptr<GroundTextures> ground_textures; ///< The ground textures that the chunks use.
 	std::unique_ptr<SpriteAtlas> atlas; ///< The sprites of the 2D game that the chunks use.
+	std::vector<SpriteVertex> vehicle_sprites; ///< The vehicles in view.
+	uint64_t vehicle_hash = 0; ///< Hash of the vehicles in the last image, to see whether any moved.
 
 	bool panning = false; ///< Whether the view is being dragged with the left mouse button.
 	Point pan_last{}; ///< Cursor position at the previous step of the drag.
@@ -203,18 +206,30 @@ public:
 		if (this->renderer == nullptr) return;
 
 		if (this->renderer->Poll()) this->SetWidgetDirty(WID_V3D_VIEW);
-		if (this->renderer->IsBusy() || (!this->view_changed && !this->terrain_changed)) return;
+		if (this->renderer->IsBusy()) return;
 
 		const NWidgetBase *view = this->GetWidget<NWidgetBase>(WID_V3D_VIEW);
 		if (view->current_x == 0 || view->current_y == 0) return;
 
-		bool geometry_changed = this->UpdateChunks(view->current_x, view->current_y);
+		bool geometry_changed = (this->view_changed || this->terrain_changed) && this->UpdateChunks(view->current_x, view->current_y);
+
+		/* Vehicles move all the time, so they are looked up for every image. */
+		Matrix4 view_proj = this->camera.GetProjectionMatrix(static_cast<float>(view->current_x) / view->current_y, this->renderer->HomogeneousDepth()) * this->camera.GetViewMatrix();
+		BuildVehicleSprites(this->camera, Frustum3D(view_proj), *this->atlas, this->vehicle_sprites);
+		uint64_t hash = 0xcbf29ce484222325ULL;
+		const uint8_t *data = reinterpret_cast<const uint8_t *>(this->vehicle_sprites.data());
+		for (size_t i = 0; i < this->vehicle_sprites.size() * sizeof(SpriteVertex); i++) {
+			hash = (hash ^ data[i]) * 0x100000001b3ULL;
+		}
+		bool vehicles_changed = hash != this->vehicle_hash;
+
 		this->renderer->UpdateGroundTextures(*this->ground_textures);
 		this->renderer->UpdateSpriteAtlas(*this->atlas);
-		if (!this->view_changed && !geometry_changed) return;
+		if (!this->view_changed && !geometry_changed && !vehicles_changed) return;
 
-		this->renderer->Render(view->current_x, view->current_y, this->camera, this->visible_chunks);
+		this->renderer->Render(view->current_x, view->current_y, this->camera, this->visible_chunks, this->vehicle_sprites);
 		this->view_changed = false;
+		this->vehicle_hash = hash;
 		this->renderer->Poll();
 	}
 

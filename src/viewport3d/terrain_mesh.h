@@ -60,6 +60,9 @@ struct TerrainChunkMesh {
 
 class GroundTextures;
 class SpriteAtlas;
+struct AtlasSprite;
+
+void AddUprightSprite(const AtlasSprite &sprite, float x, float y, float z, float nearer, std::vector<SpriteVertex> &vertices);
 
 void BuildTerrainChunkMesh(uint chunk_x, uint chunk_y, GroundTextures &textures, SpriteAtlas &atlas, TerrainChunkMesh &mesh);
 
