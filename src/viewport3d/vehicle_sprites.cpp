@@ -28,11 +28,13 @@
  * @param frustum What is in view.
  * @param atlas The atlas that provides the sprites.
  * @param[out] vertices Four vertices per sprite; previous contents are discarded.
+ * @param[out] places Where the vehicles that can be clicked are; previous contents are discarded.
  */
-void BuildVehicleSprites(const Camera3D &camera, const Frustum3D &frustum, SpriteAtlas &atlas, std::vector<SpriteVertex> &vertices)
+void BuildVehicleSprites(const Camera3D &camera, const Frustum3D &frustum, SpriteAtlas &atlas, std::vector<SpriteVertex> &vertices, std::vector<VehicleSpritePlace> &places)
 {
 	static std::vector<SpritePart> parts;
 	vertices.clear();
+	places.clear();
 
 	/* The 2D game looks from the south, a yaw of 45 degrees. Each further 45 degrees shows the next side of a vehicle. */
 	static constexpr float EIGHTH_TURN = 0.78539816f;
@@ -79,6 +81,10 @@ void BuildVehicleSprites(const Camera3D &camera, const Frustum3D &frustum, Sprit
 
 		/* Vehicles are drawn over the tracks and roads they are on, and stand in the middle of their bounding box like buildings. */
 		float nearer = (v->bounds.extent.x + v->bounds.extent.y) * 0.5f + 2.0f;
-		AddUprightSprite(atlas.Get(parts), x, y, z, nearer, vertices);
+		const AtlasSprite &sprite = atlas.Get(parts);
+		AddUprightSprite(sprite, x, y, z, nearer, vertices);
+		if (sprite.valid && !v->vehstatus.Test(VehState::Unclickable)) {
+			places.push_back({v->index, x, y, z, static_cast<float>(sprite.left), static_cast<float>(sprite.top), static_cast<float>(sprite.width), static_cast<float>(sprite.height)});
+		}
 	}
 }

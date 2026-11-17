@@ -22,6 +22,8 @@
 #include "../settings_type.h"
 #include "../strings_func.h"
 #include "../tile_map.h"
+#include "../vehicle_base.h"
+#include "../core/backup_type.hpp"
 #include "../viewport_type.h"
 #include "../window_func.h"
 #include "../window_gui.h"
@@ -68,6 +70,7 @@ class View3DWindow : public Window {
 	std::unique_ptr<GroundTextures> ground_textures; ///< The ground textures that the chunks use.
 	std::unique_ptr<SpriteAtlas> atlas; ///< The sprites of the 2D game that the chunks use.
 	std::vector<SpriteVertex> vehicle_sprites; ///< The vehicles in view.
+	std::vector<VehicleSpritePlace> vehicle_places; ///< Where the vehicles in view are, to find the one below the cursor.
 	uint64_t vehicle_hash = 0; ///< Hash of the vehicles in the last image, to see whether any moved.
 
 	std::chrono::steady_clock::time_point textures_reset{}; ///< When the ground textures were last started afresh.
@@ -219,8 +222,14 @@ public:
 
 	void OnClick(Point, WidgetID widget, int) override
 	{
-		/* The left mouse button does what it does in the 2D views: use the active build tool, or click what is on the tile. */
-		if (widget == WID_V3D_VIEW) HandleView3DClicked();
+		/* The left mouse button does what it does in the 2D views: use the active build tool, or click what is there. */
+		if (widget != WID_V3D_VIEW || this->renderer == nullptr) return;
+		const NWidgetBase *view = this->GetWidget<NWidgetBase>(WID_V3D_VIEW);
+		if (view->current_x == 0 || view->current_y == 0) return;
+
+		Point click{_cursor.pos.x - this->left - view->pos_x, _cursor.pos.y - this->top - view->pos_y};
+		Projection projection = this->GetProjection(view->current_x, view->current_y);
+		HandleView3DClicked(this->GetVehicleAt(click, projection), click, this->UseSmallSigns(view->current_y), projection);
 	}
 
 	bool OnRightClick(Point, WidgetID widget) override
@@ -297,7 +306,7 @@ public:
 
 		/* Vehicles move all the time, so they are looked up for every image. */
 		Matrix4 view_proj = this->camera.GetProjectionMatrix(static_cast<float>(view->current_x) / view->current_y, this->renderer->HomogeneousDepth()) * this->camera.GetViewMatrix();
-		BuildVehicleSprites(this->camera, Frustum3D(view_proj), *this->atlas, this->vehicle_sprites);
+		BuildVehicleSprites(this->camera, Frustum3D(view_proj), *this->atlas, this->vehicle_sprites, this->vehicle_places);
 		uint64_t hash = 0xcbf29ce484222325ULL;
 		const uint8_t *data = reinterpret_cast<const uint8_t *>(this->vehicle_sprites.data());
 		for (size_t i = 0; i < this->vehicle_sprites.size() * sizeof(SpriteVertex); i++) {
@@ -316,6 +325,96 @@ public:
 	}
 
 private:
+	/** Tells where a point of the map is in the image. */
+	struct Projection {
+		Matrix4 view_proj; ///< World to clip space.
+		float width; ///< Width of the image in pixels.
+		float height; ///< Height of the image in pixels.
+
+		/**
+		 * Find a point in the image.
+		 * @param x Position along the x axis in world units.
+		 * @param y Position along the y axis in world units.
+		 * @param z Height in world units.
+		 * @param[out] px Horizontal position in the image in pixels.
+		 * @param[out] py Vertical position in the image in pixels.
+		 * @return Whether the point is in front of the camera.
+		 */
+		bool Project(float x, float y, float z, float &px, float &py) const
+		{
+			const auto &m = this->view_proj.m;
+			float w = m[3] * x + m[7] * y + m[11] * z + m[15];
+			if (w < 1.0f) return false;
+			px = ((m[0] * x + m[4] * y + m[8] * z + m[12]) / w * 0.5f + 0.5f) * this->width;
+			py = (0.5f - (m[1] * x + m[5] * y + m[9] * z + m[13]) / w * 0.5f) * this->height;
+			return true;
+		}
+
+		/** For the 2D game: the same with the height in z units of the game, leaving out what is far outside of the image. */
+		bool operator()(int x, int y, int z, Point &pt) const
+		{
+			float px, py;
+			if (!this->Project(static_cast<float>(x), static_cast<float>(y), z * WORLD_Z_SCALE, px, py)) return false;
+			if (px < -this->width || px > 2 * this->width || py < -this->height || py > 2 * this->height) return false;
+			pt = {static_cast<int>(px), static_cast<int>(py)};
+			return true;
+		}
+	};
+
+	/**
+	 * Get where the points of the map are in the image.
+	 * @param width Width of the image in pixels.
+	 * @param height Height of the image in pixels.
+	 */
+	Projection GetProjection(uint width, uint height) const
+	{
+		Matrix4 view_proj = this->camera.GetProjectionMatrix(static_cast<float>(width) / height, this->renderer->HomogeneousDepth()) * this->camera.GetViewMatrix();
+		return {view_proj, static_cast<float>(width), static_cast<float>(height)};
+	}
+
+	/**
+	 * Whether names and signs are small, like in 2D views that are zoomed out four times or more.
+	 * @param height Height of the image in pixels.
+	 */
+	bool UseSmallSigns(uint height) const
+	{
+		/* Size of a pixel of the 2D game in the middle of the image, in pixels. */
+		float scale = height / (2.0f * this->camera.distance * std::tan(Camera3D::FOV_Y / 2)) * SPRITE_PIXEL_SIZE;
+		return scale <= 0.25f;
+	}
+
+	/**
+	 * Find the vehicle at a place in the image.
+	 * @param pt The place in pixels.
+	 * @param projection Where the points of the map are in the image.
+	 * @return The vehicle of which the middle is closest, or \c nullptr when there is none.
+	 */
+	const Vehicle *GetVehicleAt(Point pt, const Projection &projection) const
+	{
+		const Vehicle *found = nullptr;
+		float best = std::numeric_limits<float>::max();
+		Vec3 right = this->camera.GetRight() * SPRITE_PIXEL_SIZE;
+
+		for (const VehicleSpritePlace &place : this->vehicle_places) {
+			/* The same corners as the sprite is drawn with. */
+			float z = place.z * WORLD_Z_SCALE;
+			float x1, y1, x2, y2;
+			Vec3 top_left = Vec3{place.x, place.y, z - place.top * WORLD_Z_SCALE} + right * place.left;
+			Vec3 bottom_right = Vec3{place.x, place.y, z - (place.top + place.height) * WORLD_Z_SCALE} + right * (place.left + place.width);
+			if (!projection.Project(top_left.x, top_left.y, top_left.z, x1, y1)) continue;
+			if (!projection.Project(bottom_right.x, bottom_right.y, bottom_right.z, x2, y2)) continue;
+			if (pt.x < x1 || pt.x > x2 || pt.y < y1 || pt.y > y2) continue;
+
+			float distance = std::max(std::abs((x1 + x2) / 2 - pt.x), std::abs((y1 + y2) / 2 - pt.y));
+			if (distance >= best) continue;
+			const Vehicle *v = Vehicle::GetIfValid(place.vehicle);
+			if (v == nullptr) continue;
+			found = v;
+			best = distance;
+		}
+		return found;
+	}
+
 	/**
 	 * Get the height of the ground as the 3D view draws it.
 	 * @param x Position along the x axis in world units.
@@ -486,6 +585,12 @@ private:
 			uint32_t *dst = static_cast<uint32_t *>(blitter->MoveTo(dpi->dst_ptr, left - dpi->left, y - dpi->top));
 			std::copy_n(src, right - left, dst);
 		}
+
+		/* Names and signs go on top, drawn by the 2D game and of the same size wherever they are, like in the 2D views. */
+		DrawPixelInfo sign_dpi;
+		if (!FillDrawPixelInfo(&sign_dpi, r)) return;
+		AutoRestoreBackup dpi_backup(_cur_dpi, &sign_dpi);
+		DrawView3DSigns(this->UseSmallSigns(r.Height()), this->GetProjection(r.Width(), r.Height()));
 	}
 };
 

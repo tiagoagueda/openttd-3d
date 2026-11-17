@@ -10,8 +10,21 @@
 #ifndef VIEWPORT3D_TILE_SPRITES_H
 #define VIEWPORT3D_TILE_SPRITES_H
 
+#include "../core/geometry_type.hpp"
 #include "../gfx_type.h"
 #include "../tile_type.h"
+
+struct Vehicle;
+
+/**
+ * Tells where the 3D view shows a point of the map.
+ * @param x Position along the x axis in world units.
+ * @param y Position along the y axis in world units.
+ * @param z Height in the z units of the game.
+ * @param[out] pt Where the point is in the 3D image, in pixels.
+ * @return Whether the point is in front of the camera.
+ */
+using View3DProjectProc = std::function<bool(int x, int y, int z, Point &pt)>;
 
 /** One sprite as the 2D game draws it, at a position relative to some reference point. */
 struct SpritePart {
@@ -42,6 +55,7 @@ struct TileSprites {
 
 void CollectTileSprites(TileIndex tile, TileSprites &sprites);
 bool HasTileSelection(TileIndex tile);
-bool HandleView3DClicked();
+void DrawView3DSigns(bool small, const View3DProjectProc &project);
+bool HandleView3DClicked(const Vehicle *v, Point click, bool small, const View3DProjectProc &project);
 
 #endif /* VIEWPORT3D_TILE_SPRITES_H */

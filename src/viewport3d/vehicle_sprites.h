@@ -13,7 +13,15 @@
 #include "camera3d.h"
 #include "sprite_atlas.h"
 #include "terrain_mesh.h"
+#include "../vehicle_type.h"
 
-void BuildVehicleSprites(const Camera3D &camera, const Frustum3D &frustum, SpriteAtlas &atlas, std::vector<SpriteVertex> &vertices);
+/** Where a vehicle is in the 3D view, to find the vehicle below the cursor. */
+struct VehicleSpritePlace {
+	VehicleID vehicle; ///< The vehicle.
+	float x, y, z; ///< The place the sprite stands at, in world units with the height in the z units of the game.
+	float left, top, width, height; ///< The sprite relative to that place, in pixels of the 2D game.
+};
+
+void BuildVehicleSprites(const Camera3D &camera, const Frustum3D &frustum, SpriteAtlas &atlas, std::vector<SpriteVertex> &vertices, std::vector<VehicleSpritePlace> &places);
 
 #endif /* VIEWPORT3D_VEHICLE_SPRITES_H */

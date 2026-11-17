@@ -3979,20 +3979,194 @@ bool HasTileSelection(TileIndex tile)
 	return result;
 }
 
+/** The town names, station names and signs that the 3D view shows, with the place of the middle of their top edge in the 3D image. */
+struct View3DSigns {
+	std::vector<const Town *> towns;
+	std::vector<const Sign *> signs;
+	std::vector<const BaseStation *> stations;
+	std::vector<Point> town_positions;
+	std::vector<Point> sign_positions;
+	std::vector<Point> station_positions;
+};
+
 /**
- * The 3D view was clicked: use the active build tool at the tile below the cursor, or click that tile.
+ * Find the town names, station names and signs to show in the 3D view.
+ * The same ones are left out as in ViewportAddKdtreeSigns().
+ * @param project Tells where the 3D view shows a point of the map.
+ * @param[out] found What to show and where.
+ */
+static void FindView3DSigns(const View3DProjectProc &project, View3DSigns &found)
+{
+	if (_game_mode == GameMode::Menu) return;
+
+	bool invisible = IsInvisibilitySet(TransparencyOption::Signs);
+	bool show_competitors = _display_opt.Test(DisplayOption::ShowCompetitorSigns);
+	Point pt;
+
+	/* The heights above the ground are those that the 2D game puts the names at; one z unit is one pixel there. */
+	if (_display_opt.Test(DisplayOption::ShowTownNames)) {
+		for (const Town *t : Town::Iterate()) {
+			int x = TileX(t->xy) * TILE_SIZE;
+			int y = TileY(t->xy) * TILE_SIZE;
+			if (!project(x, y, GetSlopePixelZ(x, y) + 24, pt)) continue;
+			found.towns.push_back(t);
+			found.town_positions.push_back(pt);
+		}
+	}
+	if (invisible) return;
+
+	if (_display_opt.Test(DisplayOption::ShowSigns)) {
+		for (const Sign *si : Sign::Iterate()) {
+			if (!show_competitors && _local_company != si->owner && si->owner != OWNER_DEITY) continue;
+			if (!project(si->x, si->y, si->z + 6, pt)) continue;
+			found.signs.push_back(si);
+			found.sign_positions.push_back(pt);
+		}
+	}
+
+	bool show_stations = _display_opt.Test(DisplayOption::ShowStationNames);
+	bool show_waypoints = _display_opt.Test(DisplayOption::ShowWaypointNames);
+	for (const BaseStation *st : BaseStation::Iterate()) {
+		if (st->xy == INVALID_TILE || !st->sign.kdtree_valid) continue;
+		if (Station::IsExpected(st)) {
+			if (!show_stations) continue;
+			StationFacilities facilities = st->facilities;
+			if (facilities.None()) facilities = STATION_FACILITY_GHOST;
+			if (!facilities.Any(_facility_display_opt)) continue;
+		} else {
+			if (!show_waypoints) continue;
+		}
+		if (!show_competitors && _local_company != st->owner && st->owner != OWNER_NONE) continue;
+
+		int x = TileX(st->xy) * TILE_SIZE;
+		int y = TileY(st->xy) * TILE_SIZE;
+		if (!project(x, y, GetSlopePixelZ(x, y) + 32, pt)) continue;
+		found.stations.push_back(st);
+		found.station_positions.push_back(pt);
+	}
+}
+
+/**
+ * Draw the town names, station names and signs over the image of the 3D view, the way the 2D views show them.
+ * The current drawing area must be the 3D image.
+ * @param small Whether to use the small versions, like the 2D views do when zoomed out.
+ * @param project Tells where the 3D view shows a point of the map.
+ */
+void DrawView3DSigns(bool small, const View3DProjectProc &project)
+{
+	if (!_vd.string_sprites_to_draw.empty()) return;
+
+	View3DSigns found;
+	FindView3DSigns(project, found);
+
+	/* Let the 2D game make the texts as for a viewport that is large enough for all of them, then move them to their place in the 3D image. */
+	DrawPixelInfo dpi{};
+	dpi.left = dpi.top = -(1 << 29);
+	dpi.width = dpi.height = 1 << 30;
+	dpi.zoom = ZoomLevel::Min;
+
+	auto place = [](size_t first, const std::vector<Point> &positions) {
+		if (_vd.string_sprites_to_draw.size() != first + positions.size()) return;
+		for (size_t i = 0; i < positions.size(); i++) {
+			StringSpriteToDraw &ss = _vd.string_sprites_to_draw[first + i];
+			ss.x = positions[i].x - ss.width / 2;
+			ss.y = positions[i].y;
+		}
+	};
+
+	/* Layering order (bottom to top): Town names, signs, stations */
+	ViewportAddTownStrings(&dpi, found.towns, small);
+	place(0, found.town_positions);
+	size_t first = _vd.string_sprites_to_draw.size();
+	ViewportAddSignStrings(&dpi, found.signs, small);
+	place(first, found.sign_positions);
+	first = _vd.string_sprites_to_draw.size();
+	ViewportAddStationStrings(&dpi, found.stations, small);
+	place(first, found.station_positions);
+
+	ViewportDrawStrings(ZoomLevel::Min, &_vd.string_sprites_to_draw);
+	_vd.string_sprites_to_draw.clear();
+}
+
+/**
+ * Check whether a town name, station name or sign in the 3D view was clicked, and open its window.
+ * @param click Where in the 3D image was clicked.
+ * @param small Whether the small versions are shown.
+ * @param project Tells where the 3D view shows a point of the map.
+ * @return Whether something was hit.
+ */
+static bool CheckClickOnView3DSign(Point click, bool small, const View3DProjectProc &project)
+{
+	View3DSigns found;
+	FindView3DSigns(project, found);
+
+	int height = WidgetDimensions::scaled.fullbevel.top + GetCharacterHeight(small ? FontSize::Small : FontSize::Normal) + WidgetDimensions::scaled.fullbevel.bottom;
+	auto hit = [&](const ViewportSign &sign, const Point &pt) {
+		int half_width = (small ? sign.width_small : sign.width_normal) / 2;
+		return click.y >= pt.y && click.y < pt.y + height && click.x >= pt.x - half_width && click.x < pt.x + half_width;
+	};
+
+	/* What is drawn on top goes first, and of each kind the one that is drawn last. */
+	for (size_t i = found.stations.size(); i-- > 0;) {
+		const BaseStation *st = found.stations[i];
+		if (!hit(st->sign, found.station_positions[i])) continue;
+		if (Station::IsExpected(st)) {
+			ShowStationViewWindow(st->index);
+		} else {
+			ShowWaypointWindow(Waypoint::From(st));
+		}
+		return true;
+	}
+	for (size_t i = found.towns.size(); i-- > 0;) {
+		if (!hit(found.towns[i]->cache.sign, found.town_positions[i])) continue;
+		ShowTownViewWindow(found.towns[i]->index);
+		return true;
+	}
+	for (size_t i = found.signs.size(); i-- > 0;) {
+		if (!hit(found.signs[i]->sign, found.sign_positions[i])) continue;
+		HandleClickOnSign(found.signs[i]);
+		return true;
+	}
+	return false;
+}
+
+/**
+ * The 3D view was clicked: use the active build tool at the tile below the cursor, or open the window of what was clicked.
  * This is what HandleViewportClicked() does for the 2D views.
+ * @param v The vehicle below the cursor, if any.
+ * @param click Where in the 3D image was clicked.
+ * @param small Whether the small versions of names and signs are shown.
+ * @param project Tells where the 3D view shows a point of the map.
  * @return Whether the click did something.
  */
-bool HandleView3DClicked()
+bool HandleView3DClicked(const Vehicle *v, Point click, bool small, const View3DProjectProc &project)
 {
+	if (_thd.place_mode & HT_VEHICLE) {
+		if (v != nullptr && VehicleClicked(v)) return true;
+	}
+
+	/* Vehicle placement mode already handled above. */
 	if ((_thd.place_mode & HT_DRAG_MASK) != HT_NONE) {
 		PlaceObject();
 		return true;
 	}
 
+	if (CheckClickOnView3DSign(click, small, project)) return true;
+
 	Point pt = GetTileBelowCursor();
-	if (pt.x == -1) return false;
-	return ClickTile(TileVirtXY(pt.x, pt.y));
+	bool result = pt.x != -1 && ClickTile(TileVirtXY(pt.x, pt.y));
+
+	if (v != nullptr) {
+		if (IsCompanyBuildableVehicleType(v)) {
+			v = v->First();
+			if (IsCtrlPressed() && v->owner == _local_company) {
+				StartStopVehicle(v, true);
+			} else {
+				ShowVehicleViewWindow(v);
+			}
+		}
+		return true;
+	}
+	return result;
 }
 #endif /* WITH_VIEWPORT3D */
