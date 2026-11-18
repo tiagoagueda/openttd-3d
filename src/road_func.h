@@ -149,4 +149,6 @@ void DrawRoadOverlays(const TileInfo *ti, PaletteID pal, const RoadTypeInfo *roa
 void DrawRoadGroundSprites(const TileInfo *ti, RoadBits road, RoadBits tram, const RoadTypeInfo *road_rti, const RoadTypeInfo *tram_rti, Roadside roadside, bool snow_or_desert);
 void DrawRoadDepotSprite(int x, int y, DiagDirection dir, RoadType rt);
 
+Foundation GetRoadFoundation(Slope tileh, RoadBits bits);
+
 #endif /* ROAD_FUNC_H */

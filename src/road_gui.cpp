@@ -2075,6 +2075,41 @@ bool GetRoadToolPreview(View3DPreview &preview)
 			preview.direction = preview.drive_through ? _roadstop_gui.orientation - DiagDirection::End : _roadstop_gui.orientation;
 			preview.axis = DiagDirToAxis(preview.direction);
 			return true;
+		case WID_ROT_ROAD_X:
+		case WID_ROT_ROAD_Y:
+		case WID_ROT_AUTOROAD: {
+			preview.kind = View3DPreview::Kind::Road;
+			preview.tram = RoadTypeIsTram(_cur_roadtype);
+			preview.remove = _remove_button_clicked;
+			bool sizing = _special_mouse_mode == SpecialMouseMode::Sizing;
+			bool start_half, end_half;
+			if (sizing && IsValidAxis(_place_road_dir)) {
+				preview.axis = _place_road_dir;
+				start_half = preview.axis == Axis::Y ? _place_road_start_half_y : _place_road_start_half_x;
+				end_half = _place_road_end_half;
+			} else {
+				/* Before the drag starts, a click would build half a piece, on the side of the tile below the mouse;
+				 * autoroad picks the axis of the drag as OnPlaceDrag() does for a drag of one tile. */
+				if (w->last_started_action == WID_ROT_ROAD_X) {
+					preview.axis = Axis::X;
+				} else if (w->last_started_action == WID_ROT_ROAD_Y) {
+					preview.axis = Axis::Y;
+				} else {
+					int fx = _tile_fract_coords.x, fy = _tile_fract_coords.y;
+					preview.axis = (fx < fy && fx + fy <= 15) || (fx > fy && fx + fy >= 15) ? Axis::X : Axis::Y;
+				}
+				start_half = end_half = (preview.axis == Axis::X ? _tile_fract_coords.x : _tile_fract_coords.y) >= 8;
+			}
+			/* What CmdBuildLongRoad() builds when the drag starts and ends on the same tile. */
+			DiagDirection dir = AxisToDiagDir(preview.axis);
+			if (start_half) {
+				dir = ReverseDiagDir(dir);
+				end_half = !end_half;
+			}
+			preview.road_bits = AxisToRoadBits(preview.axis);
+			if (!end_half) preview.road_bits &= DiagDirToRoadBits(ReverseDiagDir(dir));
+			return true;
+		}
 		default:
 			return false;
 	}

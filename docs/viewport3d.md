@@ -43,6 +43,12 @@ Zooming and turning glide rather than jump, and the camera follows the height of
 Pick a tool from the toolbars of the game as usual, then click or drag in the 3D view.
 The tile selection of the tool is shown in both the 2D and the 3D view.
 While placing a train or road vehicle depot, a rail station or a road stop of the default class, the 3D view also shows a see-through model of it on the selected tiles (`GetRailToolPreview()` in `rail_gui.cpp`, `GetRoadToolPreview()` in `road_gui.cpp`, `AddPreviewModel()` in `terrain_mesh.cpp`).
+The tools that build along lines show what they are about to build the same way, like the 2D views do with their track pieces under the cursor:
+
+* The rail tools (the four track directions and autorail) put a see-through piece of track of the chosen type on each tile where the 2D views draw the autorail selection, while hovering and while dragging (`AddTrackPreviewModel()`). `GetTileMark()` in `viewport.cpp` also tells which piece that is; such tiles get no plate, as the piece shows the place, except a red one where the piece cannot be built on the slope. NewGRF track types show normal track.
+* The road and tram tools (road along x or y, and autoroad) put see-through pieces of road, or of tram rails, along the drag; on a single tile only the half that a click there builds (`AddRoadPreviewModel()`, `interface` model 6 for road, `roadside` model 4 for tram rails). In remove mode the road is red.
+
+Both lie on the foundation the piece would get (`GetRailFoundation()`, `GetRoadFoundation()`), a little above the ground, so a piece over existing track or road still shows.
 
 Changes to the map, such as terraforming, show up in the 3D view right away.
 

@@ -14,6 +14,8 @@
 
 #include "model3d.h"
 #include "../tile_type.h"
+#include "../track_type.h"
+#include "../road_type.h"
 
 /** Number of tiles along one side of a terrain chunk. */
 static constexpr uint TERRAIN_CHUNK_SIZE = 64;
@@ -95,6 +97,8 @@ struct AtlasSprite;
 bool GetTileModels(TileIndex tile, const ModelPack &pack, std::vector<ModelInstance> &models, std::vector<AnimatedPart> &parts);
 struct View3DPreview;
 void AddPreviewModel(const View3DPreview &preview, TileIndex tile, uint track, const ModelPack &pack, std::vector<ModelInstance> &models);
+void AddTrackPreviewModel(const View3DPreview &preview, TileIndex tile, Track track, bool red, const ModelPack &pack, std::vector<ModelInstance> &models);
+void AddRoadPreviewModel(const View3DPreview &preview, TileIndex tile, RoadBits bits, const ModelPack &pack, std::vector<ModelInstance> &models);
 struct View3DPicture;
 bool AddPictureModels(const View3DPicture &picture, const ModelPack &pack, std::vector<ModelInstance> &models);
 bool HasLiveTileModels(TileIndex tile);

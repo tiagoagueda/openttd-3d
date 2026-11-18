@@ -13,6 +13,7 @@
 #include "../core/geometry_type.hpp"
 #include "../gfx_type.h"
 #include "../tile_type.h"
+#include "../track_type.h"
 
 struct Vehicle;
 
@@ -66,6 +67,7 @@ enum class TileMark : uint8_t {
 	Authority, ///< Within the local authority of a highlighted town.
 };
 TileMark GetTileMark(TileIndex tile);
+TileMark GetTileMark(TileIndex tile, Track &track, bool &red);
 /** A town name, station name or sign, which the 3D view shows on a board that stands on the map. */
 struct View3DLabel {
 	/** What the label names. */

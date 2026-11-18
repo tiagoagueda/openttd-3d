@@ -919,6 +919,8 @@ static std::string &AddStringToDraw(int x, int y, Colours colour, ViewportString
 static struct TileMarkCapture {
 	bool any; ///< Whether a selection sprite would have been drawn.
 	PaletteID pal; ///< The palette of the last one.
+	Track autorail = Track::Invalid; ///< The piece of track an autorail sprite would have shown.
+	bool autorail_red = false; ///< Whether that sprite would have been red.
 } *_tile_mark_capture = nullptr;
 #endif /* WITH_VIEWPORT3D */
 
@@ -927,7 +929,10 @@ static void DrawSelectionSprite(SpriteID image, PaletteID pal, const TileInfo *t
 #ifdef WITH_VIEWPORT3D
 	if (_tile_mark_capture != nullptr) {
 		/* The dot of a tool that works on one point is left to the cursor of the 3D view. */
-		if (image != SPR_DOT) *_tile_mark_capture = {true, pal};
+		if (image != SPR_DOT) {
+			_tile_mark_capture->any = true;
+			_tile_mark_capture->pal = pal;
+		}
 		return;
 	}
 #endif /* WITH_VIEWPORT3D */
@@ -1032,6 +1037,13 @@ static void DrawAutorailSelection(const TileInfo *ti, HighLightStyle highlight_s
 		pal = PALETTE_SEL_TILE_RED;
 	}
 
+#ifdef WITH_VIEWPORT3D
+	if (_tile_mark_capture != nullptr) {
+		/* The 3D view shows the piece of track itself, with a see-through model. */
+		_tile_mark_capture->autorail = static_cast<Track>(highlight_style & HT_DIR_MASK);
+		_tile_mark_capture->autorail_red = _thd.make_square_red || pal == PALETTE_SEL_TILE_RED;
+	}
+#endif /* WITH_VIEWPORT3D */
 	DrawSelectionSprite(image, _thd.make_square_red ? PALETTE_SEL_TILE_RED : pal, ti, 7, foundation_part);
 }
 
@@ -4011,6 +4023,20 @@ void CollectTileSprites(TileIndex tile, TileSprites &sprites)
  */
 TileMark GetTileMark(TileIndex tile)
 {
+	Track track;
+	bool red;
+	return GetTileMark(tile, track, red);
+}
+
+/**
+ * Find how the 2D game marks a tile, and which piece of track it shows there for a rail tool that builds along lines.
+ * @param tile The tile.
+ * @param[out] track The piece of track the autorail selection shows on the tile, or Track::Invalid.
+ * @param[out] red Whether that piece is red, as it cannot be built on the slope of the tile.
+ * @return The mark, if any.
+ */
+TileMark GetTileMark(TileIndex tile, Track &track, bool &red)
+{
 	TileInfo ti;
 	ti.tile = tile;
 	ti.x = TileX(tile) * TILE_SIZE;
@@ -4022,6 +4048,8 @@ TileMark GetTileMark(TileIndex tile)
 	DrawTileSelection(&ti);
 	_tile_mark_capture = nullptr;
 
+	track = capture.autorail;
+	red = capture.autorail_red;
 	if (!capture.any) return TileMark::None;
 	switch (capture.pal) {
 		case PALETTE_SEL_TILE_BLUE: return TileMark::Blue;

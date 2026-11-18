@@ -752,9 +752,11 @@ static constexpr float TRACK_PIECES[6][4] = {
  * @param cy Where the middle of the model goes, in world units within the tile along y.
  * @param dx Direction of the model along x, of length one together with dy.
  * @param dy Direction of the model along y.
- * @param mesh The mesh to add to.
+ * @param tint Colour to multiply the model with; its alpha makes it see-through.
+ * @param lift How far to raise the model above the ground, in world units.
+ * @param models The models to add to.
  */
-static void AddPieceModel(const ModelPack::Entry &entry, uint x, uint y, const std::array<int, 4> &heights, float cx, float cy, float dx, float dy, TerrainChunkMesh &mesh)
+static void AddPieceModel(const ModelPack::Entry &entry, uint x, uint y, const std::array<int, 4> &heights, float cx, float cy, float dx, float dy, const std::array<float, 4> &tint, float lift, std::vector<ModelInstance> &models)
 {
 	auto [hn, hw, he, hs] = heights;
 	/* The plane that fits the corners best, as in AddGroundModel(). */
@@ -762,9 +764,9 @@ static void AddPieceModel(const ModelPack::Entry &entry, uint x, uint y, const s
 	float ax = ((hw + hs) - (hn + he)) * 0.5f * HEIGHT_LEVEL_SIZE / TILE_SIZE;
 	float ay = ((he + hs) - (hn + hw)) * 0.5f * HEIGHT_LEVEL_SIZE / TILE_SIZE;
 	float s = entry.scale;
-	float z = zc + ax * (cx - TILE_SIZE * 0.5f) + ay * (cy - TILE_SIZE * 0.5f);
+	float z = lift + zc + ax * (cx - TILE_SIZE * 0.5f) + ay * (cy - TILE_SIZE * 0.5f);
 
-	ModelInstance &instance = mesh.models.emplace_back();
+	ModelInstance &instance = models.emplace_back();
 	instance.model = entry.model;
 	instance.transform.m = {
 		dx * s, dy * s, (ax * dx + ay * dy) * s, 0,
@@ -772,7 +774,24 @@ static void AddPieceModel(const ModelPack::Entry &entry, uint x, uint y, const s
 		0, 0, s, 0,
 		x * TILE_SIZE + cx, y * TILE_SIZE + cy, z, 1,
 	};
-	instance.tint = {1, 1, 1, 1};
+	instance.tint = tint;
+}
+
+/**
+ * Add a model that lies along a line on the ground of a tile, like a piece of track, tilted along the slope of the tile.
+ * @param entry The model; it runs along its x axis.
+ * @param x X coordinate of the tile.
+ * @param y Y coordinate of the tile.
+ * @param heights Heights of the northern, western, eastern and southern corner, in height levels.
+ * @param cx Where the middle of the model goes, in world units within the tile along x.
+ * @param cy Where the middle of the model goes, in world units within the tile along y.
+ * @param dx Direction of the model along x, of length one together with dy.
+ * @param dy Direction of the model along y.
+ * @param mesh The mesh to add to.
+ */
+static void AddPieceModel(const ModelPack::Entry &entry, uint x, uint y, const std::array<int, 4> &heights, float cx, float cy, float dx, float dy, TerrainChunkMesh &mesh)
+{
+	AddPieceModel(entry, x, y, heights, cx, cy, dx, dy, {1, 1, 1, 1}, 0, mesh.models);
 }
 
 /**
@@ -1967,6 +1986,81 @@ void AddPreviewModel(const View3DPreview &preview, TileIndex tile, uint track, c
 }
 
 /**
+ * The heights of the corners of a tile once a foundation is built on it, as for AddPieceModel().
+ * @param tile The tile.
+ * @param foundation The foundation that what is built on it gets.
+ * @return Heights of the northern, western, eastern and southern corner, in height levels.
+ */
+static std::array<int, 4> GetHeightsOnFoundation(TileIndex tile, Foundation foundation)
+{
+	auto [slope, z] = GetTileSlopeZ(tile);
+	/* Where it cannot be built, it lies on the bare slope. */
+	if (foundation != Foundation::Invalid) z += ApplyFoundationToSlope(foundation, slope);
+	slope = RemoveHalftileSlope(slope);
+	return {z + GetSlopeZInCorner(slope, Corner::N), z + GetSlopeZInCorner(slope, Corner::W), z + GetSlopeZInCorner(slope, Corner::E), z + GetSlopeZInCorner(slope, Corner::S)};
+}
+
+/**
+ * The colour of a see-through preview of track or road: the colour of the local company, or red where it would be removed or cannot be built.
+ * @param red Whether to show it red.
+ * @return The tint, with its alpha.
+ */
+static std::array<float, 4> GetPreviewTint(bool red)
+{
+	std::array<float, 4> tint = red ? std::array<float, 4>{1.0f, 0.25f, 0.2f, 1.0f} : GetOwnerTint(_local_company);
+	tint[3] = 0.6f;
+	return tint;
+}
+
+/**
+ * Add a see-through piece of track where a rail tool is about to build or remove it, like the autorail selection of the 2D views.
+ * @param preview What the tool builds.
+ * @param tile The tile.
+ * @param track The piece of track on the tile.
+ * @param red Whether the piece cannot be built on this slope, or is about to be removed.
+ * @param pack The package of 3D models.
+ * @param models The models to add to.
+ */
+void AddTrackPreviewModel(const View3DPreview &preview, TileIndex tile, Track track, bool red, const ModelPack &pack, std::vector<ModelInstance> &models)
+{
+	if (track >= Track::End) return;
+	bool diagonal = track != Track::X && track != Track::Y;
+	const ModelPack::Entry *entry = preview.rail != INVALID_RAILTYPE ? GetTrackPiece(preview.rail, diagonal, pack) : nullptr;
+	/* Track types of NewGRFs have no model of their own; normal track shows where they go. */
+	if (entry == nullptr) entry = pack.Find(ModelKind::Track, 0, diagonal ? 1 : 0);
+	if (entry == nullptr) return;
+
+	std::array<int, 4> heights = GetHeightsOnFoundation(tile, GetRailFoundation(GetTileSlope(tile), TrackBits{track}));
+	const float *p = TRACK_PIECES[to_underlying(track)];
+	/* Lifted a little, so a piece over existing track still shows. */
+	AddPieceModel(*entry, TileX(tile), TileY(tile), heights, p[0], p[1], p[2], p[3], GetPreviewTint(red || preview.remove), 0.15f, models);
+}
+
+/**
+ * Add see-through pieces of road or tram track where a road tool is about to build or remove them.
+ * @param preview What the tool builds.
+ * @param tile The tile.
+ * @param bits The pieces on the tile.
+ * @param pack The package of 3D models.
+ * @param models The models to add to.
+ */
+void AddRoadPreviewModel(const View3DPreview &preview, TileIndex tile, RoadBits bits, const ModelPack &pack, std::vector<ModelInstance> &models)
+{
+	const ModelPack::Entry *entry = preview.tram ? pack.Find(ModelKind::Roadside, 0, 4) : pack.Find(ModelKind::Interface, 0, 6);
+	if (entry == nullptr || bits.None()) return;
+
+	std::array<int, 4> heights = GetHeightsOnFoundation(tile, GetRoadFoundation(GetTileSlope(tile), bits));
+	/* From the middle of the tile towards the edge each bit leads to, as in AddRoadModels(). */
+	static constexpr std::pair<RoadBit, std::array<float, 2>> BITS[4] = {
+		{RoadBit::NW, {0, -1}}, {RoadBit::SW, {1, 0}}, {RoadBit::SE, {0, 1}}, {RoadBit::NE, {-1, 0}},
+	};
+	std::array<float, 4> tint = GetPreviewTint(preview.remove);
+	for (const auto &[bit, dir] : BITS) {
+		if (bits.Test(bit)) AddPieceModel(*entry, TileX(tile), TileY(tile), heights, TILE_SIZE * 0.5f, TILE_SIZE * 0.5f, dir[0], dir[1], tint, 0.1f, models);
+	}
+}
+
+/**
  * Add the models of a picture of something that can be built, standing on the tile at the origin of the world.
  * @param picture What to show.
  * @param pack The package of 3D models.
@@ -2580,7 +2674,12 @@ void BuildTerrainChunkMesh(uint chunk_x, uint chunk_y, GroundTextures &textures,
 			}
 
 			/* The selection of a build tool, the catchment area of a station and such are marked on top of the ground. */
-			TileMark mark = GetTileMark(tile);
+			Track autorail;
+			bool autorail_red;
+			TileMark mark = GetTileMark(tile, autorail, autorail_red);
+			/* The piece of track of a rail tool shows as a see-through model (AddTrackPreviewModel()) instead,
+			 * like the 2D views draw only the piece; where it cannot be built, the tile is marked red as well. */
+			if (autorail != Track::Invalid && pack != nullptr && pack->Find(ModelKind::Track, 0, 0) != nullptr) mark = autorail_red ? TileMark::Red : TileMark::None;
 
 			TileGround ground;
 			if (collect) {

@@ -27,6 +27,7 @@
 #include "../strings_func.h"
 #include "../tile_map.h"
 #include "../vehicle_base.h"
+#include "../road_func.h"
 #include "../core/backup_type.hpp"
 #include "../viewport_type.h"
 #include "../viewport_func.h"
@@ -865,17 +866,37 @@ public:
 	void AddPreviewModels()
 	{
 		if (this->model_pack == nullptr || this->model_pack->IsEmpty()) return;
-		if ((_thd.drawstyle & HT_DRAG_MASK) != HT_RECT || _thd.pos.x < 0 || _thd.pos.y < 0) return;
+		HighLightStyle style = _thd.drawstyle & HT_DRAG_MASK;
+		if ((style != HT_RECT && style != HT_RAIL && style != HT_LINE) || _thd.pos.x < 0 || _thd.pos.y < 0) return;
 		View3DPreview preview;
 		if (!GetRailToolPreview(preview) && !GetRoadToolPreview(preview)) return;
+		/* Track goes where the 2D views draw the autorail selection; anything else fills the selected rectangle. */
+		if ((style == HT_RECT) == (preview.kind == View3DPreview::Kind::Track)) return;
 
 		uint x0 = _thd.pos.x / TILE_SIZE, y0 = _thd.pos.y / TILE_SIZE;
 		uint w = std::max(1, _thd.size.x / static_cast<int>(TILE_SIZE)), h = std::max(1, _thd.size.y / static_cast<int>(TILE_SIZE));
-		/* A large drag would put a lot of models on the screen; the selection on the ground still shows it. */
-		if (w * h > 256) return;
+		/* A large drag would put a lot of models on the screen; the selection on the ground still shows it.
+		 * Track and road are thin pieces along a line, so they can go much further. */
+		uint limit = preview.kind == View3DPreview::Kind::Track ? 128 * 128 : (preview.kind == View3DPreview::Kind::Road ? 1024 : 256);
+		if (w * h > limit) return;
 		for (uint y = y0; y < y0 + h && y < Map::SizeY(); y++) {
 			for (uint x = x0; x < x0 + w && x < Map::SizeX(); x++) {
-				AddPreviewModel(preview, TileXY(x, y), preview.axis == Axis::X ? y - y0 : x - x0, *this->model_pack, this->vehicle_models);
+				TileIndex tile = TileXY(x, y);
+				switch (preview.kind) {
+					case View3DPreview::Kind::Track: {
+						Track track;
+						bool red;
+						GetTileMark(tile, track, red);
+						AddTrackPreviewModel(preview, tile, track, red, *this->model_pack, this->vehicle_models);
+						break;
+					}
+					case View3DPreview::Kind::Road:
+						AddRoadPreviewModel(preview, tile, w * h == 1 ? preview.road_bits : AxisToRoadBits(preview.axis), *this->model_pack, this->vehicle_models);
+						break;
+					default:
+						AddPreviewModel(preview, tile, preview.axis == Axis::X ? y - y0 : x - x0, *this->model_pack, this->vehicle_models);
+						break;
+				}
 			}
 		}
 	}
