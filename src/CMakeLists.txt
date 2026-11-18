@@ -363,6 +363,11 @@ add_files(
     order_cmd.cpp
     order_cmd.h
     order_func.h
+    power_cmd.cpp
+    power_cmd.h
+    power_func.h
+    power_gui.cpp
+    power_map.h
     order_gui.cpp
     order_type.h
     osk_gui.cpp

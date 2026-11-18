@@ -79,4 +79,10 @@ static const EnumIndexArray<PriceBaseSpec, Price, Price::End> _price_base_specs 
 	PriceBaseSpec(8, PriceCategory::Running, GrfSpecFeature::End, Price::BuildCanal), // Price::InfrastructureWater
 	PriceBaseSpec(100, PriceCategory::Running, GrfSpecFeature::End, Price::StationValue), // Price::InfrastructureStation
 	PriceBaseSpec(5000, PriceCategory::Running, GrfSpecFeature::End, Price::BuildStationAirport), // Price::InfrastructureAirport
+	PriceBaseSpec(400, PriceCategory::Construction, GrfSpecFeature::End, Price::Invalid), // Price::BuildPowerPylon
+	PriceBaseSpec(100, PriceCategory::Construction, GrfSpecFeature::End, Price::Invalid), // Price::BuildPowerWire
+	PriceBaseSpec(800, PriceCategory::Construction, GrfSpecFeature::End, Price::Invalid), // Price::BuildPowerSubstation
+	PriceBaseSpec(60, PriceCategory::Construction, GrfSpecFeature::End, Price::Invalid), // Price::ClearPowerPylon
+	PriceBaseSpec(20, PriceCategory::Construction, GrfSpecFeature::End, Price::Invalid), // Price::ClearPowerWire
+	PriceBaseSpec(150, PriceCategory::Construction, GrfSpecFeature::End, Price::Invalid), // Price::ClearPowerSubstation
 };

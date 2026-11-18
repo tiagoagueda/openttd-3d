@@ -47,6 +47,7 @@
 #include "table/sprites.h"
 
 #include <unordered_set>
+#include "power_func.h"
 
 #include "safeguards.h"
 
@@ -61,7 +62,8 @@ extern const TileTypeProcs
 	_tile_type_void_procs,
 	_tile_type_industry_procs,
 	_tile_type_tunnelbridge_procs,
-	_tile_type_object_procs;
+	_tile_type_object_procs,
+	_tile_type_power_procs;
 
 /**
  * Tile callback functions for each type of tile.
@@ -80,8 +82,8 @@ const EnumIndexArray<const TileTypeProcs *, TileType, TileType::MaxSize> _tile_t
 	&_tile_type_industry_procs, // Callback functions for TileType::Industry tiles
 	&_tile_type_tunnelbridge_procs, // Callback functions for TileType::TunnelBridge tiles
 	&_tile_type_object_procs, // Callback functions for TileType::Object tiles
+	&_tile_type_power_procs, // Callback functions for TileType::Power tiles
 	/* Explicitly initialize invalid elements to make sure that they are nullptr. */
-	nullptr,
 	nullptr,
 	nullptr,
 	nullptr,
@@ -585,6 +587,7 @@ void ChangeTileOwner(TileIndex tile, Owner old_owner, Owner new_owner)
 void GetTileDesc(TileIndex tile, TileDesc &td)
 {
 	_tile_type_procs[GetTileType(tile)]->get_tile_desc_proc(tile, td);
+	AddPowerWireTileDesc(tile, td);
 }
 
 /**

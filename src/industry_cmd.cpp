@@ -58,6 +58,9 @@
 #include "table/industry_land.h"
 #include "table/build_industry.h"
 
+#include "power_func.h"
+#include "power_map.h"
+
 #include "safeguards.h"
 
 IndustryPool _industry_pool("Industry");
@@ -1493,6 +1496,7 @@ static CommandCost CheckIfIndustryTilesAreFree(TileIndex tile, const IndustryTil
 			CommandCost ret = EnsureNoVehicleOnGround(cur_tile);
 			if (ret.Failed()) return ret;
 			if (IsBridgeAbove(cur_tile)) return CommandCost(STR_ERROR_SITE_UNSUITABLE);
+			if (HasPowerWire(cur_tile)) return CommandCost(STR_ERROR_POWER_LINE_OVER_INDUSTRY);
 
 			const IndustryTileSpec *its = GetIndustryTileSpec(gfx);
 

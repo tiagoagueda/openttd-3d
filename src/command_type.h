@@ -211,6 +211,10 @@ enum class Commands : uint8_t {
 	TerraformLand, ///< terraform a tile
 	BuildObject, ///< build an object
 	BuildObjectArea, ///< build an area of objects
+	BuildPowerPylon, ///< build a power line pylon
+	BuildPowerSubstation, ///< build a power substation
+	BuildPowerLine, ///< build an overhead power line
+	RemovePowerLine, ///< remove an overhead power line
 	BuildTunnel, ///< build a tunnel
 
 	RemoveFromRailStation, ///< remove a (rectangle of) tiles from a rail station

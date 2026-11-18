@@ -162,6 +162,12 @@ enum class Price : uint8_t {
 	InfrastructureWater, ///< Canals maintenance cost.
 	InfrastructureStation, ///< Stations maintenance cost.
 	InfrastructureAirport, ///< Airports maintenance cost.
+	BuildPowerPylon, ///< Price for building power line pylons.
+	BuildPowerWire, ///< Price for building overhead power wire, per tile.
+	BuildPowerSubstation, ///< Price for building power substations.
+	ClearPowerPylon, ///< Price for removing power line pylons.
+	ClearPowerWire, ///< Price for removing overhead power wire, per tile.
+	ClearPowerSubstation, ///< Price for removing power substations.
 	End, ///< Price base end marker.
 	Invalid = 0xFF ///< Invalid base price.
 };

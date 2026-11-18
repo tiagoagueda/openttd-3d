@@ -526,6 +526,7 @@ STR_LANDSCAPING_MENU_LANDSCAPING                                :Landscaping
 STR_LANDSCAPING_MENU_PLANT_TREES                                :Plant trees
 STR_LANDSCAPING_MENU_PLACE_SIGN                                 :Place sign
 STR_LANDSCAPING_MENU_PLACE_OBJECT                               :Place object
+STR_LANDSCAPING_MENU_POWER_LINES                                :Power lines
 
 # Music menu
 STR_TOOLBAR_SOUND_MUSIC                                         :Sound/music
@@ -3105,6 +3106,13 @@ STR_STATION_BUILD_NOISE                                         :{BLACK}Noise ge
 
 # Landscaping toolbar
 STR_LANDSCAPING_TOOLBAR                                         :{WHITE}Landscaping
+
+# Power line construction toolbar
+STR_POWER_TOOLBAR_CAPTION                                       :{WHITE}Power Lines
+STR_POWER_TOOLBAR_TOOLTIP_BUILD_LINE                            :{BLACK}Build an overhead power line. Drag along an axis or a diagonal; pylons are placed automatically, at most 2 tiles apart. Wires join only at pylons. Also press Shift to show cost estimate only
+STR_POWER_TOOLBAR_TOOLTIP_BUILD_PYLON                           :{BLACK}Build a single pylon. Also press Shift to show cost estimate only
+STR_POWER_TOOLBAR_TOOLTIP_BUILD_SUBSTATION                      :{BLACK}Build an overhead substation, where power lines meet power plants and consumers. Also press Shift to show cost estimate only
+STR_POWER_TOOLBAR_TOOLTIP_REMOVE                                :{BLACK}Toggle removal of power lines: dragging the line tool removes wires and the pylons left without wires
 STR_LANDSCAPING_TOOLTIP_LOWER_A_CORNER_OF_LAND                  :{BLACK}Lower a corner of land. Click+Drag to lower the first selected corner and level the selected area to the new corner height. Ctrl+Click+Drag to select the area diagonally. Also press Shift to show cost estimate only
 STR_LANDSCAPING_TOOLTIP_RAISE_A_CORNER_OF_LAND                  :{BLACK}Raise a corner of land. Click+Drag to raise the first selected corner and level the selected area to the new corner height. Ctrl+Click+Drag to select the area diagonally. Also press Shift to show cost estimate only
 STR_LANDSCAPING_LEVEL_LAND_TOOLTIP                              :{BLACK}Level an area of land to the height of the first selected corner. Ctrl+Click+Drag to select the area diagonally. Also press Shift to show cost estimate only
@@ -3234,6 +3242,7 @@ STR_LAND_AREA_INFORMATION_OWNER                                 :{BLACK}Owner: {
 STR_LAND_AREA_INFORMATION_ROAD_OWNER                            :{BLACK}Road owner: {LTBLUE}{STRING1}
 STR_LAND_AREA_INFORMATION_TRAM_OWNER                            :{BLACK}Tramway owner: {LTBLUE}{STRING1}
 STR_LAND_AREA_INFORMATION_RAIL_OWNER                            :{BLACK}Railway owner: {LTBLUE}{STRING1}
+STR_LAND_AREA_INFORMATION_POWER_LINE_OWNER                      :{BLACK}Power line owner: {LTBLUE}{STRING1}
 STR_LAND_AREA_INFORMATION_LOCAL_AUTHORITY                       :{BLACK}Local authority: {LTBLUE}{STRING1}
 STR_LAND_AREA_INFORMATION_LOCAL_AUTHORITY_NONE                  :None
 STR_LAND_AREA_INFORMATION_LANDINFO_COORDS                       :{BLACK}Coordinates: {LTBLUE}{NUM} x {NUM} x {NUM}
@@ -3347,6 +3356,10 @@ STR_LAI_BRIDGE_DESCRIPTION_ROAD_TUBULAR_STEEL                   :Tubular road br
 STR_LAI_BRIDGE_DESCRIPTION_AQUEDUCT                             :Aqueduct
 
 STR_LAI_OBJECT_DESCRIPTION_TRANSMITTER                          :Transmitter
+STR_LAI_POWER_DESCRIPTION_PYLON                                 :Electricity pylon (network with {NUM} substation{P "" s})
+STR_LAI_POWER_DESCRIPTION_TRANSITION_PYLON                      :Transition pylon (network with {NUM} substation{P "" s})
+STR_LAI_POWER_DESCRIPTION_OVERHEAD_SUBSTATION                   :Overhead substation (network with {NUM} substation{P "" s})
+STR_LAI_POWER_DESCRIPTION_UNDERGROUND_SUBSTATION                :Underground substation (network with {NUM} substation{P "" s})
 STR_LAI_OBJECT_DESCRIPTION_LIGHTHOUSE                           :Lighthouse
 STR_LAI_OBJECT_DESCRIPTION_COMPANY_HEADQUARTERS                 :Company headquarters
 STR_LAI_OBJECT_DESCRIPTION_COMPANY_OWNED_LAND                   :Company-owned land
@@ -5429,6 +5442,23 @@ STR_ERROR_TUNNEL_TOO_LONG                                       :tunnel too long
 STR_ERROR_TOO_MANY_OBJECTS                                      :too many objects
 STR_ERROR_CAN_T_BUILD_OBJECT                                    :Can't build object...
 STR_ERROR_OBJECT_IN_THE_WAY                                     :object in the way
+STR_ERROR_MUST_REMOVE_POWER_LINE_FIRST                          :power line in the way
+STR_ERROR_POWER_LINE_BRIDGE_IN_THE_WAY                          :bridge in the way of the power line
+STR_ERROR_POWER_LINES_CANNOT_CROSS                              :power lines cannot cross in mid-air
+STR_ERROR_POWER_LINES_JOIN_ONLY_AT_PYLONS                       :power lines can only join at a pylon
+STR_ERROR_POWER_LINE_OVER_AIRPORT                               :power lines cannot pass over airports
+STR_ERROR_POWER_LINE_OVER_INDUSTRY                              :power lines cannot pass over industries
+STR_ERROR_POWER_LINE_TALL_STRUCTURE                             :building too tall for a power line to pass over
+STR_ERROR_POWER_LINE_TOO_LOW                                    :power line would be too low
+STR_ERROR_POWER_LINE_NOT_STRAIGHT                               :power lines must run along an axis or a diagonal
+STR_ERROR_POWER_PYLON_UNDER_WIRE                                :there is a power line above
+STR_ERROR_POWER_PYLON_NEEDS_OPEN_LAND                           :pylons need open land
+STR_ERROR_POWER_PYLONS_HEIGHT_DIFFERENCE                        :pylons too far apart in height
+STR_ERROR_THERE_IS_NO_POWER_LINE                                :there is no power line here
+STR_ERROR_CAN_T_BUILD_POWER_LINE                                :Can't build power line here...
+STR_ERROR_CAN_T_BUILD_POWER_PYLON                               :Can't build pylon here...
+STR_ERROR_CAN_T_BUILD_POWER_SUBSTATION                          :Can't build substation here...
+STR_ERROR_CAN_T_REMOVE_POWER_LINE                               :Can't remove power line here...
 STR_ERROR_COMPANY_HEADQUARTERS_IN                               :company headquarters in the way
 STR_ERROR_CAN_T_PURCHASE_THIS_LAND                              :Can't purchase this land area...
 STR_ERROR_YOU_ALREADY_OWN_IT                                    :you already own it!

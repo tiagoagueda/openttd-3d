@@ -81,6 +81,8 @@
 
 #include <bitset>
 
+#include "power_func.h"
+
 #include "safeguards.h"
 
 /**
@@ -865,6 +867,9 @@ static CommandCost CheckFlatLandAirport(AirportTileTableIterator tile_iter, DoCo
 	int allowed_z = -1;
 
 	for (; *tile_iter != INVALID_TILE; ++tile_iter) {
+		/* Power lines may not pass over airports. */
+		if (CommandCost ret = CheckPowerWireAllowsStructure(*tile_iter, -1); ret.Failed()) return ret;
+
 		if (tile_iter.GetAirportGfx() == AIRPORTGFX_CLEARTILE_SPECIALCHECK) {
 			if (!IsTileType(*tile_iter, TileType::Clear) || !IsTileFlat(*tile_iter)) {
 				return CommandCost(STR_ERROR_SITE_UNSUITABLE);

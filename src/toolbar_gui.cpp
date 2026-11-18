@@ -75,6 +75,8 @@
 
 #include "dropdown_common_type.h"
 
+#include "power_func.h"
+
 #include "safeguards.h"
 
 
@@ -1003,6 +1005,7 @@ static CallBackFunction ToolbarForestClick(Window *w)
 	if (ObjectClass::GetUIClassCount() != 0) {
 		list.push_back(MakeDropDownListIconItem(SPR_IMG_TRANSMITTER, PAL_NONE, STR_LANDSCAPING_MENU_PLACE_OBJECT, 3));
 	}
+	list.push_back(MakeDropDownListIconItem(SPR_IMG_AUTOELRAIL, PAL_NONE, STR_LANDSCAPING_MENU_POWER_LINES, 4));
 	ShowDropDownList(w, std::move(list), 0, WID_TN_LANDSCAPE, 100, GetToolbarDropDownOptions());
 	return CallBackFunction::None;
 }
@@ -1020,6 +1023,7 @@ static CallBackFunction MenuClickForest(int index)
 		case 1: ShowBuildTreesToolbar(); break;
 		case 2: return SelectSignTool();
 		case 3: ShowBuildObjectPicker(); break;
+		case 4: ShowBuildPowerToolbar(); break;
 	}
 	return CallBackFunction::None;
 }

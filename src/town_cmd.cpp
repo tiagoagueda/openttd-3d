@@ -70,6 +70,9 @@
 #include "table/strings.h"
 #include "table/town_land.h"
 
+#include "power_func.h"
+#include "power_map.h"
+
 #include "safeguards.h"
 
 /* Initialize the town-pool */
@@ -2611,6 +2614,9 @@ static inline bool CheckBuildHouseSameZ(TileIndex tile, int z, bool noslope)
 {
 	if (!CanBuildHouseHere(tile, noslope)) return false;
 
+	/* Buildings of several tiles are never built under power lines. */
+	if (HasPowerWire(tile)) return false;
+
 	/* if building on slopes is allowed, there will be flattening foundation (to tile max z) */
 	if (GetTileMaxZ(tile) != z) return false;
 
@@ -2897,6 +2903,12 @@ static bool TryBuildTownHouse(Town *t, TileIndex tile, TownExpandModes modes)
 
 		if (TimerGameCalendar::year < hs->min_year || TimerGameCalendar::year > hs->max_year) continue;
 
+		/* Under a power line only low buildings of a single tile fit. */
+		if (HasPowerWire(tile) && (!hs->building_flags.Test(BuildingFlag::Size1x1) || !IsHouseLowForPowerWire(house) ||
+				CheckPowerWireAllowsStructure(tile, 2).Failed())) {
+			continue;
+		}
+
 		/* Special houses that there can be only one of. */
 		TownFlags oneof{};
 
@@ -2974,6 +2986,12 @@ CommandCost CmdPlaceHouse(DoCommandFlags flags, TileIndex tile, HouseID house, b
 
 		/* Houses cannot be built under bridges. */
 		if (IsBridgeAbove(subtile)) return CommandCost(STR_ERROR_MUST_DEMOLISH_BRIDGE_FIRST);
+
+		/* Under power lines only low buildings of a single tile fit. */
+		if (HasPowerWire(subtile)) {
+			if (ta.w * ta.h != 1 || !IsHouseLowForPowerWire(house)) return CommandCost(STR_ERROR_POWER_LINE_TALL_STRUCTURE);
+			if (CommandCost ret = CheckPowerWireAllowsStructure(subtile, 2); ret.Failed()) return ret;
+		}
 
 		/* Make sure there is no slope? */
 		bool noslope = hs->building_flags.Test(BuildingFlag::NotSloped);
