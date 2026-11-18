@@ -201,7 +201,7 @@ They all use company colours. Trams and articulated trolleybuses are articulated
   - Reserved tram track (label proposal `ELRR`, to be checked against the NewGRF road type label list so it does not clash): `RoadTramType::Tram`, catenary, `NoHouses`, higher speed limit.
   - Horse tram track (`RAIL` label, which NewGRF sets use for non-electric tram track): `RoadTramType::Tram`, no catenary. Electric tram types list horse tram vehicles as powered on them, so horse trams can run on upgraded track, but not the other way round.
 - Built-in road types use slots in the 64-entry `RoadType` table, leaving plenty for NewGRF sets. NewGRF road type sets that define the same labels take over as they do today.
-- The catenary flag stays the single meaning of "electric". A fork-only field, `catenary_style` (none, single contact wire, trolley pair), on `RoadTypeInfo` tells drawing which wire to draw. NewGRF road types with catenary default to single wire for tram types and pair for road types, which matches what sets draw.
+- The catenary flag stays the single meaning of "electric". `GetRoadCatenaryStyle()` (none, single contact wire, trolley pair) tells drawing which wire to draw: single for tram types with catenary, pair for road types with catenary, the same for NewGRF road types, which matches what sets draw. No new field is needed on `RoadTypeInfo`.
 - `HasRoadTypeAvail` makes the new types available from the year their first vehicle appears, as today for any road type.
 
 ### 6.2 Vehicles and rules
@@ -209,7 +209,7 @@ They all use company colours. Trams and articulated trolleybuses are articulated
 - "Is electric" is `HasRoadCatenary(GetRoadTypeInfo(e->u.road.roadtype))`, so NewGRF trams and trolleybuses work with the power rules without any change to them.
 - Overtaking: `roadveh_cmd.cpp` already decides when a road vehicle may overtake (`RoadVehCheckOvertake` and the `overtaking` field). A trolleybus (electric vehicle on a road-half road type) never starts overtaking.
 - Reversing: with the setting `trolleybus_turn_on_road` off, the U-turn on a plain road tile is refused for trolleybuses, so the pathfinder must find a loop, junction or road end. YAPF road already costs turning around, so this is a rule in the turn-around check plus a cost. If a trolleybus is trapped with no way to turn (a wired dead end without a road end), it is allowed the U-turn anyway and the company gets a news message, so a bad layout never freezes a line.
-- Depots: road depot tiles already carry a road type. A depot built with an electrified road type (one whose `catenary_style` is the trolley pair) is a trolleybus depot. The checks that decide where a road vehicle may be built, serviced or sent (`CmdBuildRoadVehicle` and the depot test in `roadveh_cmd.cpp`, the road depot search in YAPF, `CheckIfRoadVehNeedsService`) gain one rule: a trolleybus depot takes only electric road-half vehicles and a road depot takes none. Tram depots need nothing, since trams already only use tram depots. The depot window and build toolbar show the trolleybus depot as its own button and name.
+- Depots: road depot tiles already carry a road type. A depot built with an electrified road type (one whose catenary style is the trolley pair) is a trolleybus depot. The checks that decide where a road vehicle may be built, serviced or sent (`CmdBuildRoadVehicle` and the depot test in `roadveh_cmd.cpp`, the road depot search in YAPF, `CheckIfRoadVehNeedsService`) gain one rule: a trolleybus depot takes only electric road-half vehicles and a road depot takes none. Tram depots need nothing, since trams already only use tram depots. The depot window and build toolbar show the trolleybus depot as its own button and name.
 - Power cut: `GroundVehicle` uses cached power for acceleration. A traction factor (0 to 255) on the vehicle scales the power used in `GetAcceleration()`. It is updated when the vehicle enters a tile whose section changed, which is one read of the power layer bit (6.3).
 
 ### 6.3 Power
@@ -241,7 +241,7 @@ All in `src/power/` from the energy proposal:
 
 ### 6.7 3D renderer
 
-- `terrain_mesh.cpp`: `GetRoadWireBits()` and `AddRoadWireModels()` read `catenary_style` and pick tram or trolley wire models. New catenary ids for trolley wire, poles, span wires, the junction piece and the tram-trolley crossing piece. Span wires between houses where the street has buildings on both sides instead of poles.
+- `terrain_mesh.cpp`: `GetRoadWireBits()` and `AddRoadWireModels()` read `GetRoadCatenaryStyle()` and pick tram or trolley wire models. New catenary ids for trolley wire, poles, span wires, the junction piece and the tram-trolley crossing piece. Span wires between houses where the street has buildings on both sides instead of poles.
 - Vehicles: models for the vehicles in section 4, found through the new `newgrf_vehicles` section of the model index.
 - Current collectors: trolley poles and pantographs are separate named nodes in the .glb (`pole*`, `pantograph*`). The renderer raises them to the wire height of the tile the vehicle is on, and lowers trolleybus poles inside a depot.
 - Depots: a tram shed model (with an electric and a horse version) and a trolleybus garage model with the wire pair over each door. The energy proposal already asks for named nodes that turn (`rotor*`), so this extends the same mechanism to nodes that tilt.
@@ -274,13 +274,13 @@ Each phase ends with something playable that can be merged. Sizes are relative, 
 
 | Phase | What | Size |
 |---|---|---|
-| 1. Trolley wire | `ELRD` electrified road as a built-in type with `catenary_style`, convert-road support, junction cost, placeholder 2D wires, 3D trolley wire models with junction and crossing pieces. Tested with the temporary road type hack or a test NewGRF bus. | Medium |
+| 1. Trolley wire | `ELRD` electrified road as a built-in type with `GetRoadCatenaryStyle()`, convert-road support, junction cost, placeholder 2D wires, 3D trolley wire models with junction and crossing pieces. Tested with the temporary road type hack or a test NewGRF bus. | Medium |
 | 2. Vehicles and depots | OpenGFX3D models for trams and trolleybuses (all eras and climates, horse trams included), the NML vehicle GRF with rendered sprites, the `newgrf_vehicles` model index, current collectors that follow the wire. Horse tram track and reserved tram track. The trolleybus depot as its own kind, tram shed and trolleybus garage models, stop looks. | Large |
 | 3. Trolleybus rules | No overtaking on the wire, the turning setting, tests with busy town routes for stuck vehicles. Town rating and passenger bonus for electric stops. | Small |
 | 4. Traction power | Traction sections in `src/power/`, feed distance, vehicle draw, short supply cutting power, "Traction energy" running cost, news message, power view showing fed and unfed wire in 2D and 3D. Built so electric rail can join later. | Large |
 | 5. Finish | Script API additions, balance pass from play, documentation. | Small |
 
-Phase 1 and the models in phase 2 can start any time, independently of energy. Phase 4 is the part that makes this a new kind of transport rather than new vehicles, and it should be designed together with the electric railway item on the energy roadmap.
+Phase 1 and the models in phase 2 can start any time, independently of energy. Progress: phase 1 is on branch `trolley-tram` (OpenGFX3D branch `trolley-tram` for the wire models). Electrified road can be built from 1930, before any trolleybus exists, so the wires can be laid ahead of phase 2. Phase 4 is the part that makes this a new kind of transport rather than new vehicles, and it should be designed together with the electric railway item on the energy roadmap.
 
 ## 9. Roadmap after the first version
 

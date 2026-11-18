@@ -121,6 +121,26 @@ inline bool HasRoadCatenary(RoadType roadtype)
 	return GetRoadTypeInfo(roadtype)->flags.Test(RoadTypeFlag::Catenary);
 }
 
+/** How the overhead wires of a road type look and work. */
+enum class CatenaryStyle : uint8_t {
+	None,   ///< No overhead wires.
+	Single, ///< One contact wire over each track; trams, with the rails as the return path.
+	Pair,   ///< A pair of wires over each lane; trolleybuses, which pick up and return power through two poles.
+};
+
+/**
+ * Get the style of the overhead wires of a road type.
+ * Electric tram types have a single contact wire, electric road types (such as electrified road for
+ * trolleybuses) a pair of wires. This also holds for road types from NewGRF.
+ * @param roadtype Road type to test.
+ * @return The style.
+ */
+inline CatenaryStyle GetRoadCatenaryStyle(RoadType roadtype)
+{
+	if (!HasRoadCatenary(roadtype)) return CatenaryStyle::None;
+	return RoadTypeIsTram(roadtype) ? CatenaryStyle::Single : CatenaryStyle::Pair;
+}
+
 /**
  * Test if we should draw road catenary
  * @param roadtype Road type to test

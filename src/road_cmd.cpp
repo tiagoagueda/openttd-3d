@@ -69,7 +69,7 @@ void ResetRoadTypes()
 	std::fill(insert, std::end(_roadtypes), RoadTypeInfo{});
 
 	_roadtypes_hidden_mask = {};
-	_roadtypes_road = {ROADTYPE_ROAD};
+	_roadtypes_road = {ROADTYPE_ROAD, ROADTYPE_TROLLEY};
 	_roadtypes_tram = {ROADTYPE_TRAM};
 }
 
@@ -591,6 +591,22 @@ static CommandCost CheckRoadSlope(Slope tileh, RoadBits *pieces, RoadBits existi
 }
 
 /**
+ * Get the extra cost of wiring a junction of electrified road.
+ * Where trolleybus wires branch they need frogs and crossings, so a tile that becomes a junction
+ * (three or four road pieces) costs half a tile more. Tram wire and plain road cost nothing extra.
+ * @param rt The road type of the tile after building.
+ * @param before The road pieces with wires on the tile before, if any.
+ * @param after The road pieces on the tile after building.
+ * @return The extra cost.
+ */
+static Money GetWireJunctionCost(RoadType rt, RoadBits before, RoadBits after)
+{
+	if (GetRoadCatenaryStyle(rt) != CatenaryStyle::Pair) return 0;
+	if (before.Count() > 2 || after.Count() <= 2) return 0;
+	return RoadBuildCost(rt);
+}
+
+/**
  * Build a piece of road.
  * @param flags operation to perform
  * @param tile tile where to build road
@@ -872,6 +888,7 @@ do_clear:;
 			pieces.Count();
 
 	cost.AddCost(num_pieces * RoadBuildCost(rt));
+	if (!IsTileType(tile, TileType::TunnelBridge)) cost.AddCost(GetWireJunctionCost(rt, existing, existing | pieces));
 
 	if (flags.Test(DoCommandFlag::Execute)) {
 		switch (GetTileType(tile)) {
@@ -1403,15 +1420,20 @@ void DrawRoadTypeCatenary(const TileInfo *ti, RoadType rt, RoadBits rb)
 	SpriteID front = GetCustomRoadSprite(rti, ti->tile, RoadSpriteType::CatenaryFront);
 	SpriteID back = GetCustomRoadSprite(rti, ti->tile, RoadSpriteType::CatenaryRear);
 
+	/* Base set wires drawn for a road type with trolleybus wires. */
+	bool trolley_pair = false;
 	if (front != 0 || back != 0) {
 		if (front != 0) front += GetRoadSpriteOffset(ti->tileh, rb);
 		if (back != 0) back += GetRoadSpriteOffset(ti->tileh, rb);
-	} else if (ti->tileh != SLOPE_FLAT) {
-		back = SPR_TRAMWAY_BACK_WIRES_SLOPED + _road_sloped_sprites[ti->tileh];
-		front = SPR_TRAMWAY_FRONT_WIRES_SLOPED + _road_sloped_sprites[ti->tileh];
 	} else {
-		back  = SPR_TRAMWAY_BASE + _road_backpole_sprites_1[rb.base()];
-		front = SPR_TRAMWAY_BASE + _road_frontwire_sprites_1[rb.base()];
+		if (ti->tileh != SLOPE_FLAT) {
+			back = SPR_TRAMWAY_BACK_WIRES_SLOPED + _road_sloped_sprites[ti->tileh];
+			front = SPR_TRAMWAY_FRONT_WIRES_SLOPED + _road_sloped_sprites[ti->tileh];
+		} else {
+			back  = SPR_TRAMWAY_BASE + _road_backpole_sprites_1[rb.base()];
+			front = SPR_TRAMWAY_BASE + _road_frontwire_sprites_1[rb.base()];
+		}
+		trolley_pair = GetRoadCatenaryStyle(rt) == CatenaryStyle::Pair;
 	}
 
 	/* Catenary uses 1st company colour to help identify owner.
@@ -1434,7 +1456,15 @@ void DrawRoadTypeCatenary(const TileInfo *ti, RoadType rt, RoadBits rb)
 		AddSortableSpriteToDraw(back, pal, *ti, {{0, 0, north_z}, {1, 1, z_wires}, {0, 0, static_cast<int8_t>(-north_z)}}, IsTransparencySet(TransparencyOption::Catenary), &north);
 		AddSortableSpriteToDraw(back, pal, *ti, {{0, 15, east_z}, {1, 1, z_wires}, {0, -15, static_cast<int8_t>(-east_z)}}, IsTransparencySet(TransparencyOption::Catenary), &east);
 	}
-	if (front != 0) {
+	if (front != 0 && trolley_pair) {
+		/* Trolleybus wires come in pairs. Until there are sprites for them, draw the tram wires twice, a little
+		 * apart across the road (or along both axes on bends and junctions). */
+		int8_t dx = (rb == ROAD_X) ? 0 : 2;
+		int8_t dy = (rb == ROAD_Y) ? 0 : 2;
+		for (int8_t sign : {-1, 1}) {
+			AddSortableSpriteToDraw(front, pal, *ti, {{0, 0, static_cast<int8_t>(z_wires)}, {TILE_SIZE, TILE_SIZE, 1}, {static_cast<int8_t>(sign * dx), static_cast<int8_t>(sign * dy), static_cast<int8_t>(-z_wires)}}, IsTransparencySet(TransparencyOption::Catenary));
+		}
+	} else if (front != 0) {
 		/* Draw the "front" sprite (containing south pillar and wires) at a Z height that is both above the vehicles and above the "back" pillars. */
 		AddSortableSpriteToDraw(front, pal, *ti, {{0, 0, static_cast<int8_t>(z_wires)}, {TILE_SIZE, TILE_SIZE, 1}, {0, 0, static_cast<int8_t>(-z_wires)}}, IsTransparencySet(TransparencyOption::Catenary));
 	}
@@ -2570,6 +2600,9 @@ CommandCost CmdConvertRoad(DoCommandFlags flags, TileIndex tile, TileIndex area_
 
 			found_convertible_road = true;
 			cost.AddCost(num_pieces * RoadConvertCost(from_type, to_type));
+			if (tt == TileType::Road && IsNormalRoad(cur_tile) && GetRoadCatenaryStyle(from_type) != CatenaryStyle::Pair) {
+				cost.AddCost(GetWireJunctionCost(to_type, {}, GetRoadBits(cur_tile, rtt)));
+			}
 
 			if (flags.Test(DoCommandFlag::Execute)) { // we can safely convert, too
 				/* Call ConvertRoadTypeOwner() to update the company infrastructure counters. */

@@ -516,6 +516,17 @@ static void AddPieceModel(const ModelPack::Entry &entry, uint x, uint y, const s
 }
 
 /**
+ * Whether a road type looks like the road of the base game, so the 3D view makes its ground itself.
+ * Electrified road for trolleybuses is the same road with wires above, which are drawn separately.
+ * @param rt The road type.
+ * @return True for plain road and the built-in electrified road.
+ */
+static bool HasBaseRoadLook(RoadType rt)
+{
+	return rt == ROADTYPE_ROAD || rt == ROADTYPE_TROLLEY;
+}
+
+/**
  * Whether a tile is a bus or lorry stop of the base game on normal road, whose ground the 3D view makes itself.
  * @param tile The tile.
  * @return True for such a stop.
@@ -523,7 +534,7 @@ static void AddPieceModel(const ModelPack::Entry &entry, uint x, uint y, const s
 static bool IsBaseRoadStop(TileIndex tile)
 {
 	if (!IsTileType(tile, TileType::Station) || !IsAnyRoadStop(tile) || IsRoadWaypoint(tile) || GetRoadStopSpec(tile) != nullptr) return false;
-	return !HasRoadTypeTram(tile) && HasRoadTypeRoad(tile) && GetRoadTypeRoad(tile) == ROADTYPE_ROAD;
+	return !HasRoadTypeTram(tile) && HasRoadTypeRoad(tile) && HasBaseRoadLook(GetRoadTypeRoad(tile));
 }
 
 /**
@@ -537,7 +548,7 @@ static bool IsModelledNewGRFRoadStop(TileIndex tile, const ModelPack &pack)
 	if (!IsTileType(tile, TileType::Station) || !IsAnyRoadStop(tile) || IsRoadWaypoint(tile)) return false;
 	const RoadStopSpec *spec = GetRoadStopSpec(tile);
 	if (spec == nullptr || pack.Find(ModelKind::RoadStop, spec->grf_prop, 0) == nullptr) return false;
-	return !HasRoadTypeTram(tile) && HasRoadTypeRoad(tile) && GetRoadTypeRoad(tile) == ROADTYPE_ROAD;
+	return !HasRoadTypeTram(tile) && HasRoadTypeRoad(tile) && HasBaseRoadLook(GetRoadTypeRoad(tile));
 }
 
 /**
@@ -707,22 +718,32 @@ static void AddPylonModel(const TileSpriteGroup &group, uint offset, const Model
 
 static void AddEdgeModel(const ModelPack::Entry &entry, const std::array<float, 3> &a, const std::array<float, 3> &b, TerrainChunkMesh &mesh);
 
+/** The road and tram bits of a tile with overhead wires, by style of wire. */
+struct RoadWireBits {
+	RoadBits single; ///< Bits with a single contact wire (trams).
+	RoadBits pair; ///< Bits with a pair of wires over each lane (trolleybuses).
+
+	bool Any() const { return this->single.Any() || this->pair.Any(); }
+};
+
 /**
  * Get the road and tram bits of a tile that have overhead wires drawn with 3D models.
  * @param tile The tile, with road or tram on it.
  * @param pack The package of 3D models.
  * @return The bits; none when there are no wires, the package has no models for them or a NewGRF draws them.
  */
-static RoadBits GetRoadWireBits(Tile tile, const ModelPack &pack)
+static RoadWireBits GetRoadWireBits(Tile tile, const ModelPack &pack)
 {
-	if (pack.Find(ModelKind::Catenary, 0, 4) == nullptr || pack.Find(ModelKind::Catenary, 0, 5) == nullptr) return {};
-	RoadBits bits{};
+	RoadWireBits bits{};
 	for (RoadTramType rtt : {RoadTramType::Road, RoadTramType::Tram}) {
 		RoadType rt = GetRoadType(tile, rtt);
 		if (rt == INVALID_ROADTYPE || !HasRoadCatenaryDrawn(rt)) continue;
 		const RoadTypeInfo *rti = GetRoadTypeInfo(rt);
 		if (GetCustomRoadSprite(rti, tile, RoadSpriteType::CatenaryFront) != 0 || GetCustomRoadSprite(rti, tile, RoadSpriteType::CatenaryRear) != 0) return {};
-		bits |= IsNormalRoad(tile) ? GetRoadBits(tile, rtt) : RoadBits{};
+		bool pair = GetRoadCatenaryStyle(rt) == CatenaryStyle::Pair;
+		/* Without models for this style the 2D wires stay. */
+		if (pack.Find(ModelKind::Catenary, 0, pair ? 6 : 4) == nullptr || pack.Find(ModelKind::Catenary, 0, pair ? 7 : 5) == nullptr) return {};
+		(pair ? bits.pair : bits.single) |= IsNormalRoad(tile) ? GetRoadBits(tile, rtt) : RoadBits{};
 	}
 	return bits;
 }
@@ -739,7 +760,38 @@ static bool IsRoadWireSprite(SpriteID sprite)
 }
 
 /**
+ * Add a pole beside a straight road, its arm reaching over the road.
+ * @param pole The model of the pole, with its arm along +x reaching 6.4 to the middle of the road.
+ * @param along_x Whether the road runs along x, else along y.
+ * @param far_side Whether the pole stands on the other side of the road, for a second set of wires.
+ * @param x X coordinate of the tile.
+ * @param y Y coordinate of the tile.
+ * @param heights Heights of the northern, western, eastern and southern corner, in height levels.
+ * @param mesh The mesh to add to.
+ */
+static void AddRoadPoleModel(const ModelPack::Entry &pole, bool along_x, bool far_side, uint x, uint y, const std::array<int, 4> &heights, TerrainChunkMesh &mesh)
+{
+	static constexpr float REACH = 6.4f;
+	float side = far_side ? -1.0f : 1.0f;
+	float px = along_x ? TILE_SIZE * 0.5f : TILE_SIZE * 0.5f + REACH * side;
+	float py = along_x ? TILE_SIZE * 0.5f - REACH * side : TILE_SIZE * 0.5f;
+	float dx = along_x ? 0.0f : -side, dy = along_x ? side : 0.0f;
+	auto [hn, hw, he, hs] = heights;
+	float zc = (hn + hw + he + hs) * 0.25f * HEIGHT_LEVEL_SIZE;
+	float ax = ((hw + hs) - (hn + he)) * 0.5f * HEIGHT_LEVEL_SIZE / TILE_SIZE;
+	float ay = ((he + hs) - (hn + hw)) * 0.5f * HEIGHT_LEVEL_SIZE / TILE_SIZE;
+	float z = zc + ax * (px - TILE_SIZE * 0.5f) + ay * (py - TILE_SIZE * 0.5f);
+	float s = pole.scale;
+	ModelInstance &instance = mesh.models.emplace_back();
+	instance.model = pole.model;
+	instance.transform.m = {dx * s, dy * s, 0, 0, -dy * s, dx * s, 0, 0, 0, 0, s, 0, x * TILE_SIZE + px, y * TILE_SIZE + py, z, 1};
+	instance.tint = {1, 1, 1, 1};
+}
+
+/**
  * Add 3D overhead wires above a road or tram tile, with a pole beside straight roads.
+ * Trams get a single contact wire, electrified road (trolleybuses) a pair of wires over each lane, with frogs over
+ * junctions. Where both meet on a junction or bend, an insulated crossing hangs over the middle.
  * @param bits The road bits with wires, from GetRoadWireBits().
  * @param x X coordinate of the tile.
  * @param y Y coordinate of the tile.
@@ -747,36 +799,36 @@ static bool IsRoadWireSprite(SpriteID sprite)
  * @param pack The package of 3D models.
  * @param mesh The mesh to add to.
  */
-static void AddRoadWireModels(RoadBits bits, uint x, uint y, const std::array<int, 4> &heights, const ModelPack &pack, TerrainChunkMesh &mesh)
+static void AddRoadWireModels(const RoadWireBits &bits, uint x, uint y, const std::array<int, 4> &heights, const ModelPack &pack, TerrainChunkMesh &mesh)
 {
-	const ModelPack::Entry *wires = pack.Find(ModelKind::Catenary, 0, 4);
-	const ModelPack::Entry *pole = pack.Find(ModelKind::Catenary, 0, 5);
 	static constexpr std::pair<RoadBit, std::array<float, 2>> BITS[4] = {
 		{RoadBit::NW, {0, -1}}, {RoadBit::SW, {1, 0}}, {RoadBit::SE, {0, 1}}, {RoadBit::NE, {-1, 0}},
 	};
+	auto add_center = [&](const ModelPack::Entry *entry) {
+		if (entry != nullptr) AddPieceModel(*entry, x, y, heights, TILE_SIZE * 0.5f, TILE_SIZE * 0.5f, 1, 0, mesh);
+	};
+	const ModelPack::Entry *single = pack.Find(ModelKind::Catenary, 0, 4);
+	const ModelPack::Entry *pair = pack.Find(ModelKind::Catenary, 0, 6);
 	for (const auto &[bit, dir] : BITS) {
-		if (bits.Test(bit)) AddPieceModel(*wires, x, y, heights, TILE_SIZE * 0.5f, TILE_SIZE * 0.5f, dir[0], dir[1], mesh);
+		if (bits.single.Test(bit)) AddPieceModel(*single, x, y, heights, TILE_SIZE * 0.5f, TILE_SIZE * 0.5f, dir[0], dir[1], mesh);
+		if (bits.pair.Test(bit)) AddPieceModel(*pair, x, y, heights, TILE_SIZE * 0.5f, TILE_SIZE * 0.5f, dir[0], dir[1], mesh);
 	}
+	if (bits.pair.Count() > 2) add_center(pack.Find(ModelKind::Catenary, 0, 8));
+	if (bits.single.Any() && bits.pair.Any() && (bits.single != bits.pair || bits.pair.Count() > 2)) add_center(pack.Find(ModelKind::Catenary, 0, 9));
 
-	/* A pole on one side of straight roads, every other tile, reaching over the middle of the road. */
-	bool along_x = bits == RoadBits{RoadBit::NE, RoadBit::SW};
-	bool along_y = bits == RoadBits{RoadBit::NW, RoadBit::SE};
-	if (!along_x && !along_y) return;
-	if (((along_x ? x : y) & 1) != 0) return;
-	static constexpr float REACH = 6.4f;
-	float px = along_x ? TILE_SIZE * 0.5f : TILE_SIZE * 0.5f + REACH;
-	float py = along_x ? TILE_SIZE * 0.5f - REACH : TILE_SIZE * 0.5f;
-	float dx = along_x ? 0.0f : -1.0f, dy = along_x ? 1.0f : 0.0f;
-	auto [hn, hw, he, hs] = heights;
-	float zc = (hn + hw + he + hs) * 0.25f * HEIGHT_LEVEL_SIZE;
-	float ax = ((hw + hs) - (hn + he)) * 0.5f * HEIGHT_LEVEL_SIZE / TILE_SIZE;
-	float ay = ((he + hs) - (hn + hw)) * 0.5f * HEIGHT_LEVEL_SIZE / TILE_SIZE;
-	float z = zc + ax * (px - TILE_SIZE * 0.5f) + ay * (py - TILE_SIZE * 0.5f);
-	float s = pole->scale;
-	ModelInstance &instance = mesh.models.emplace_back();
-	instance.model = pole->model;
-	instance.transform.m = {dx * s, dy * s, 0, 0, -dy * s, dx * s, 0, 0, 0, 0, s, 0, x * TILE_SIZE + px, y * TILE_SIZE + py, z, 1};
-	instance.tint = {1, 1, 1, 1};
+	/* A pole on one side of straight roads, every other tile. With both kinds of wire on one straight street, the
+	 * trolleybus pole holds the lanes and a tram pole on the other side, on the other tiles, holds the middle. */
+	auto straight = [](RoadBits b, bool &along_x) {
+		along_x = b == RoadBits{RoadBit::NE, RoadBit::SW};
+		return along_x || b == RoadBits{RoadBit::NW, RoadBit::SE};
+	};
+	bool along_x;
+	if (bits.pair.Any() && straight(bits.pair, along_x) && ((along_x ? x : y) & 1) == 0) {
+		AddRoadPoleModel(*pack.Find(ModelKind::Catenary, 0, 7), along_x, false, x, y, heights, mesh);
+	}
+	if (bits.single.Any() && straight(bits.single, along_x) && ((along_x ? x : y) & 1) == (bits.pair.Any() ? 1u : 0u)) {
+		AddRoadPoleModel(*pack.Find(ModelKind::Catenary, 0, 5), along_x, bits.pair.Any(), x, y, heights, mesh);
+	}
 }
 
 /**
@@ -1254,8 +1306,8 @@ static void AddBridgeLoad(TileIndex head, const std::array<float, 3> &a, const s
 			for (RoadTramType rtt : {RoadTramType::Road, RoadTramType::Tram}) {
 				RoadType rt = GetRoadType(head, rtt);
 				if (rt != INVALID_ROADTYPE && HasRoadCatenaryDrawn(rt)) {
-					add(pack.Find(ModelKind::Catenary, 0, 2));
-					break;
+					const ModelPack::Entry *pair = pack.Find(ModelKind::Catenary, 0, 10);
+					add(GetRoadCatenaryStyle(rt) == CatenaryStyle::Pair && pair != nullptr ? pair : pack.Find(ModelKind::Catenary, 0, 2));
 				}
 			}
 			break;
@@ -1962,7 +2014,7 @@ static bool GetGroundPattern(TileIndex tile, Slope slope, const ModelPack *pack,
 	} else if (IsTileType(tile, TileType::Road) && IsNormalRoad(tile)) {
 		/* Only the road of the base game; others have their own look. Road works and one-way arrows are drawn on the road. */
 		if (HasRoadWorks(tile) || GetDisallowedRoadDirections(tile).Any()) return false;
-		if (HasRoadTypeRoad(tile) && GetRoadTypeRoad(tile) != ROADTYPE_ROAD) return false;
+		if (HasRoadTypeRoad(tile) && !HasBaseRoadLook(GetRoadTypeRoad(tile))) return false;
 		RoadBits tram = HasRoadTypeTram(tile) ? GetRoadBits(tile, RoadTramType::Tram) : RoadBits{};
 		if (tram.Any() && (pack->Find(ModelKind::Roadside, 0, 4) == nullptr || GetRoadTypeTram(tile) != ROADTYPE_TRAM)) return false;
 		Roadside roadside = GetRoadside(tile);
@@ -1979,7 +2031,7 @@ static bool GetGroundPattern(TileIndex tile, Slope slope, const ModelPack *pack,
 		/* Level crossings: the road across the track bed; the track and the crossing are models. */
 		RailType rt = GetRailType(tile);
 		if (pack->Find(ModelKind::Crossing, 0, 0) == nullptr || GetTrackPiece(rt, false, *pack) == nullptr || GetRailTypeInfo(rt)->UsesOverlay()) return false;
-		if (HasRoadTypeTram(tile) || !HasRoadTypeRoad(tile) || GetRoadTypeRoad(tile) != ROADTYPE_ROAD) return false;
+		if (HasRoadTypeTram(tile) || !HasRoadTypeRoad(tile) || !HasBaseRoadLook(GetRoadTypeRoad(tile))) return false;
 		kind = GroundTextures::PatternKind::Crossing;
 		bits = static_cast<uint8_t>((GetCrossingRoadAxis(tile) == Axis::X ? ROAD_X : ROAD_Y).base());
 		if (IsOnSnowOrDesert(tile)) under = GROUND_TEXTURE_SNOW_DESERT + 3;
@@ -1992,7 +2044,7 @@ static bool GetGroundPattern(TileIndex tile, Slope slope, const ModelPack *pack,
 		bits = static_cast<uint8_t>((DiagDirToAxis(GetRailDepotDirection(tile)) == Axis::X ? TrackBits{Track::X} : TrackBits{Track::Y}).base());
 	} else if (IsTileType(tile, TileType::Road) && IsRoadDepot(tile)) {
 		/* Road vehicle depots: the road out of the door; the depot is a model. */
-		if (pack->Find(ModelKind::RoadDepot, 0, 0) == nullptr || HasRoadTypeTram(tile) || GetRoadTypeRoad(tile) != ROADTYPE_ROAD) return false;
+		if (pack->Find(ModelKind::RoadDepot, 0, 0) == nullptr || HasRoadTypeTram(tile) || !HasBaseRoadLook(GetRoadTypeRoad(tile))) return false;
 		kind = GroundTextures::PatternKind::Road;
 		bits = static_cast<uint8_t>(DiagDirToRoadBits(GetRoadDepotDirection(tile)).base());
 	} else if (IsTileType(tile, TileType::Industry) && IsIndustryCompleted(tile) && !IsTileOnWater(tile)) {
@@ -2433,7 +2485,7 @@ void BuildTerrainChunkMesh(uint chunk_x, uint chunk_y, GroundTextures &textures,
 			}
 			if (collect && models && IsTileType(tile, TileType::Road) && IsNormalRoad(tile)) {
 				AddRoadModels(tile, x, y, {hn, hw, he, hs}, *pack, mesh);
-				RoadBits wires = GetRoadWireBits(Tile(tile), *pack);
+				RoadWireBits wires = GetRoadWireBits(Tile(tile), *pack);
 				if (wires.Any()) AddRoadWireModels(wires, x, y, {hn, hw, he, hs}, *pack, mesh);
 			}
 			if (!collect) {
