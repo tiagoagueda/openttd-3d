@@ -3117,7 +3117,11 @@ STR_POWER_TOOLBAR_CAPTION                                       :{WHITE}Power Li
 STR_POWER_TOOLBAR_TOOLTIP_BUILD_LINE                            :{BLACK}Build an overhead power line. Drag along an axis or a diagonal; pylons are placed automatically, at most 2 tiles apart. Wires join only at pylons. Also press Shift to show cost estimate only
 STR_POWER_TOOLBAR_TOOLTIP_BUILD_PYLON                           :{BLACK}Build a single pylon. Also press Shift to show cost estimate only
 STR_POWER_TOOLBAR_TOOLTIP_BUILD_SUBSTATION                      :{BLACK}Build an overhead substation, where power lines meet power plants and consumers. Also press Shift to show cost estimate only
-STR_POWER_TOOLBAR_TOOLTIP_REMOVE                                :{BLACK}Toggle removal of power lines: dragging the line tool removes wires and the pylons left without wires
+STR_POWER_TOOLBAR_TOOLTIP_BUILD_TRANSITION                      :{BLACK}Build a transition pylon, where an overhead line goes underground, or turn a pylon into one. Also press Shift to show cost estimate only
+STR_POWER_TOOLBAR_TOOLTIP_BUILD_CABLE                           :{BLACK}Build an underground cable. Drag along an axis or a diagonal; it passes under anything. Cables connect at underground substations and transition pylons, and lose half as much power as overhead lines. Also press Shift to show cost estimate only
+STR_POWER_TOOLBAR_TOOLTIP_BUILD_UNDERGROUND_SUBSTATION          :{BLACK}Build an underground substation, where cables meet power plants and consumers. Also press Shift to show cost estimate only
+STR_POWER_TOOLBAR_TOOLTIP_NETWORK_VIEW                          :{BLACK}Show or hide underground cables
+STR_POWER_TOOLBAR_TOOLTIP_REMOVE                                :{BLACK}Toggle removal of power lines and cables: dragging the line tool removes wires and the pylons left without wires, dragging the cable tool removes cable
 STR_LANDSCAPING_TOOLTIP_LOWER_A_CORNER_OF_LAND                  :{BLACK}Lower a corner of land. Click+Drag to lower the first selected corner and level the selected area to the new corner height. Ctrl+Click+Drag to select the area diagonally. Also press Shift to show cost estimate only
 STR_LANDSCAPING_TOOLTIP_RAISE_A_CORNER_OF_LAND                  :{BLACK}Raise a corner of land. Click+Drag to raise the first selected corner and level the selected area to the new corner height. Ctrl+Click+Drag to select the area diagonally. Also press Shift to show cost estimate only
 STR_LANDSCAPING_LEVEL_LAND_TOOLTIP                              :{BLACK}Level an area of land to the height of the first selected corner. Ctrl+Click+Drag to select the area diagonally. Also press Shift to show cost estimate only
@@ -4068,6 +4072,7 @@ STR_FINANCES_SECTION_AIRCRAFT_REVENUE                           :{GOLD}Aircraft
 STR_FINANCES_SECTION_SHIP_REVENUE                               :{GOLD}Ships
 STR_FINANCES_SECTION_LOAN_INTEREST                              :{GOLD}Loan Interest
 STR_FINANCES_SECTION_OTHER                                      :{GOLD}Other
+STR_FINANCES_SECTION_ENERGY_SALES                               :{GOLD}Energy Sales
 
 STR_FINANCES_TOTAL_CAPTION                                      :{WHITE}Total
 STR_FINANCES_NEGATIVE_INCOME                                    :-{CURRENCY_LONG}
@@ -5467,6 +5472,13 @@ STR_ERROR_CAN_T_BUILD_POWER_LINE                                :Can't build pow
 STR_ERROR_CAN_T_BUILD_POWER_PYLON                               :Can't build pylon here...
 STR_ERROR_CAN_T_BUILD_POWER_SUBSTATION                          :Can't build substation here...
 STR_ERROR_CAN_T_REMOVE_POWER_LINE                               :Can't remove power line here...
+STR_ERROR_CAN_T_BUILD_POWER_CABLE                               :Can't build underground cable here...
+STR_ERROR_CAN_T_REMOVE_POWER_CABLE                              :Can't remove underground cable here...
+STR_ERROR_THERE_IS_NO_POWER_CABLE                               :there is no underground cable here
+STR_ERROR_POWER_CABLE_TOO_SHORT                                 :drag the cable over at least two tiles
+STR_ERROR_POWER_CABLE_OWNED_BY_OTHER                            :the cable belongs to another company
+STR_ERROR_POWER_CABLE_BRANCH_NEEDS_SUBSTATION                   :cables only branch at an underground substation or a transition pylon
+STR_ERROR_POWER_CABLES_CANNOT_CROSS                             :cables cannot cross each other
 STR_ERROR_COMPANY_HEADQUARTERS_IN                               :company headquarters in the way
 STR_ERROR_CAN_T_PURCHASE_THIS_LAND                              :Can't purchase this land area...
 STR_ERROR_YOU_ALREADY_OWN_IT                                    :you already own it!

@@ -24,7 +24,7 @@
 static constexpr size_t POWER_SL_BUF_SIZE = 4096;
 
 /**
- * The power layer: 16 bits for every tile.
+ * The power layer: 32 bits for every tile (16 bits in savegames from before underground cables).
  * Savegames without this chunk (all savegames from before power lines) load with an empty layer,
  * because the layer is cleared whenever the map is allocated.
  */
@@ -34,11 +34,22 @@ struct PWRLChunkHandler : ChunkHandler {
 	void Load() const override
 	{
 		size_t size = Map::Size();
-		if (SlGetFieldLength() != size * sizeof(uint16_t)) SlErrorCorrupt("Power layer size does not match the map");
+		size_t length = SlGetFieldLength();
+		if (length == size * sizeof(uint16_t)) {
+			/* Before underground cables: the low 16 bits only. */
+			std::vector<uint16_t> buffer(POWER_SL_BUF_SIZE);
+			for (size_t i = 0; i < size; i += POWER_SL_BUF_SIZE) {
+				std::span<uint16_t> part(buffer.data(), std::min(POWER_SL_BUF_SIZE, size - i));
+				SlCopy<VarFileType::U16>(part);
+				for (size_t j = 0; j < part.size(); j++) _power_layer[i + j] = part[j];
+			}
+			return;
+		}
+		if (length != size * sizeof(uint32_t)) SlErrorCorrupt("Power layer size does not match the map");
 
 		for (size_t i = 0; i < size; i += POWER_SL_BUF_SIZE) {
-			std::span<uint16_t> part(_power_layer.get() + i, std::min(POWER_SL_BUF_SIZE, size - i));
-			SlCopy<VarFileType::U16>(part);
+			std::span<uint32_t> part(_power_layer.get() + i, std::min(POWER_SL_BUF_SIZE, size - i));
+			SlCopy<VarFileType::U32>(part);
 		}
 	}
 
@@ -46,10 +57,10 @@ struct PWRLChunkHandler : ChunkHandler {
 	{
 		size_t size = Map::Size();
 
-		SlSetLength(size * sizeof(uint16_t));
+		SlSetLength(size * sizeof(uint32_t));
 		for (size_t i = 0; i < size; i += POWER_SL_BUF_SIZE) {
-			std::span<uint16_t> part(_power_layer.get() + i, std::min(POWER_SL_BUF_SIZE, size - i));
-			SlCopy<VarFileType::U16>(part);
+			std::span<uint32_t> part(_power_layer.get() + i, std::min(POWER_SL_BUF_SIZE, size - i));
+			SlCopy<VarFileType::U32>(part);
 		}
 	}
 };

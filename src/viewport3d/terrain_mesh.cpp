@@ -1640,6 +1640,50 @@ static bool AddPowerModels(TileIndex tile, const ModelPack &pack, std::vector<Mo
 }
 
 /**
+ * Add what shows of an underground cable under a tile: a marker post on open land, and with the power network view on,
+ * the cable itself, towards the north half of the compass; the other pieces are added by the tile at their other end.
+ * @param tile The tile.
+ * @param pack The package of 3D models.
+ * @param models The models to add to.
+ */
+static void AddPowerCableModels(TileIndex tile, const ModelPack &pack, std::vector<ModelInstance> &models)
+{
+	uint8_t dirs = GetPowerCableDirs(tile);
+	if (dirs == 0) return;
+	static const std::array<float, 4> WHITE{1, 1, 1, 1};
+	auto centre = [](TileIndex t) -> std::array<float, 3> {
+		int x = TileX(t) * TILE_SIZE + TILE_SIZE / 2, y = TileY(t) * TILE_SIZE + TILE_SIZE / 2;
+		return {static_cast<float>(x), static_cast<float>(y), GetSlopePixelZ(x, y) * WORLD_Z_SCALE};
+	};
+	std::array<float, 3> here = centre(tile);
+	if (IsTileType(tile, TileType::Clear) || IsTileType(tile, TileType::Trees)) {
+		const ModelPack::Entry *marker = pack.Find(ModelKind::Power, 0, 5);
+		if (marker != nullptr) PlaceModelHeading(*marker, here, {1, 0}, WHITE, models);
+	}
+	if (!_power_network_view) return;
+	const ModelPack::Entry *cable = pack.Find(ModelKind::Power, 0, 6);
+	if (cable == nullptr) return;
+	for (Direction dir : {Direction::N, Direction::NE, Direction::E, Direction::SE}) {
+		if (!HasBit(dirs, to_underlying(dir))) continue;
+		TileIndexDiffC d = TileIndexDiffCByDir(dir);
+		TileIndex other = TileAddWrap(tile, d.x, d.y);
+		if (other == INVALID_TILE) continue;
+		std::array<float, 3> there = centre(other);
+		AddStretchedModel(*cable, {here[0], here[1], here[2] + 0.3f}, {there[0], there[1], there[2] + 0.3f}, models);
+	}
+}
+
+/**
+ * Whether the package draws underground cables with models, so the 2D cable sprites must not be drawn.
+ * @param pack The package of 3D models.
+ * @return True if it has models for cable markers and cables.
+ */
+static bool HasPowerCableModels(const ModelPack &pack)
+{
+	return pack.Find(ModelKind::Power, 0, 5) != nullptr && pack.Find(ModelKind::Power, 0, 6) != nullptr;
+}
+
+/**
  * Whether the package draws overhead power lines with models, so the 2D wire sprites must not be drawn.
  * @param pack The package of 3D models.
  * @return True if it has models for pylons and wires.
@@ -2283,12 +2327,16 @@ static TileGround AddTileSprites(uint x, uint y, const std::array<uint8_t, 4> &h
 	TileIndex tile = TileXY(x, y);
 	/* Overhead power wires with models are added by the pylons at their ends, not by the tiles below them. */
 	_power_wire_sprites = ground_only || pack == nullptr || pack->IsEmpty() || !HasPowerModels(*pack);
+	bool cable_models = !ground_only && pack != nullptr && !pack->IsEmpty() && HasPowerCableModels(*pack);
+	_power_cable_sprites = ground_only || !cable_models;
 	CollectTileSprites(tile, sprites);
 	_power_wire_sprites = true;
+	_power_cable_sprites = true;
 
 	/* A building with a 3D model keeps its ground and foundation, but not its other sprites. */
 	_tile_parts = &mesh.parts;
 	bool replaced = !ground_only && pack != nullptr && !pack->IsEmpty() && AddTileModel(tile, *pack, mesh.models);
+	if (cable_models) AddPowerCableModels(tile, *pack, mesh.models);
 	_tile_parts = nullptr;
 
 	/* Signals with a 3D model replace the sprites the 2D game draws for them. */
@@ -2558,6 +2606,8 @@ void BuildTerrainChunkMesh(uint chunk_x, uint chunk_y, GroundTextures &textures,
 				ground = AddTileSprites(x, y, {static_cast<uint8_t>(hn - low), static_cast<uint8_t>(hw - low), static_cast<uint8_t>(he - low), static_cast<uint8_t>(hs - low)}, textures, atlas, pack, mesh);
 			} else {
 				ground = GetTileGround(tile, x, y, pack_ground);
+				/* Marker posts and the network view of underground cables under open land. */
+				if (pack != nullptr && !pack->IsEmpty() && HasPowerCable(tile) && HasPowerCableModels(*pack)) AddPowerCableModels(tile, *pack, mesh.models);
 			}
 			if (ground.shaded) light = AMBIENT + DIFFUSE * SUN_Z;
 			/* A slight checkerboard keeps individual tiles recognisable where there is no texture. */

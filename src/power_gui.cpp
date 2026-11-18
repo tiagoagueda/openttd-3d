@@ -62,6 +62,7 @@ struct BuildPowerToolbarWindow : Window {
 	BuildPowerToolbarWindow(WindowDesc &desc, WindowNumber window_number) : Window(desc)
 	{
 		this->InitNested(window_number);
+		this->SetWidgetLoweredState(WID_PT_NETWORK_VIEW, _power_network_view);
 	}
 
 	/** Is the remove toggle down? */
@@ -84,12 +85,35 @@ struct BuildPowerToolbarWindow : Window {
 				break;
 
 			case WID_PT_BUILD_SUBSTATION:
-				if (HandlePlacePushButton(this, WID_PT_BUILD_SUBSTATION, SPR_CURSOR_RAIL_STATION, HT_RECT)) {
+			case WID_PT_BUILD_UNDERGROUND_SUBSTATION:
+				if (HandlePlacePushButton(this, widget, widget == WID_PT_BUILD_SUBSTATION ? SPR_CURSOR_RAIL_STATION : SPR_CURSOR_TRUCK_STATION, HT_RECT)) {
 					/* Show the reach of the substation around the cursor. */
 					int rad = _settings_game.economy.power_catchment;
 					SetTileSelectBigSize(-rad, -rad, 2 * rad, 2 * rad);
 				}
 				this->last_user_action = widget;
+				break;
+
+			case WID_PT_BUILD_TRANSITION:
+				HandlePlacePushButton(this, WID_PT_BUILD_TRANSITION, SPR_CURSOR_TRANSMITTER, HT_RECT);
+				this->last_user_action = widget;
+				break;
+
+			case WID_PT_BUILD_CABLE:
+				if (HandlePlacePushButton(this, WID_PT_BUILD_CABLE, SPR_CURSOR_TUNNEL_RAIL, HT_POINT | HT_DIAGONAL)) {
+					/* Cables are hidden; show them while building them. */
+					SetPowerNetworkView(true);
+					this->SetWidgetLoweredState(WID_PT_NETWORK_VIEW, true);
+					this->SetWidgetDirty(WID_PT_NETWORK_VIEW);
+				}
+				this->last_user_action = widget;
+				break;
+
+			case WID_PT_NETWORK_VIEW:
+				SetPowerNetworkView(!_power_network_view);
+				this->SetWidgetLoweredState(WID_PT_NETWORK_VIEW, _power_network_view);
+				this->SetWidgetDirty(WID_PT_NETWORK_VIEW);
+				SndClickBeep();
 				break;
 
 			case WID_PT_DEMOLISH:
@@ -115,11 +139,23 @@ struct BuildPowerToolbarWindow : Window {
 				break;
 
 			case WID_PT_BUILD_PYLON:
-				Command<Commands::BuildPowerPylon>::Post(STR_ERROR_CAN_T_BUILD_POWER_PYLON, CcPlaySound_CONSTRUCTION_OTHER, tile);
+				Command<Commands::BuildPowerPylon>::Post(STR_ERROR_CAN_T_BUILD_POWER_PYLON, CcPlaySound_CONSTRUCTION_OTHER, tile, PowerTileKind::Pylon);
 				break;
 
 			case WID_PT_BUILD_SUBSTATION:
 				Command<Commands::BuildPowerSubstation>::Post(STR_ERROR_CAN_T_BUILD_POWER_SUBSTATION, CcPlaySound_CONSTRUCTION_OTHER, tile, PowerTileKind::OverheadSubstation);
+				break;
+
+			case WID_PT_BUILD_UNDERGROUND_SUBSTATION:
+				Command<Commands::BuildPowerSubstation>::Post(STR_ERROR_CAN_T_BUILD_POWER_SUBSTATION, CcPlaySound_CONSTRUCTION_OTHER, tile, PowerTileKind::UndergroundSubstation);
+				break;
+
+			case WID_PT_BUILD_TRANSITION:
+				Command<Commands::BuildPowerPylon>::Post(STR_ERROR_CAN_T_BUILD_POWER_PYLON, CcPlaySound_CONSTRUCTION_OTHER, tile, PowerTileKind::TransitionPylon);
+				break;
+
+			case WID_PT_BUILD_CABLE:
+				VpStartPlaceSizing(tile, VPM_X_AND_Y, this->IsRemoving() ? DDSP_REMOVE_POWER_CABLE : DDSP_BUILD_POWER_CABLE);
 				break;
 
 			case WID_PT_DEMOLISH:
@@ -154,6 +190,16 @@ struct BuildPowerToolbarWindow : Window {
 					SnapPowerLineEnd(start_tile, end_tile), start_tile);
 				break;
 
+			case DDSP_BUILD_POWER_CABLE:
+				Command<Commands::BuildPowerCable>::Post(STR_ERROR_CAN_T_BUILD_POWER_CABLE, CcPlaySound_CONSTRUCTION_OTHER,
+					SnapPowerLineEnd(start_tile, end_tile), start_tile);
+				break;
+
+			case DDSP_REMOVE_POWER_CABLE:
+				Command<Commands::RemovePowerCable>::Post(STR_ERROR_CAN_T_REMOVE_POWER_CABLE, CcPlaySound_CONSTRUCTION_OTHER,
+					SnapPowerLineEnd(start_tile, end_tile), start_tile);
+				break;
+
 			default: break;
 		}
 	}
@@ -163,6 +209,9 @@ struct BuildPowerToolbarWindow : Window {
 		this->RaiseWidget(WID_PT_BUILD_LINE);
 		this->RaiseWidget(WID_PT_BUILD_PYLON);
 		this->RaiseWidget(WID_PT_BUILD_SUBSTATION);
+		this->RaiseWidget(WID_PT_BUILD_TRANSITION);
+		this->RaiseWidget(WID_PT_BUILD_CABLE);
+		this->RaiseWidget(WID_PT_BUILD_UNDERGROUND_SUBSTATION);
 		this->RaiseWidget(WID_PT_DEMOLISH);
 		this->SetDirty();
 	}
@@ -183,7 +232,11 @@ static constexpr std::initializer_list<NWidgetPart> _nested_power_toolbar_widget
 		NWidget(WWT_IMGBTN, Colours::DarkGreen, WID_PT_BUILD_LINE), SetFill(0, 1), SetToolbarMinimalSize(1), SetSpriteTip(SPR_IMG_AUTOELRAIL, STR_POWER_TOOLBAR_TOOLTIP_BUILD_LINE),
 		NWidget(WWT_IMGBTN, Colours::DarkGreen, WID_PT_BUILD_PYLON), SetFill(0, 1), SetToolbarMinimalSize(1), SetSpriteTip(SPR_IMG_TRANSMITTER, STR_POWER_TOOLBAR_TOOLTIP_BUILD_PYLON),
 		NWidget(WWT_IMGBTN, Colours::DarkGreen, WID_PT_BUILD_SUBSTATION), SetFill(0, 1), SetToolbarMinimalSize(1), SetSpriteTip(SPR_IMG_RAIL_STATION, STR_POWER_TOOLBAR_TOOLTIP_BUILD_SUBSTATION),
+		NWidget(WWT_IMGBTN, Colours::DarkGreen, WID_PT_BUILD_TRANSITION), SetFill(0, 1), SetToolbarMinimalSize(1), SetSpriteTip(SPR_IMG_CONVERT_ELRAIL, STR_POWER_TOOLBAR_TOOLTIP_BUILD_TRANSITION),
+		NWidget(WWT_IMGBTN, Colours::DarkGreen, WID_PT_BUILD_CABLE), SetFill(0, 1), SetToolbarMinimalSize(1), SetSpriteTip(SPR_IMG_TUNNEL_RAIL, STR_POWER_TOOLBAR_TOOLTIP_BUILD_CABLE),
+		NWidget(WWT_IMGBTN, Colours::DarkGreen, WID_PT_BUILD_UNDERGROUND_SUBSTATION), SetFill(0, 1), SetToolbarMinimalSize(1), SetSpriteTip(SPR_IMG_TRUCK_BAY, STR_POWER_TOOLBAR_TOOLTIP_BUILD_UNDERGROUND_SUBSTATION),
 		NWidget(WWT_PANEL, Colours::DarkGreen), SetToolbarSpacerMinimalSize(), SetFill(1, 1), EndContainer(),
+		NWidget(WWT_IMGBTN, Colours::DarkGreen, WID_PT_NETWORK_VIEW), SetFill(0, 1), SetToolbarMinimalSize(1), SetSpriteTip(SPR_IMG_SHOW_ROUTES, STR_POWER_TOOLBAR_TOOLTIP_NETWORK_VIEW),
 		NWidget(WWT_IMGBTN, Colours::DarkGreen, WID_PT_DEMOLISH), SetFill(0, 1), SetToolbarMinimalSize(1), SetSpriteTip(SPR_IMG_DYNAMITE, STR_TOOLTIP_DEMOLISH_BUILDINGS_ETC),
 		NWidget(WWT_IMGBTN, Colours::DarkGreen, WID_PT_REMOVE), SetFill(0, 1), SetToolbarMinimalSize(1), SetSpriteTip(SPR_IMG_REMOVE, STR_POWER_TOOLBAR_TOOLTIP_REMOVE),
 	EndContainer(),

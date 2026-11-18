@@ -20,9 +20,9 @@
  */
 enum class PowerTileKind : uint8_t {
 	Pylon = 0, ///< A pylon carrying overhead wires.
-	TransitionPylon = 1, ///< A pylon where an overhead line goes underground (not built yet).
+	TransitionPylon = 1, ///< A pylon where an overhead line goes underground.
 	OverheadSubstation = 2, ///< A substation that overhead lines connect to.
-	UndergroundSubstation = 3, ///< A substation that underground cables connect to (not built yet).
+	UndergroundSubstation = 3, ///< A substation that underground cables connect to.
 };
 
 /**
@@ -43,14 +43,16 @@ static constexpr uint POWER_MAX_SPAN = 3;
 static constexpr int POWER_WIRE_HEIGHT = 3;
 
 /**
- * The power layer: 16 bits for every tile, next to the map array.
- * Bits 0..7: underground cable leaves the tile in each of the 8 directions (not used yet).
+ * The power layer: 32 bits for every tile, next to the map array.
+ * Bits 0..7: underground cable leaves the tile in each of the 8 directions.
  * Bits 8..10: #PowerWireKind of the overhead wire passing over the tile.
  * Bits 11..14: company owning that wire.
  * Bit 15: spare.
- * Tiles of #TileType::Power keep their wires in the tile itself (m8), not here.
+ * Bits 16..19: company owning the cable under the tile.
+ * Bits 20..31: spare.
+ * Tiles of #TileType::Power keep their wires in the tile itself (m8), not here; their cables are here like any other tile's.
  */
-extern std::unique_ptr<uint16_t[]> _power_layer;
+extern std::unique_ptr<uint32_t[]> _power_layer;
 
 /**
  * Get the kind of overhead wire passing over a tile.
@@ -131,6 +133,48 @@ inline Direction GetPowerWireDir(PowerWireKind kind)
  * @param t The tile.
  * @return True if it is.
  */
+/**
+ * Get the directions in which an underground cable leaves a tile.
+ * @param t The tile.
+ * @return Bit set of directions (bit n for Direction n).
+ */
+inline uint8_t GetPowerCableDirs(TileIndex t)
+{
+	return _power_layer == nullptr ? 0 : GB(_power_layer[t.base()], 0, 8);
+}
+
+/**
+ * Whether an underground cable runs under a tile.
+ * @param t The tile.
+ * @return True if a cable leaves the tile in any direction.
+ */
+inline bool HasPowerCable(TileIndex t)
+{
+	return GetPowerCableDirs(t) != 0;
+}
+
+/**
+ * Get the company owning the cable under a tile.
+ * @param t The tile.
+ * @return The owner.
+ */
+inline Owner GetPowerCableOwner(TileIndex t)
+{
+	return static_cast<Owner>(GB(_power_layer[t.base()], 16, 4));
+}
+
+/**
+ * Set the directions in which a cable leaves a tile, and its owner.
+ * @param t The tile.
+ * @param dirs Bit set of directions; 0 removes the cable.
+ * @param owner The owner.
+ */
+inline void SetPowerCable(TileIndex t, uint8_t dirs, Owner owner)
+{
+	SB(_power_layer[t.base()], 0, 8, dirs);
+	SB(_power_layer[t.base()], 16, 4, dirs == 0 ? 0 : (owner.base() & 0xF));
+}
+
 inline bool IsPowerTile(Tile t)
 {
 	return IsTileType(t, TileType::Power);
@@ -179,6 +223,18 @@ inline bool CanAttachPowerWires(Tile t)
  * @pre IsPowerTile(t)
  * @return 0 if no wires leave in that direction, else the distance in tiles to the next pylon (1..#POWER_MAX_SPAN).
  */
+/**
+ * Whether underground cables can end at and join at a power tile: an underground substation or a transition pylon.
+ * @param t The tile.
+ * @return True if cables connect here.
+ */
+inline bool CanAttachPowerCables(Tile t)
+{
+	if (!IsPowerTile(t)) return false;
+	PowerTileKind kind = GetPowerTileKind(t);
+	return kind == PowerTileKind::UndergroundSubstation || kind == PowerTileKind::TransitionPylon;
+}
+
 inline uint GetPowerSpan(Tile t, Direction dir)
 {
 	assert(IsPowerTile(t));

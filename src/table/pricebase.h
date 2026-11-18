@@ -86,4 +86,6 @@ static const EnumIndexArray<PriceBaseSpec, Price, Price::End> _price_base_specs 
 	PriceBaseSpec(20, PriceCategory::Construction, GrfSpecFeature::End, Price::Invalid), // Price::ClearPowerWire
 	PriceBaseSpec(150, PriceCategory::Construction, GrfSpecFeature::End, Price::Invalid), // Price::ClearPowerSubstation
 	PriceBaseSpec(30, PriceCategory::None, GrfSpecFeature::End, Price::Invalid), // Price::PowerSale
+	PriceBaseSpec(1900, PriceCategory::Construction, GrfSpecFeature::End, Price::Invalid), // Price::BuildPowerCable
+	PriceBaseSpec(100, PriceCategory::Construction, GrfSpecFeature::End, Price::Invalid), // Price::ClearPowerCable
 };

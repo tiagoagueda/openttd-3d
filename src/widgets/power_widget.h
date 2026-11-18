@@ -15,6 +15,10 @@ enum BuildPowerToolbarWidgets : WidgetID {
 	WID_PT_BUILD_LINE, ///< Build an overhead line.
 	WID_PT_BUILD_PYLON, ///< Build a single pylon.
 	WID_PT_BUILD_SUBSTATION, ///< Build an overhead substation.
+	WID_PT_BUILD_TRANSITION, ///< Build a transition pylon, where an overhead line goes underground.
+	WID_PT_BUILD_CABLE, ///< Build an underground cable.
+	WID_PT_BUILD_UNDERGROUND_SUBSTATION, ///< Build an underground substation.
+	WID_PT_NETWORK_VIEW, ///< Toggle the power network view.
 	WID_PT_DEMOLISH, ///< Demolish aka dynamite button.
 	WID_PT_REMOVE, ///< Toggle removal of lines.
 };

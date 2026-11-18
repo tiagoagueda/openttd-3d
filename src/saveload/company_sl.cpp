@@ -491,6 +491,23 @@ public:
 };
 
 /** Save/load of companies. */
+/** Yearly expenses of savegames from before energy sales, with 13 kinds of expenses a year. */
+static std::array<Money, 3 * 13> _old_yearly_expenses{};
+
+/**
+ * Move the yearly expenses of a savegame from before energy sales into place; the energy sales start at zero.
+ * @param c The company just loaded.
+ */
+static void MoveOldYearlyExpenses(CompanyProperties &c)
+{
+	for (uint year = 0; year < 3; year++) {
+		c.yearly_expenses[year] = {};
+		for (uint type = 0; type < 13; type++) {
+			c.yearly_expenses[year][static_cast<ExpensesType>(type)] = _old_yearly_expenses[year * 13 + type];
+		}
+	}
+}
+
 static const SaveLoad _company_desc[] = {
 	SaveLoad::Variable<VarFileType::U32>("name_2", SLE_OBJECT_ADDRESS(CompanyProperties, name_2)),
 	SaveLoad::Variable<VarFileType::StringID>("name_1", SLE_OBJECT_ADDRESS(CompanyProperties, name_1)),
@@ -537,8 +554,10 @@ static const SaveLoad _company_desc[] = {
 	SaveLoad::Variable<VarFileType::I64>("bankrupt_value", SLE_OBJECT_ADDRESS(CompanyProperties, bankrupt_value), SaveLoadVersion::UnifyCurrency),
 
 	/* yearly expenses was changed to 64-bit in savegame version 2. */
-	SaveLoad::Array<VarFileType::I32, 3 * 13>("yearly_expenses", SLE_OBJECT_ADDRESS(CompanyProperties, yearly_expenses), SaveLoadVersion::MinVersion, SaveLoadVersion::VehicleCurrencyStationChanges),
-	SaveLoad::Array<VarFileType::I64, 3 * 13>("yearly_expenses", SLE_OBJECT_ADDRESS(CompanyProperties, yearly_expenses), SaveLoadVersion::VehicleCurrencyStationChanges),
+	/* Before energy sales there were 13 kinds of expenses; they are loaded aside and moved into place after loading. */
+	SaveLoad::Array<VarFileType::I32, 3 * 13>("yearly_expenses", SLE_GLOBAL_ADDRESS(_old_yearly_expenses), SaveLoadVersion::MinVersion, SaveLoadVersion::VehicleCurrencyStationChanges),
+	SaveLoad::Array<VarFileType::I64, 3 * 13>("yearly_expenses", SLE_GLOBAL_ADDRESS(_old_yearly_expenses), SaveLoadVersion::VehicleCurrencyStationChanges, SaveLoadVersion::EnergySales),
+	SaveLoad::Array<VarFileType::I64, 3 * to_underlying(ExpensesType::End)>("yearly_expenses", SLE_OBJECT_ADDRESS(CompanyProperties, yearly_expenses), SaveLoadVersion::EnergySales),
 
 	SaveLoad::Variable<VarFileType::Bool>("is_ai", SLE_OBJECT_ADDRESS(CompanyProperties, is_ai), SaveLoadVersion::VehicleCurrencyStationChanges),
 
@@ -573,6 +592,7 @@ struct PLYRChunkHandler : ChunkHandler {
 		while ((index = SlIterateArray()) != -1) {
 			Company *c = Company::CreateAtIndex(CompanyID(index));
 			SlObject(c, slt);
+			if (IsSavegameVersionBefore(SaveLoadVersion::EnergySales)) MoveOldYearlyExpenses(*c);
 			_company_colours[c->index] = c->colour;
 		}
 	}

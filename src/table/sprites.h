@@ -386,7 +386,9 @@ static constexpr SpriteID SPR_POWER_SUBSTATION_UNDERGROUND = SPR_POWER_BASE + 6;
 static constexpr SpriteID SPR_POWER_TRANSITION_PYLON = SPR_POWER_BASE + 7; ///< Transition pylons, in the same four directions as the pylons.
 static constexpr SpriteID SPR_POWER_WIRES = SPR_POWER_BASE + 11; ///< Wires over one tile: along x, along y, along the N-S diagonal, along the E-W diagonal.
 static constexpr SpriteID SPR_POWER_HALF_WIRES = SPR_POWER_BASE + 15; ///< Wires from the middle of a tile to its edge, by #Direction.
-static constexpr uint16_t POWER_SPRITE_COUNT = 23;
+static constexpr SpriteID SPR_POWER_CABLE_MARKER = SPR_POWER_BASE + 23; ///< Marker post over an underground cable.
+static constexpr SpriteID SPR_POWER_CABLE_VIEW = SPR_POWER_BASE + 24; ///< Underground cable in the power network view, from the middle of a tile to its edge, by #Direction.
+static constexpr uint16_t POWER_SPRITE_COUNT = 32;
 /** @} */
 
 /** From where can we start putting NewGRFs. */

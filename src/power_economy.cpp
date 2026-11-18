@@ -216,7 +216,7 @@ struct PowerSubstation {
 
 /** A pair of substations of one network, with the length of line between them. */
 struct PowerPair {
-	uint32_t distance; ///< Length of the shortest line, overhead 24 per straight tile and 34 per diagonal tile.
+	uint32_t distance; ///< Length of the shortest line, overhead 24 per straight tile and 34 per diagonal tile, underground half that.
 	uint16_t from; ///< Index into the substations.
 	uint16_t to; ///< Index into the substations.
 };
@@ -268,6 +268,32 @@ static void UpdatePowerNetworks()
 			if (GetTileOwner(nodes[other]) != GetTileOwner(nodes[n])) continue;
 			bool diagonal = to_underlying(dir) % 2 == 0;
 			edges[n].emplace_back(other, length * (diagonal ? 34 : 24));
+		}
+
+		/* Underground cables, from an underground substation or a transition pylon to the next one; they lose half as much. */
+		if (!CanAttachPowerCables(nodes[n])) continue;
+		Owner owner = GetTileOwner(nodes[n]);
+		for (Direction dir : EnumRange(Direction::End)) {
+			if (!HasBit(GetPowerCableDirs(nodes[n]), to_underlying(dir))) continue;
+			TileIndex tile = nodes[n];
+			Direction step = dir;
+			uint32_t weight = 0;
+			int other = -1;
+			for (uint guard = 0; guard < Map::Size(); guard++) {
+				if (!HasBit(GetPowerCableDirs(tile), to_underlying(step)) || GetPowerCableOwner(tile) != owner) break;
+				tile = GetPowerSpanEnd(tile, step, 1);
+				if (tile == INVALID_TILE || !HasBit(GetPowerCableDirs(tile), to_underlying(ReverseDir(step)))) break;
+				weight += (to_underlying(step) % 2 == 0) ? 17 : 12;
+				if (CanAttachPowerCables(tile)) {
+					if (GetTileOwner(tile) == owner) other = node_of(tile);
+					break;
+				}
+				/* Continue or bend: the one other direction the cable leaves this tile in. */
+				uint8_t rest = GetPowerCableDirs(tile) & ~(1 << to_underlying(ReverseDir(step)));
+				if (CountBits(rest) != 1) break;
+				step = static_cast<Direction>(FindFirstBit(rest));
+			}
+			if (other >= 0 && other != static_cast<int>(n)) edges[n].emplace_back(other, weight);
 		}
 	}
 
@@ -510,7 +536,7 @@ static void BalancePower()
 		if (!Company::IsValidID(owner)) continue;
 		Money money = _price[Price::PowerSale] * static_cast<int64_t>(energy) / 100;
 		if (money == 0) continue;
-		SubtractMoneyFromCompany(owner, CommandCost(ExpensesType::Other, -money));
+		SubtractMoneyFromCompany(owner, CommandCost(ExpensesType::EnergySales, -money));
 	}
 }
 

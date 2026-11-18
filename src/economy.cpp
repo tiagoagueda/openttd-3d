@@ -484,6 +484,7 @@ void ChangeOwnershipOfCompanyItems(Owner old_owner, Owner new_owner)
 		for (const auto tile : Map::Iterate()) {
 			ChangeTileOwner(tile, old_owner, new_owner);
 		}
+		ChangePowerCableOwner(old_owner, new_owner);
 
 		if (new_owner != INVALID_OWNER) {
 			/* Update all signals because there can be new segment that was owned by two companies

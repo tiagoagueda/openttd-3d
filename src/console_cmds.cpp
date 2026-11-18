@@ -559,7 +559,7 @@ static bool ConScrollToTile(std::span<std::string_view> argv)
 static bool ConPowerBuild(std::span<std::string_view> argv)
 {
 	if (argv.empty()) {
-		IConsolePrint(CC_HELP, "Build power lines for your company. Usage: 'power_build line <x1> <y1> <x2> <y2>', 'power_build pylon <x> <y>', 'power_build substation <x> <y>', 'power_build info', 'power_build fuel <industry> <amount>'.");
+		IConsolePrint(CC_HELP, "Build power lines for your company. Usage: 'power_build line <x1> <y1> <x2> <y2>', 'power_build pylon <x> <y>', 'power_build substation|usubstation|transition <x> <y>', 'power_build cable|removecable <x1> <y1> <x2> <y2>', 'power_build info', 'power_build fuel <industry> <amount>'.");
 		return true;
 	}
 	if (argv.size() == 2 && argv[1] == "info") {
@@ -575,7 +575,7 @@ static bool ConPowerBuild(std::span<std::string_view> argv)
 			IConsolePrint(CC_DEFAULT, "town {} at {},{}: needs {} gets {} bonus {}%", t->index, TileX(t->xy), TileY(t->xy), t->power_demand, t->power_supplied, GetPowerBonusPercent(t->power_demand, t->power_supplied));
 		}
 		for (const Company *c : Company::Iterate()) {
-			IConsolePrint(CC_DEFAULT, "company {}: money {} other income this year {}", c->index, c->money, -c->yearly_expenses[0][ExpensesType::Other]);
+			IConsolePrint(CC_DEFAULT, "company {}: money {} energy sales this year {}", c->index, c->money, -c->yearly_expenses[0][ExpensesType::EnergySales]);
 		}
 		return true;
 	}
@@ -611,9 +611,17 @@ static bool ConPowerBuild(std::span<std::string_view> argv)
 	if (argv[1] == "line" && numbers.size() == 4) {
 		Command<Commands::BuildPowerLine>::Post(STR_ERROR_CAN_T_BUILD_POWER_LINE, TileXY(numbers[2], numbers[3]), a);
 	} else if (argv[1] == "pylon" && numbers.size() == 2) {
-		Command<Commands::BuildPowerPylon>::Post(STR_ERROR_CAN_T_BUILD_POWER_PYLON, a);
+		Command<Commands::BuildPowerPylon>::Post(STR_ERROR_CAN_T_BUILD_POWER_PYLON, a, PowerTileKind::Pylon);
+	} else if (argv[1] == "transition" && numbers.size() == 2) {
+		Command<Commands::BuildPowerPylon>::Post(STR_ERROR_CAN_T_BUILD_POWER_PYLON, a, PowerTileKind::TransitionPylon);
 	} else if (argv[1] == "substation" && numbers.size() == 2) {
 		Command<Commands::BuildPowerSubstation>::Post(STR_ERROR_CAN_T_BUILD_POWER_SUBSTATION, a, PowerTileKind::OverheadSubstation);
+	} else if (argv[1] == "usubstation" && numbers.size() == 2) {
+		Command<Commands::BuildPowerSubstation>::Post(STR_ERROR_CAN_T_BUILD_POWER_SUBSTATION, a, PowerTileKind::UndergroundSubstation);
+	} else if (argv[1] == "cable" && numbers.size() == 4) {
+		Command<Commands::BuildPowerCable>::Post(STR_ERROR_CAN_T_BUILD_POWER_CABLE, TileXY(numbers[2], numbers[3]), a);
+	} else if (argv[1] == "removecable" && numbers.size() == 4) {
+		Command<Commands::RemovePowerCable>::Post(STR_ERROR_CAN_T_REMOVE_POWER_CABLE, TileXY(numbers[2], numbers[3]), a);
 	} else {
 		return false;
 	}

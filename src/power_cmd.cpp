@@ -18,6 +18,9 @@
 #include "company_base.h"
 #include "economy_func.h"
 #include "viewport_func.h"
+#ifdef WITH_VIEWPORT3D
+#include "viewport3d/view3d_gui.h"
+#endif
 #include "clear_func.h"
 #include "bridge_map.h"
 #include "tunnelbridge_map.h"
@@ -40,15 +43,17 @@
 
 #include "safeguards.h"
 
-std::unique_ptr<uint16_t[]> _power_layer;
+std::unique_ptr<uint32_t[]> _power_layer;
 
 bool _power_wire_sprites = true;
+bool _power_cable_sprites = true;
+bool _power_network_view = false;
 bool _power_sprites_loaded = false;
 
 /** Allocate an empty power layer for the current map size. Called whenever the map is allocated. */
 void AllocatePowerLayer()
 {
-	_power_layer = std::make_unique<uint16_t[]>(Map::Size());
+	_power_layer = std::make_unique<uint32_t[]>(Map::Size());
 	_power_network_version++;
 }
 
@@ -383,21 +388,36 @@ static Money GetSpanPrice(Direction dir, uint length, bool build)
 }
 
 /**
- * Build a single pylon, without wires.
+ * Build a single pylon, without wires: a normal pylon, or a transition pylon where an overhead line goes underground.
+ * A normal pylon of the company can be turned into a transition pylon, keeping its wires.
  * @param flags Type of operation.
  * @param tile Where to build it.
+ * @param kind PowerTileKind::Pylon or PowerTileKind::TransitionPylon.
  * @return The cost or an error.
  */
-CommandCost CmdBuildPowerPylon(DoCommandFlags flags, TileIndex tile)
+CommandCost CmdBuildPowerPylon(DoCommandFlags flags, TileIndex tile, PowerTileKind kind)
 {
-	if (IsValidTile(tile) && IsPowerTile(tile)) return CommandCost(STR_ERROR_ALREADY_BUILT);
+	if (kind != PowerTileKind::Pylon && kind != PowerTileKind::TransitionPylon) return CMD_ERROR;
+	/* A transition pylon costs three pylons. */
+	Money price = _price[Price::BuildPowerPylon] * (kind == PowerTileKind::TransitionPylon ? 3 : 1);
+
+	if (IsValidTile(tile) && IsPowerTile(tile)) {
+		if (kind != PowerTileKind::TransitionPylon || GetPowerTileKind(tile) != PowerTileKind::Pylon) return CommandCost(STR_ERROR_ALREADY_BUILT);
+		CommandCost owner = CheckTileOwnership(tile);
+		if (owner.Failed()) return owner;
+		if (flags.Test(DoCommandFlag::Execute)) {
+			SB(Tile(tile).m5(), 0, 2, to_underlying(kind));
+			MarkPowerTileDirty(tile);
+		}
+		return CommandCost(ExpensesType::Construction, price - _price[Price::BuildPowerPylon]);
+	}
 
 	CommandCost cost = CheckPowerTileSite(tile, flags);
 	if (cost.Failed()) return cost;
-	cost.AddCost(_price[Price::BuildPowerPylon]);
+	cost.AddCost(price);
 
 	if (flags.Test(DoCommandFlag::Execute)) {
-		MakePowerTile(tile, _current_company, PowerTileKind::Pylon);
+		MakePowerTile(tile, _current_company, kind);
 		MarkPowerTileDirty(tile);
 	}
 	return cost;
@@ -407,17 +427,18 @@ CommandCost CmdBuildPowerPylon(DoCommandFlags flags, TileIndex tile)
  * Build a substation.
  * @param flags Type of operation.
  * @param tile Where to build it.
- * @param kind Which kind: overhead or underground. Only overhead substations exist so far.
+ * @param kind Which kind: overhead or underground.
  * @return The cost or an error.
  */
 CommandCost CmdBuildPowerSubstation(DoCommandFlags flags, TileIndex tile, PowerTileKind kind)
 {
-	if (kind != PowerTileKind::OverheadSubstation) return CMD_ERROR;
+	if (kind != PowerTileKind::OverheadSubstation && kind != PowerTileKind::UndergroundSubstation) return CMD_ERROR;
 	if (IsValidTile(tile) && IsPowerTile(tile)) return CommandCost(STR_ERROR_ALREADY_BUILT);
 
 	CommandCost cost = CheckPowerTileSite(tile, flags);
 	if (cost.Failed()) return cost;
-	cost.AddCost(_price[Price::BuildPowerSubstation]);
+	/* An underground substation costs twice as much. */
+	cost.AddCost(_price[Price::BuildPowerSubstation] * (kind == PowerTileKind::UndergroundSubstation ? 2 : 1));
 
 	if (flags.Test(DoCommandFlag::Execute)) {
 		MakePowerTile(tile, _current_company, kind);
@@ -463,7 +484,7 @@ static CommandCost GetLineDirection(TileIndex start_tile, TileIndex end_tile, Di
 CommandCost CmdBuildPowerLine(DoCommandFlags flags, TileIndex end_tile, TileIndex start_tile)
 {
 	if (!IsValidTile(start_tile) || !IsValidTile(end_tile)) return CMD_ERROR;
-	if (start_tile == end_tile) return CmdBuildPowerPylon(flags, start_tile);
+	if (start_tile == end_tile) return CmdBuildPowerPylon(flags, start_tile, PowerTileKind::Pylon);
 
 	Direction dir;
 	uint length;
@@ -668,6 +689,179 @@ CommandCost CmdRemovePowerLine(DoCommandFlags flags, TileIndex end_tile, TileInd
 }
 
 /**
+ * Whether a diagonal step of a cable would cross another cable between the same four tiles.
+ * @param from Tile the step starts at.
+ * @param dir Direction of the step.
+ * @return True if the step crosses a cable.
+ */
+static bool DiagonalStepCrossesCable(TileIndex from, Direction dir)
+{
+	if (IsDiagonalDirection(dir)) return false; // Straight steps cross no corners.
+
+	TileIndexDiffC diff = TileIndexDiffCByDir(dir);
+	TileIndex side = TileAddXY(from, diff.x, 0);
+	if (side == INVALID_TILE) return false;
+	Direction cross = GetDirectionOfStep(-diff.x, diff.y);
+	return HasBit(GetPowerCableDirs(side), to_underlying(cross));
+}
+
+/**
+ * Price of underground cable for a step.
+ * @param from Tile the step starts at.
+ * @param to Tile the step ends at.
+ * @param dir Direction of the step.
+ * @param build True for building, false for removing.
+ * @return The price; under water it is doubled when building.
+ */
+static Money GetCableStepPrice(TileIndex from, TileIndex to, Direction dir, bool build)
+{
+	Money price = _price[build ? Price::BuildPowerCable : Price::ClearPowerCable] * GetStepLength(dir) / 10;
+	if (build && (IsTileType(from, TileType::Water) || IsTileType(to, TileType::Water))) price *= 2;
+	return price;
+}
+
+/**
+ * Number of directions a cable may leave a tile in: any at an own underground substation or transition pylon,
+ * else two, as a cable only continues or bends.
+ * @param tile The tile.
+ * @return Highest number of directions.
+ */
+static uint GetMaxCableDirs(TileIndex tile)
+{
+	return (CanAttachPowerCables(tile) && GetTileOwner(tile) == _current_company) ? 8 : 2;
+}
+
+/**
+ * Build an underground cable between two tiles, along an axis or a map diagonal.
+ * A cable runs under anything. It joins other cables only by continuing or bending them, and connects
+ * to the network only at underground substations and transition pylons.
+ * @param flags Type of operation.
+ * @param end_tile End of the cable.
+ * @param start_tile Start of the cable.
+ * @return The cost or an error.
+ */
+CommandCost CmdBuildPowerCable(DoCommandFlags flags, TileIndex end_tile, TileIndex start_tile)
+{
+	if (!IsValidTile(start_tile) || !IsValidTile(end_tile)) return CMD_ERROR;
+	if (start_tile == end_tile) return CommandCost(STR_ERROR_POWER_CABLE_TOO_SHORT);
+
+	Direction dir;
+	uint length;
+	CommandCost ret = GetLineDirection(start_tile, end_tile, dir, length);
+	if (ret.Failed()) return ret;
+
+	auto tile_at = [&](uint i) { return StepTile(start_tile, dir, i); };
+
+	/* Directions every tile of the cable gets. */
+	std::vector<uint8_t> dirs(length + 1);
+	CommandCost cost(ExpensesType::Construction);
+	bool any = false;
+	for (uint i = 0; i <= length; i++) {
+		TileIndex t = tile_at(i);
+		if (!IsValidTile(t)) return CommandCost(STR_ERROR_TOO_CLOSE_TO_EDGE_OF_MAP);
+		if (HasPowerCable(t) && GetPowerCableOwner(t) != _current_company) return CommandCost(STR_ERROR_POWER_CABLE_OWNED_BY_OTHER);
+		if (IsPowerTile(t) && CanAttachPowerCables(t)) {
+			CommandCost owner = CheckTileOwnership(t);
+			if (owner.Failed()) return owner;
+		}
+		dirs[i] = GetPowerCableDirs(t);
+		if (i > 0) SetBit(dirs[i], to_underlying(ReverseDir(dir)));
+		if (i < length) SetBit(dirs[i], to_underlying(dir));
+		if (static_cast<uint>(CountBits(dirs[i])) > GetMaxCableDirs(t)) return CommandCost(STR_ERROR_POWER_CABLE_BRANCH_NEEDS_SUBSTATION);
+	}
+	for (uint i = 0; i < length; i++) {
+		TileIndex a = tile_at(i);
+		if (HasBit(GetPowerCableDirs(a), to_underlying(dir))) continue;
+		if (DiagonalStepCrossesCable(a, dir)) return CommandCost(STR_ERROR_POWER_CABLES_CANNOT_CROSS);
+		cost.AddCost(GetCableStepPrice(a, tile_at(i + 1), dir, true));
+		any = true;
+	}
+	if (!any) return CommandCost(STR_ERROR_ALREADY_BUILT);
+
+	if (flags.Test(DoCommandFlag::Execute)) {
+		for (uint i = 0; i <= length; i++) {
+			TileIndex t = tile_at(i);
+			SetPowerCable(t, dirs[i], _current_company);
+			MarkPowerTileDirty(t);
+		}
+	}
+	return cost;
+}
+
+/**
+ * Remove the underground cable between two tiles.
+ * @param flags Type of operation.
+ * @param end_tile End of the stretch.
+ * @param start_tile Start of the stretch.
+ * @return The cost or an error.
+ */
+CommandCost CmdRemovePowerCable(DoCommandFlags flags, TileIndex end_tile, TileIndex start_tile)
+{
+	if (!IsValidTile(start_tile) || !IsValidTile(end_tile)) return CMD_ERROR;
+	if (start_tile == end_tile) return CommandCost(STR_ERROR_THERE_IS_NO_POWER_CABLE);
+
+	Direction dir;
+	uint length;
+	CommandCost ret = GetLineDirection(start_tile, end_tile, dir, length);
+	if (ret.Failed()) return ret;
+
+	auto tile_at = [&](uint i) { return StepTile(start_tile, dir, i); };
+
+	CommandCost cost(ExpensesType::Construction);
+	std::vector<uint> steps;
+	for (uint i = 0; i < length; i++) {
+		TileIndex a = tile_at(i);
+		if (!HasBit(GetPowerCableDirs(a), to_underlying(dir))) continue;
+		if (_current_company != OWNER_DEITY && GetPowerCableOwner(a) != _current_company) return CommandCost(STR_ERROR_POWER_CABLE_OWNED_BY_OTHER);
+		steps.push_back(i);
+		cost.AddCost(GetCableStepPrice(a, tile_at(i + 1), dir, false));
+	}
+	if (steps.empty()) return CommandCost(STR_ERROR_THERE_IS_NO_POWER_CABLE);
+
+	if (flags.Test(DoCommandFlag::Execute)) {
+		for (uint i : steps) {
+			TileIndex a = tile_at(i);
+			TileIndex b = tile_at(i + 1);
+			SetPowerCable(a, GetPowerCableDirs(a) & ~(1 << to_underlying(dir)), GetPowerCableOwner(a));
+			SetPowerCable(b, GetPowerCableDirs(b) & ~(1 << to_underlying(ReverseDir(dir))), GetPowerCableOwner(b));
+			MarkPowerTileDirty(a);
+			MarkPowerTileDirty(b);
+		}
+	}
+	return cost;
+}
+
+/**
+ * Turn the power network view on or off.
+ * @param on True to show underground cables.
+ */
+void SetPowerNetworkView(bool on)
+{
+	if (_power_network_view == on) return;
+	_power_network_view = on;
+	MarkWholeScreenDirty();
+#ifdef WITH_VIEWPORT3D
+	MarkAreaDirtyForView3D(0, 0, Map::MaxX(), Map::MaxY());
+#endif
+}
+
+/**
+ * Hand all underground cables of a company to another, or remove them.
+ * Called when a company goes bankrupt or is bought; overhead wires follow their pylons instead.
+ * @param old_owner The company that goes.
+ * @param new_owner The company taking over, or INVALID_OWNER to remove the cables.
+ */
+void ChangePowerCableOwner(Owner old_owner, Owner new_owner)
+{
+	if (_power_layer == nullptr) return;
+	for (TileIndex t : Map::Iterate()) {
+		if (!HasPowerCable(t) || GetPowerCableOwner(t) != old_owner) continue;
+		SetPowerCable(t, new_owner == INVALID_OWNER ? 0 : GetPowerCableDirs(t), new_owner);
+	}
+	_power_network_version++;
+}
+
+/**
  * Find out which pylons and substations are joined to a power tile by wires.
  * @param tile A power tile, or a tile with a wire above.
  * @return Counts for the network.
@@ -793,8 +987,33 @@ static uint GetPowerSpriteDirection(TileIndex tile)
  * Called for every tile after its own contents are drawn.
  * @param ti The tile.
  */
+/**
+ * Draw what shows of the underground cable under a tile: marker posts on open land, and with the power network view on,
+ * the cable itself.
+ * @param ti The tile.
+ */
+static void DrawPowerCable(const TileInfo *ti)
+{
+	if (!_power_cable_sprites || !_power_sprites_loaded) return;
+	uint8_t dirs = GetPowerCableDirs(ti->tile);
+	if (dirs == 0) return;
+	int z = GetSlopePixelZ(ti->x + TILE_SIZE / 2, ti->y + TILE_SIZE / 2);
+	if (_power_network_view) {
+		static const SpriteBounds CABLE_BOUNDS{{0, 0, 0}, {16, 16, 1}, {0, 0, 0}};
+		for (Direction dir : EnumRange(Direction::End)) {
+			if (HasBit(dirs, to_underlying(dir))) AddSortableSpriteToDraw(SPR_POWER_CABLE_VIEW + to_underlying(dir), PAL_NONE, ti->x, ti->y, z + 1, CABLE_BOUNDS);
+		}
+	}
+	if (IsInvisibilitySet(TransparencyOption::Structures)) return;
+	if (IsTileType(ti->tile, TileType::Clear) || IsTileType(ti->tile, TileType::Trees)) {
+		static const SpriteBounds MARKER_BOUNDS{{7, 7, 0}, {2, 2, 8}, {-7, -7, 0}};
+		AddSortableSpriteToDraw(SPR_POWER_CABLE_MARKER, PAL_NONE, ti->x, ti->y, z, MARKER_BOUNDS, IsTransparencySet(TransparencyOption::Structures));
+	}
+}
+
 void DrawPowerWireAbove(const TileInfo *ti)
 {
+	DrawPowerCable(ti);
 	if (!_power_wire_sprites) return;
 	if (IsInvisibilitySet(TransparencyOption::Catenary)) return;
 	PowerWireKind kind = GetPowerWireKind(ti->tile);

@@ -13,7 +13,7 @@ Work in progress on branch `energy`. The full design is in the project proposal
     Only pylons and overhead substations can be built so far.
   * m8: span length in each of the 8 directions, 2 bits each
     (0 = no wire, 1..3 = tiles to the next pylon; `POWER_MAX_SPAN` = 3, so at most 2 tiles lie in between).
-* The power layer (`_power_layer`, `power_map.h`): 16 bits for every tile, allocated with the map.
+* The power layer (`_power_layer`, `power_map.h`): 16 bits for every tile (32 since phase 4), allocated with the map.
   * bits 0..7: underground cable directions (reserved for phase 4),
   * bits 8..10: `PowerWireKind` of the wire passing over the tile (X, Y, N-S diagonal, E-W diagonal),
   * bits 11..14: owner of that wire.
@@ -116,11 +116,33 @@ about 8.7 per month) the networks share out power.
   passengers and mail and grow faster. No power gives no bonus and no penalty.
 - **Income**: the owner of the substation that takes power from a plant is paid for what arrives
   (`Price::PowerSale`, base 30 per 10 MW per step, so about 2,600 a month for 100 MW at 1990 prices).
-  It is booked under "Other" in the finances, because a new finance line would change how
-  every savegame stores the yearly expenses.
+  It shows as "Energy Sales" under revenue in the finance window (`ExpensesType::EnergySales`,
+  savegame version `EnergySales`; older savegames load with their 13 kinds of expenses moved into place).
 - **Windows**: the industry window shows what a plant sells and its days of fuel, or what a consumer
   gets and its bonus; the town window shows the same for the town.
 - **Settings**: Environment > Energy.
 - **Savegame**: chunk `PWRE` holds the plants' fuel and the last step's figures of industries and towns.
 - **Tests**: console `power_build info` lists plants, consumers with power, towns and company income;
   `power_build fuel <industry> <amount>` delivers fuel in single player.
+
+## Phase 4: underground cables
+
+- **Cables** run tile by tile under anything, along an axis or a map diagonal (cable tool, drag like
+  the line tool). Bits 0..7 of the power layer say in which directions a cable leaves a tile; bits
+  16..19 hold its owner. The layer is now 32 bits per tile; chunk `PWRL` stores 32 bits and still loads
+  the 16-bit layer of older savegames.
+- A cable only continues or bends (at most two directions on a tile). It joins other cables, and the
+  network, only at an **underground substation** or a **transition pylon**. Two diagonal cables cannot
+  cross between the same four tiles. A cable may end anywhere, but an end that reaches no substation or
+  transition pylon carries nothing.
+- **Prices**: cable 1,900 per straight tile (about 8 times overhead wire with its pylons), 1.4 times on
+  a diagonal, twice under water; removing 100. An underground substation costs twice an overhead one.
+  A transition pylon costs three pylons; a pylon can be turned into one, keeping its wires.
+- **Loss**: cable counts half as long as overhead line (12 per straight tile, 17 per diagonal), so it
+  loses 0.5% per 16 tiles.
+- **Look**: marker posts with orange caps stand over cables on open land (model `power` 5 in OpenGFX3D,
+  sprite 23 of power.grf). The power network view (toolbar button, turned on by the cable tool) shows
+  the cables as orange lines (model 6, sprites 24..31).
+- **Company gone**: its cables go to the buyer or are removed with its other property
+  (`ChangePowerCableOwner`).
+- **Tests**: `power_build transition|usubstation <x> <y>`, `power_build cable|removecable <x1> <y1> <x2> <y2>`.

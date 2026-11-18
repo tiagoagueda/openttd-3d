@@ -29,9 +29,15 @@ static constexpr std::string_view POWER_GRF = "power.grf";
 extern bool _power_sprites_loaded;
 /** Whether DrawPowerWireAbove() draws; the 3D view turns it off where it draws the wires with models. */
 extern bool _power_wire_sprites;
+/** Whether DrawPowerWireAbove() draws cable markers and the network view; the 3D view turns it off where it draws them with models. */
+extern bool _power_cable_sprites;
+/** Whether the power network view is on: underground cables are shown. Not saved; each player chooses. */
+extern bool _power_network_view;
+void SetPowerNetworkView(bool on);
 void DrawPowerWireAbove(const TileInfo *ti);
 void AddPowerWireTileDesc(TileIndex tile, TileDesc &td);
 void AllocatePowerLayer();
+void ChangePowerCableOwner(Owner old_owner, Owner new_owner);
 
 /** Facts about the network a power tile belongs to, for the land information window. */
 struct PowerNetworkInfo {
