@@ -79,6 +79,10 @@ struct Town : TownPool::PoolItem<&_town_pool> {
 
 	uint16_t noise_reached = 0; ///< level of noise that all the airports are generating
 
+	uint32_t power_demand = 0; ///< Energy all its buildings need, in tenths of MW.
+	uint32_t power_supplied = 0; ///< Energy its buildings got in the last balancing step, in tenths of MW.
+	uint16_t power_carry = 0; ///< Fraction of a passenger or bag of mail left over from the energy bonus, in 1/256.
+
 	CompanyMask statues{}; ///< which companies have a statue?
 
 	/* Company ratings. */

@@ -528,6 +528,7 @@ static void TownGenerateCargo(Town *t, CargoType cargo, uint amount, StationFind
 	/* Scale by cargo scale setting. */
 	amount = ScaleByCargoScale(amount, true);
 	if (amount == 0) return;
+	amount = ApplyTownPowerBonus(t, amount);
 
 	/* Actually generate cargo and update town statistics. */
 	auto &supplied = t->GetOrCreateCargoSupplied(cargo);
@@ -3926,7 +3927,7 @@ static uint GetNormalGrowthRate(Town *t)
 	m >>= growth_multiplier;
 	if (t->larger_town) m /= 2;
 
-	return TownTicksToGameTicks(m / (t->cache.num_houses / 50 + 1));
+	return ApplyTownPowerGrowthBonus(t, TownTicksToGameTicks(m / (t->cache.num_houses / 50 + 1)));
 }
 
 /**

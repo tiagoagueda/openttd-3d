@@ -87,3 +87,40 @@ in the dragged stretch and pylons left without wires). Bulldozing a pylon remove
 
 * Console: `power_build line <x1> <y1> <x2> <y2>`, `power_build pylon <x> <y>`, `power_build substation <x> <y>`
   build for the local company, e.g. from `scripts/game_start.scr`.
+
+## Phase 3: the energy economy
+
+Code: `src/power_economy.cpp`. Power is counted in tenths of a MW. Every 256 ticks (a "balancing step",
+about 8.7 per month) the networks share out power.
+
+- **Power plants.** An industry that accepts coal or oil and produces nothing is a fuel power plant
+  (the coal power station, the oil power station of other climates, and NewGRF industries of the same
+  shape). Delivered fuel goes into a store: a tonne of coal gives 2 MW for a month, 1000 litres of oil
+  3 MW. The store holds two months of full output. A coal plant gives at most 600 MW, an oil plant 450 MW.
+  Plants burn only what they sell; no fuel, no power.
+- **Consumers.** Every other industry needs idle power plus power for what it made last month
+  (organic 2 MW + 4 MW per 100 units, extractive 8 + 18, processing 10 + 25, no output 3 MW).
+  Each building needs 0.1 MW plus 1 MW per 100 inhabitants, 10% more while its town grows, and 0.5 MW
+  while it is being built.
+- **Substations** reach industries and buildings within `economy.power_catchment` tiles (default 4,
+  a 9x9 square), shown around the cursor when building one. Something reached by several substations is
+  split evenly between them.
+- **Networks** are all power tiles joined by spans of the same owner. They are found again from the map
+  whenever a power tile changes (`_power_network_version`); nothing about them is saved.
+- **Sharing out**: all pairs of a plant-side and a consumer-side substation of a network, nearest first
+  (line length: 24 per straight tile, 34 per diagonal tile). Loss is 1% at the substation for a local pair,
+  2% between two substations, plus 1% for every 16 tiles of line, at most 60%. When there is not enough
+  power, the farthest consumers go short first.
+- **Bonus**: an industry or town with all the power it needs makes `economy.power_bonus`% more
+  (default 10%, 0 to 50); partial power gives part of it. Industries make more cargo; towns make more
+  passengers and mail and grow faster. No power gives no bonus and no penalty.
+- **Income**: the owner of the substation that takes power from a plant is paid for what arrives
+  (`Price::PowerSale`, base 30 per 10 MW per step, so about 2,600 a month for 100 MW at 1990 prices).
+  It is booked under "Other" in the finances, because a new finance line would change how
+  every savegame stores the yearly expenses.
+- **Windows**: the industry window shows what a plant sells and its days of fuel, or what a consumer
+  gets and its bonus; the town window shows the same for the town.
+- **Settings**: Environment > Energy.
+- **Savegame**: chunk `PWRE` holds the plants' fuel and the last step's figures of industries and towns.
+- **Tests**: console `power_build info` lists plants, consumers with power, towns and company income;
+  `power_build fuel <industry> <amount>` delivers fuel in single player.

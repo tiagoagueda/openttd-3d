@@ -647,6 +647,8 @@ struct EconomySettings {
 	bool spawn_primary_industry_only; ///< Should we only spawn primary industry during map generation and gameplay? (Player or Game Script must place other types)
 	uint8_t town_growth_rate; ///< town growth rate
 	uint8_t larger_towns; ///< the number of cities to build. These start off larger and grow twice as fast
+	uint8_t power_bonus; ///< extra production and growth, in percent, of industries and towns with all the power they need
+	uint8_t power_catchment; ///< how far around a substation it reaches industries and buildings, in tiles
 	uint8_t initial_city_size; ///< multiplier for the initial size of the cities compared to towns
 	TownLayout town_layout; ///< select town layout, @see TownLayout
 	TownCargoGenMode town_cargogen_mode; ///< algorithm for generating cargo from houses, @see TownCargoGenMode

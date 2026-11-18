@@ -134,6 +134,10 @@ struct Industry : IndustryPool::PoolItem<&_industry_pool> {
 	EncodedString text{}; ///< General text with additional information.
 
 	uint16_t random = 0; ///< Random value used for randomisation of all kinds of things
+	uint32_t power_fuel = 0; ///< Power plants: energy in the fuel store, in tenths of MW for one balancing step.
+	uint16_t power_demand = 0; ///< Energy it needs (consumers) or can give (plants), in tenths of MW.
+	uint16_t power_supplied = 0; ///< Energy it got (consumers) or sold (plants) in the last balancing step, in tenths of MW.
+	uint16_t power_carry = 0; ///< Fraction of a unit of cargo left over from the energy bonus, in 1/256.
 
 	PersistentStorage *psa = nullptr; ///< Persistent storage for NewGRF industries.
 

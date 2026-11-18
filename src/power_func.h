@@ -13,6 +13,7 @@
 #include "command_type.h"
 #include "house_type.h"
 #include "tile_cmd.h"
+#include "cargo_type.h"
 
 struct Window;
 
@@ -41,5 +42,28 @@ struct PowerNetworkInfo {
 PowerNetworkInfo GetPowerNetworkInfo(TileIndex tile);
 
 Window *ShowBuildPowerToolbar();
+
+/* The energy economy (power_economy.cpp). */
+struct Industry;
+struct Town;
+extern uint32_t _power_network_version;
+void OnTick_Power();
+void AddPowerPlantFuel(Industry *i, CargoType cargo, uint amount);
+bool IsPowerPlant(const Industry *i);
+uint GetPowerPlantFuelDays(const Industry *i);
+uint ApplyIndustryPowerBonus(Industry *i, uint amount);
+uint ApplyTownPowerBonus(Town *t, uint amount);
+uint ApplyTownPowerGrowthBonus(const Town *t, uint ticks);
+uint GetPowerBonusPercent(uint demand, uint supplied);
+
+/** What a substation covers, for the land information window. Power in tenths of MW. */
+struct PowerSubstationFigures {
+	uint plants = 0; ///< Power plants in its catchment.
+	uint industries = 0; ///< Other industries in its catchment.
+	uint houses = 0; ///< Buildings in its catchment.
+	uint supply = 0; ///< What the plants sold in the last step.
+	uint demand = 0; ///< What the consumers need.
+};
+PowerSubstationFigures GetPowerSubstationFigures(TileIndex tile);
 
 #endif /* POWER_FUNC_H */

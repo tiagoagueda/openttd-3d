@@ -845,6 +845,12 @@ SettingsContainer &GetSettingsTree()
 				towns->Add(new SettingEntry("economy.town_cargogen_mode"));
 			}
 
+			SettingsPage *energy = environment->Add(new SettingsPage(STR_CONFIG_SETTING_ENVIRONMENT_ENERGY));
+			{
+				energy->Add(new SettingEntry("economy.power_bonus"));
+				energy->Add(new SettingEntry("economy.power_catchment"));
+			}
+
 			SettingsPage *industries = environment->Add(new SettingsPage(STR_CONFIG_SETTING_ENVIRONMENT_INDUSTRIES));
 			{
 				industries->Add(new SettingEntry("economy.industry_cargo_scale"));

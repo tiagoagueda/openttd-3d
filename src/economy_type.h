@@ -168,6 +168,7 @@ enum class Price : uint8_t {
 	ClearPowerPylon, ///< Price for removing power line pylons.
 	ClearPowerWire, ///< Price for removing overhead power wire, per tile.
 	ClearPowerSubstation, ///< Price for removing power substations.
+	PowerSale, ///< Income for 10 MW of power delivered for one balancing step.
 	End, ///< Price base end marker.
 	Invalid = 0xFF ///< Invalid base price.
 };

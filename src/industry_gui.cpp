@@ -56,6 +56,8 @@
 
 #include <bitset>
 
+#include "power_func.h"
+
 #include "safeguards.h"
 
 bool _ignore_industry_restrictions;
@@ -958,6 +960,15 @@ public:
 					i->prod_level > PRODLEVEL_MINIMUM, i->prod_level < PRODLEVEL_MAXIMUM);
 			ir.top += line_height;
 		}
+
+		/* Energy: what a power plant sells, or what a consumer gets. */
+		ir.top += WidgetDimensions::scaled.vsep_wide;
+		if (IsPowerPlant(i)) {
+			DrawString(ir, GetString(STR_INDUSTRY_VIEW_POWER_PLANT, i->power_supplied, 1, i->power_demand, 1, GetPowerPlantFuelDays(i)));
+		} else {
+			DrawString(ir, GetString(STR_INDUSTRY_VIEW_POWER_CONSUMER, i->power_supplied, 1, i->power_demand, 1, GetPowerBonusPercent(i->power_demand, i->power_supplied)));
+		}
+		ir.top += GetCharacterHeight(FontSize::Normal);
 
 		/* Get the extra message for the GUI */
 		if (ind->callback_mask.Test(IndustryCallbackMask::WindowMoreText)) {

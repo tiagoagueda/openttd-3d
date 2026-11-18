@@ -2148,6 +2148,10 @@ STR_CONFIG_SETTING_TOWN_GROWTH_NORMAL                           :Normal
 STR_CONFIG_SETTING_TOWN_GROWTH_FAST                             :Fast
 STR_CONFIG_SETTING_TOWN_GROWTH_VERY_FAST                        :Very fast
 
+STR_CONFIG_SETTING_POWER_BONUS                                  :Extra output with full power: {STRING2}
+STR_CONFIG_SETTING_POWER_BONUS_HELPTEXT                         :How much more industries produce, and how much faster towns grow and make passengers and mail, when power lines give them all the power they need. Partial power gives part of it
+STR_CONFIG_SETTING_POWER_CATCHMENT                              :Reach of a power substation: {STRING2}
+STR_CONFIG_SETTING_POWER_CATCHMENT_HELPTEXT                     :How far around a substation it supplies industries and buildings, and takes power from power plants
 STR_CONFIG_SETTING_LARGER_TOWNS                                 :Proportion of towns that will become cities: {STRING2}
 STR_CONFIG_SETTING_LARGER_TOWNS_HELPTEXT                        :Amount of towns which will become a city, thus a town which starts out larger and grows faster
 STR_CONFIG_SETTING_LARGER_TOWNS_VALUE                           :1 in {COMMA}
@@ -2255,6 +2259,7 @@ STR_CONFIG_SETTING_ENVIRONMENT_TIME                             :Time
 STR_CONFIG_SETTING_ENVIRONMENT_AUTHORITIES                      :Authorities
 STR_CONFIG_SETTING_ENVIRONMENT_TOWNS                            :Towns
 STR_CONFIG_SETTING_ENVIRONMENT_INDUSTRIES                       :Industries
+STR_CONFIG_SETTING_ENVIRONMENT_ENERGY                           :Energy
 STR_CONFIG_SETTING_ENVIRONMENT_CARGODIST                        :Cargo distribution
 STR_CONFIG_SETTING_ENVIRONMENT_TREES                            :Trees
 STR_CONFIG_SETTING_AI                                           :Competitors
@@ -3816,6 +3821,7 @@ STR_TOWN_POPULATION                                             :{BLACK}World po
 STR_TOWN_VIEW_TOWN_CAPTION                                      :{WHITE}{TOWN}
 STR_TOWN_VIEW_CITY_CAPTION                                      :{WHITE}{TOWN} (City)
 STR_TOWN_VIEW_POPULATION_HOUSES                                 :{BLACK}Population: {ORANGE}{COMMA}{BLACK}  Houses: {ORANGE}{COMMA}
+STR_TOWN_VIEW_POWER                                             :{BLACK}Power: {ORANGE}{DECIMAL} of {DECIMAL} MW{BLACK}  Bonus: {ORANGE}+{COMMA}%
 STR_TOWN_VIEW_CARGO_LAST_MONTH_MAX                              :{BLACK}{CARGO_LIST} last month: {ORANGE}{COMMA}{BLACK}  max: {ORANGE}{COMMA}
 STR_TOWN_VIEW_CARGO_LAST_MINUTE_MAX                             :{BLACK}{CARGO_LIST} last minute: {ORANGE}{COMMA}{BLACK}  max: {ORANGE}{COMMA}
 STR_TOWN_VIEW_CARGO_FOR_TOWNGROWTH                              :{BLACK}Cargo needed for town growth:
@@ -4163,6 +4169,8 @@ STR_INDUSTRY_DIRECTORY_FILTER_NONE                              :None
 
 # Industry view
 STR_INDUSTRY_VIEW_CAPTION                                       :{WHITE}{INDUSTRY}
+STR_INDUSTRY_VIEW_POWER_PLANT                                   :{BLACK}Power sold: {ORANGE}{DECIMAL} of {DECIMAL} MW{BLACK}  Fuel: {ORANGE}{COMMA} day{P "" s}
+STR_INDUSTRY_VIEW_POWER_CONSUMER                                :{BLACK}Power: {ORANGE}{DECIMAL} of {DECIMAL} MW{BLACK}  Bonus: {ORANGE}+{COMMA}%
 STR_INDUSTRY_VIEW_PRODUCTION_LAST_MONTH_TITLE                   :{BLACK}Production last month:
 STR_INDUSTRY_VIEW_PRODUCTION_LAST_MINUTE_TITLE                  :{BLACK}Production last minute:
 STR_INDUSTRY_VIEW_TRANSPORTED                                   :{YELLOW}{CARGO_LONG}{RAW_STRING}{BLACK} ({COMMA}% transported)

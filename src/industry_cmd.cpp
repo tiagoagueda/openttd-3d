@@ -1158,6 +1158,7 @@ static void ProduceIndustryGoodsHelper(Industry *i, bool scale)
 
 		uint16_t amount = p.rate;
 		if (scale) amount = ScaleByCargoScale(amount, false);
+		amount = ClampTo<uint16_t>(ApplyIndustryPowerBonus(i, amount));
 
 		p.waiting = ClampTo<uint16_t>(p.waiting + amount);
 	}

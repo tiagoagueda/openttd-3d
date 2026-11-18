@@ -60,6 +60,10 @@
 #include "table/strings.h"
 
 #include "power_cmd.h"
+#include "power_func.h"
+#include "industry.h"
+#include "town.h"
+#include "company_base.h"
 
 #include "safeguards.h"
 
@@ -555,7 +559,39 @@ static bool ConScrollToTile(std::span<std::string_view> argv)
 static bool ConPowerBuild(std::span<std::string_view> argv)
 {
 	if (argv.empty()) {
-		IConsolePrint(CC_HELP, "Build power lines for your company. Usage: 'power_build line <x1> <y1> <x2> <y2>', 'power_build pylon <x> <y>', 'power_build substation <x> <y>'.");
+		IConsolePrint(CC_HELP, "Build power lines for your company. Usage: 'power_build line <x1> <y1> <x2> <y2>', 'power_build pylon <x> <y>', 'power_build substation <x> <y>', 'power_build info', 'power_build fuel <industry> <amount>'.");
+		return true;
+	}
+	if (argv.size() == 2 && argv[1] == "info") {
+		/* For tests: the power plants, the consumers that get power, and the towns. */
+		for (const Industry *i : Industry::Iterate()) {
+			if (IsPowerPlant(i)) {
+				IConsolePrint(CC_DEFAULT, "plant {} at {},{}: offers {} sold {} fuel {} days", i->index, TileX(i->location.tile), TileY(i->location.tile), i->power_demand, i->power_supplied, GetPowerPlantFuelDays(i));
+			} else if (i->power_supplied != 0) {
+				IConsolePrint(CC_DEFAULT, "industry {} at {},{}: needs {} gets {} bonus {}%", i->index, TileX(i->location.tile), TileY(i->location.tile), i->power_demand, i->power_supplied, GetPowerBonusPercent(i->power_demand, i->power_supplied));
+			}
+		}
+		for (const Town *t : Town::Iterate()) {
+			IConsolePrint(CC_DEFAULT, "town {} at {},{}: needs {} gets {} bonus {}%", t->index, TileX(t->xy), TileY(t->xy), t->power_demand, t->power_supplied, GetPowerBonusPercent(t->power_demand, t->power_supplied));
+		}
+		for (const Company *c : Company::Iterate()) {
+			IConsolePrint(CC_DEFAULT, "company {}: money {} other income this year {}", c->index, c->money, -c->yearly_expenses[0][ExpensesType::Other]);
+		}
+		return true;
+	}
+	if (argv.size() == 4 && argv[1] == "fuel") {
+		/* For tests in single player: deliver fuel to a power plant as if it arrived by train. */
+		if (_networking) {
+			IConsolePrint(CC_ERROR, "Only in single player.");
+			return true;
+		}
+		auto id = ParseInteger(argv[2], 0);
+		auto amount = ParseInteger(argv[3], 0);
+		Industry *i = id.has_value() ? Industry::GetIfValid(*id) : nullptr;
+		if (i == nullptr || !amount.has_value()) return false;
+		for (const auto &a : i->accepted) {
+			if (IsValidCargoType(a.cargo)) AddPowerPlantFuel(i, a.cargo, *amount);
+		}
 		return true;
 	}
 	if (argv.size() < 4) return false;

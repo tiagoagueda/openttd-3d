@@ -365,6 +365,7 @@ add_files(
     order_func.h
     power_cmd.cpp
     power_cmd.h
+    power_economy.cpp
     power_func.h
     power_gui.cpp
     power_map.h

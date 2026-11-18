@@ -49,6 +49,7 @@ bool _power_sprites_loaded = false;
 void AllocatePowerLayer()
 {
 	_power_layer = std::make_unique<uint16_t[]>(Map::Size());
+	_power_network_version++;
 }
 
 /** Sprite of the substation placeholder: the transformer building of the base power station. */
@@ -321,6 +322,7 @@ static CommandCost CheckPowerTileSite(TileIndex tile, DoCommandFlags flags)
  */
 static void MarkPowerTileDirty(TileIndex tile)
 {
+	_power_network_version++;
 	MarkTileDirtyByTile(tile, (POWER_WIRE_HEIGHT + 1) * TILE_HEIGHT);
 	if (!IsPowerTile(tile)) return;
 	/* The 3D view draws each span from one of its ends, and the wires follow how the pylons at both ends turn. */
@@ -930,6 +932,7 @@ static void GetTileDesc_Power(TileIndex tile, TileDesc &td)
 static void ChangeTileOwner_Power(TileIndex tile, Owner old_owner, Owner new_owner)
 {
 	if (!IsTileOwner(tile, old_owner)) return;
+	_power_network_version++;
 
 	if (new_owner == INVALID_OWNER) {
 		RemovePowerTile(tile);

@@ -1738,6 +1738,7 @@ void CallLandscapeTick()
 		OnTick_Trees();
 		OnTick_Station();
 		OnTick_Industry();
+		OnTick_Power();
 	}
 
 	OnTick_Companies();

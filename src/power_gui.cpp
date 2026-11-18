@@ -84,7 +84,11 @@ struct BuildPowerToolbarWindow : Window {
 				break;
 
 			case WID_PT_BUILD_SUBSTATION:
-				HandlePlacePushButton(this, WID_PT_BUILD_SUBSTATION, SPR_CURSOR_RAIL_STATION, HT_RECT);
+				if (HandlePlacePushButton(this, WID_PT_BUILD_SUBSTATION, SPR_CURSOR_RAIL_STATION, HT_RECT)) {
+					/* Show the reach of the substation around the cursor. */
+					int rad = _settings_game.economy.power_catchment;
+					SetTileSelectBigSize(-rad, -rad, 2 * rad, 2 * rad);
+				}
 				this->last_user_action = widget;
 				break;
 
