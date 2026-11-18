@@ -859,6 +859,10 @@ SettingsContainer &GetSettingsTree()
 			{
 				energy->Add(new SettingEntry("economy.power_bonus"));
 				energy->Add(new SettingEntry("economy.power_catchment"));
+#ifdef WITH_TRACTION_POWER
+				energy->Add(new SettingEntry("economy.electric_vehicles_need_power"));
+				energy->Add(new SettingEntry("economy.traction_feed_distance"));
+#endif
 			}
 
 			SettingsPage *industries = environment->Add(new SettingsPage(STR_CONFIG_SETTING_ENVIRONMENT_INDUSTRIES));

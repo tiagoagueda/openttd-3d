@@ -61,6 +61,9 @@
 
 #include "power_cmd.h"
 #include "power_func.h"
+#include "traction.h"
+#include "roadveh.h"
+#include "road.h"
 #include "industry.h"
 #include "town.h"
 #include "company_base.h"
@@ -577,6 +580,17 @@ static bool ConPowerBuild(std::span<std::string_view> argv)
 		for (const Company *c : Company::Iterate()) {
 			IConsolePrint(CC_DEFAULT, "company {}: money {} energy sales this year {}", c->index, c->money, -c->yearly_expenses[0][ExpensesType::EnergySales]);
 		}
+#ifdef WITH_TRACTION_POWER
+		/* Trams and trolleybuses: the share of power their wire gets and the speed they may use. */
+		for (const RoadVehicle *v : RoadVehicle::Iterate()) {
+			if (!v->IsFrontEngine() || !HasRoadCatenary(v->roadtype)) continue;
+			IConsolePrint(CC_DEFAULT, "vehicle {} at {},{}: wire {}%, speed factor {}/256, speed {} of {}, running costs this year {}", v->unitnumber, TileX(v->tile), TileY(v->tile),
+					GetTractionSupplyPercent(v->tile, GetRoadTramType(v->roadtype)), GetTractionSpeedFactor(v), v->cur_speed, v->GetDisplayMaxSpeed(), v->GetRunningCost());
+		}
+		for (const Company *c : Company::Iterate()) {
+			IConsolePrint(CC_DEFAULT, "company {}: road vehicle running costs this year {}", c->index, -c->yearly_expenses[0][ExpensesType::RoadVehRun]);
+		}
+#endif
 		return true;
 	}
 	if (argv.size() == 4 && argv[1] == "fuel") {

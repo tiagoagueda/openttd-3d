@@ -21,6 +21,7 @@
 #include "timer/timer_game_tick.h"
 #include "settings_type.h"
 #include "window_func.h"
+#include "traction.h"
 
 #include <map>
 #include <queue>
@@ -441,7 +442,14 @@ static void BalancePower()
 		t->power_demand = t->cache.num_houses + t->cache.population / 10;
 		t->power_supplied = 0;
 	}
-	if (_power_substations.empty()) return;
+	if (_power_substations.empty()) {
+#ifdef WITH_TRACTION_POWER
+		/* No substation feeds any wire now. */
+		PrepareTractionDemand({});
+		ApplyTractionSupply({});
+#endif
+		return;
+	}
 
 	/* What each substation covers; consumers and plants covered by several substations are shared evenly between them. */
 	uint radius = _settings_game.economy.power_catchment;
@@ -491,6 +499,14 @@ static void BalancePower()
 		}
 	}
 
+#ifdef WITH_TRACTION_POWER
+	/* The tram and trolleybus wire fed by each substation. */
+	std::vector<TileIndex> substation_tiles;
+	for (const auto &sub : _power_substations) substation_tiles.push_back(sub.tile);
+	std::vector<uint> traction = PrepareTractionDemand(substation_tiles);
+	for (uint s = 0; s < state.size(); s++) state[s].demand += traction[s];
+#endif
+
 	/* Share out, nearest first. Loss: 1% at each substation on the way, and 1% for every 16 tiles of line. */
 	std::vector<uint> supply_left(state.size()), need_left(state.size());
 	for (uint s = 0; s < state.size(); s++) {
@@ -532,6 +548,15 @@ static void BalancePower()
 			Town::Get(part.town)->power_supplied += static_cast<uint>(static_cast<uint64_t>(st.delivered) * part.demand / st.demand);
 		}
 	}
+
+#ifdef WITH_TRACTION_POWER
+	/* What arrived for the wire. */
+	std::vector<uint> traction_delivered(state.size());
+	for (uint s = 0; s < state.size(); s++) {
+		if (state[s].demand != 0) traction_delivered[s] = static_cast<uint>(static_cast<uint64_t>(state[s].delivered) * traction[s] / state[s].demand);
+	}
+	ApplyTractionSupply(traction_delivered);
+#endif
 
 	/* Pay the owners of the substations that took the energy from the plants. */
 	std::map<Owner, uint64_t> income;
