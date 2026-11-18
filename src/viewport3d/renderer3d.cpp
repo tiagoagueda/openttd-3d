@@ -88,6 +88,9 @@ struct Renderer3D::Impl {
 	bgfx::UniformHandle model_sun = BGFX_INVALID_HANDLE;
 	bgfx::UniformHandle model_light = BGFX_INVALID_HANDLE;
 	std::vector<GpuModel> models;
+	bgfx::UniformHandle model_sampler = BGFX_INVALID_HANDLE;
+	bgfx::TextureHandle model_textures = BGFX_INVALID_HANDLE; ///< Texture array with the textures of the models; ModelVertex::texture is the layer.
+	uint num_model_textures = 0; ///< Number of layers of #model_textures.
 	bgfx::ProgramHandle shadow_program = BGFX_INVALID_HANDLE; ///< Draws depth into the shadow map.
 	bgfx::ProgramHandle sprite_shadow_program = BGFX_INVALID_HANDLE; ///< Draws sprites, turned towards the sun, into the shadow map.
 	bgfx::ProgramHandle model_instanced_program = BGFX_INVALID_HANDLE; ///< Draws many copies of one model at once.
@@ -256,7 +259,14 @@ static bgfx::ShaderHandle CreateShader(const ShaderVariants &variants)
 		.add(bgfx::Attrib::Position, 3, bgfx::AttribType::Float)
 		.add(bgfx::Attrib::Normal, 3, bgfx::AttribType::Float)
 		.add(bgfx::Attrib::Color0, 4, bgfx::AttribType::Uint8, true)
+		.add(bgfx::Attrib::TexCoord0, 3, bgfx::AttribType::Float)
 		.end();
+	impl.model_sampler = bgfx::createUniform("s_modelTextures", bgfx::UniformType::Sampler);
+	/* Until the model package brings textures: one white pixel, as the shader always looks at a texture. */
+	{
+		std::vector<uint32_t> white{0xFFFFFFFF};
+		renderer->SetModelTextures(1, {&white, 1});
+	}
 	impl.model_program = bgfx::createProgram(CreateShader(SHADER_VARIANTS(vs_model)), CreateShader(SHADER_VARIANTS(fs_model)), true);
 	impl.model_tint = bgfx::createUniform("u_modelTint", bgfx::UniformType::Vec4);
 	impl.model_sun = bgfx::createUniform("u_modelSun", bgfx::UniformType::Vec4);
@@ -331,6 +341,8 @@ Renderer3D::~Renderer3D()
 		if (bgfx::isValid(model.indices)) bgfx::destroy(model.indices);
 	}
 	if (bgfx::isValid(impl.model_program)) bgfx::destroy(impl.model_program);
+	if (bgfx::isValid(impl.model_sampler)) bgfx::destroy(impl.model_sampler);
+	if (bgfx::isValid(impl.model_textures)) bgfx::destroy(impl.model_textures);
 	if (bgfx::isValid(impl.model_tint)) bgfx::destroy(impl.model_tint);
 	if (bgfx::isValid(impl.model_sun)) bgfx::destroy(impl.model_sun);
 	if (bgfx::isValid(impl.model_light)) bgfx::destroy(impl.model_light);
@@ -479,6 +491,28 @@ void Renderer3D::UpdateSpriteAtlas(SpriteAtlas &atlas)
 	std::span<const uint32_t> rows = atlas.GetPixels().subspan(static_cast<size_t>(top) * SpriteAtlas::WIDTH, static_cast<size_t>(bottom - top) * SpriteAtlas::WIDTH);
 	bgfx::updateTexture2D(this->impl->sprite_atlas, 0, 0, 0, static_cast<uint16_t>(top), SpriteAtlas::WIDTH, static_cast<uint16_t>(bottom - top),
 		bgfx::copy(rows.data(), static_cast<uint32_t>(rows.size_bytes())));
+}
+
+/**
+ * Set the textures of the 3D models.
+ * @param size Width and height of each texture; a power of two.
+ * @param textures The textures; ModelVertex::texture is an index into these. Those that the GPU has no room for are left white.
+ */
+void Renderer3D::SetModelTextures(uint size, std::span<const std::vector<uint32_t>> textures)
+{
+	Impl &impl = *this->impl;
+	assert(HasExactlyOneBit(size) && !textures.empty());
+
+	if (bgfx::isValid(impl.model_textures)) bgfx::destroy(impl.model_textures);
+	const uint layers = std::min<uint>(static_cast<uint>(textures.size()), bgfx::getCaps()->limits.maxTextureLayers);
+	impl.model_textures = bgfx::createTexture2D(static_cast<uint16_t>(size), static_cast<uint16_t>(size), true, static_cast<uint16_t>(layers),
+		bgfx::TextureFormat::BGRA8, BGFX_SAMPLER_MIN_ANISOTROPIC | BGFX_SAMPLER_MAG_ANISOTROPIC);
+	impl.num_model_textures = layers;
+	for (uint layer = 0; layer < layers; layer++) {
+		assert(textures[layer].size() == static_cast<size_t>(size) * size);
+		std::vector<uint32_t> pixels = textures[layer];
+		UploadTextureLayer(impl.model_textures, size, layer, pixels);
+	}
 }
 
 /**
@@ -828,6 +862,7 @@ void Renderer3D::Render(uint target_id, uint width, uint height, const Camera3D 
 			bgfx::setUniform(impl.model_tint, instance.tint.data());
 			bgfx::setUniform(impl.model_sun, MODEL_SUN);
 			bgfx::setUniform(impl.model_light, MODEL_LIGHT);
+			bgfx::setTexture(0, impl.model_sampler, impl.model_textures);
 			set_scene();
 			if (see_through) {
 				bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_DEPTH_TEST_LESS | BGFX_STATE_BLEND_ALPHA);
@@ -947,6 +982,7 @@ void Renderer3D::Render(uint target_id, uint width, uint height, const Camera3D 
 			bgfx::setInstanceDataBuffer(&copies);
 			bgfx::setUniform(impl.model_sun, MODEL_SUN);
 			bgfx::setUniform(impl.model_light, MODEL_LIGHT);
+			bgfx::setTexture(0, impl.model_sampler, impl.model_textures);
 			set_scene();
 			bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A | BGFX_STATE_WRITE_Z | BGFX_STATE_DEPTH_TEST_LESS);
 			bgfx::submit(VIEW_SCENE, impl.model_instanced_program);

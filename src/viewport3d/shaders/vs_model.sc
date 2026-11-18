@@ -1,5 +1,5 @@
-$input a_position, a_normal, a_color0
-$output v_color0, v_texcoord0, v_texcoord1, v_haze
+$input a_position, a_normal, a_color0, a_texcoord0
+$output v_color0, v_texcoord0, v_texcoord1, v_haze, v_tile
 
 /*
  * Vertex shader for 3D models in the OpenTTD 3D viewport.
@@ -30,4 +30,6 @@ void main()
 	vec4 world = mul(u_model[0], vec4(a_position, 1.0));
 	v_texcoord1 = mul(u_shadowMtx, world);
 	v_haze = vec2(HazeAmount(world), 0.0);
+	/* Where in which texture; a layer below 0 is no texture. */
+	v_tile = a_texcoord0.xyz;
 }

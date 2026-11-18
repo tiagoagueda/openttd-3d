@@ -2,12 +2,12 @@ add_subdirectory(ai)
 add_subdirectory(game)
 
 # The OpenGFX3D package of 3D models for the experimental 3D view, a git submodule in opengfx3d.
-# Its index, models and ground textures are copied next to the game, where the game looks for them.
+# Its index, models and textures are copied next to the game, where the game looks for them.
 if(VIEWPORT3D_ENABLED AND EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/opengfx3d/opengfx3d.json)
     file(GLOB OPENGFX3D_SOURCE_FILES CONFIGURE_DEPENDS
             ${CMAKE_CURRENT_SOURCE_DIR}/opengfx3d/opengfx3d.json
             ${CMAKE_CURRENT_SOURCE_DIR}/opengfx3d/*.glb
-            ${CMAKE_CURRENT_SOURCE_DIR}/opengfx3d/ground_*.png
+            ${CMAKE_CURRENT_SOURCE_DIR}/opengfx3d/*.png
     )
 
     foreach(OPENGFX3D_SOURCE_FILE IN LISTS OPENGFX3D_SOURCE_FILES)

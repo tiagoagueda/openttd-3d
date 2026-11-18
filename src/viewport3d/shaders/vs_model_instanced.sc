@@ -1,5 +1,5 @@
-$input a_position, a_normal, a_color0, i_data0, i_data1, i_data2, i_data3, i_data4
-$output v_color0, v_texcoord0, v_texcoord1, v_haze
+$input a_position, a_normal, a_color0, a_texcoord0, i_data0, i_data1, i_data2, i_data3, i_data4
+$output v_color0, v_texcoord0, v_texcoord1, v_haze, v_tile
 
 /*
  * Vertex shader for many copies of the same 3D model in the OpenTTD 3D viewport, such as trees.
@@ -27,4 +27,6 @@ void main()
 	v_texcoord0 = vec3(u_modelLight.x, u_modelLight.y * max(dot(normal, u_modelSun.xyz), 0.0), 0.0);
 	v_texcoord1 = mul(u_shadowMtx, world);
 	v_haze = vec2(HazeAmount(world), 0.0);
+	/* Where in which texture; a layer below 0 is no texture. */
+	v_tile = a_texcoord0.xyz;
 }

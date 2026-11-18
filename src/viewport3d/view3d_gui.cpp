@@ -899,6 +899,7 @@ public:
 					this->terrain_textures = this->renderer->SetTerrainTextures(this->model_pack->GetGroundImage("grass")->size, this->model_pack->GetGroundTiles(), this->ground_textures->MakeTerrainTextures(*this->model_pack));
 					if (this->terrain_textures) this->ground_textures->UseTerrain();
 				}
+				if (this->model_pack->GetModelTextureSize() != 0) this->renderer->SetModelTextures(this->model_pack->GetModelTextureSize(), this->model_pack->GetModelTextures());
 				uint id = 0;
 				for (const Model3D &model : this->model_pack->GetModels()) {
 					this->renderer->SetFarModel(id, this->model_pack->GetFarModel(id));

@@ -46,6 +46,7 @@ public:
 	bool SetTerrainTextures(uint size, uint tiles, std::vector<GroundTextures::Pending> &&textures);
 	void UpdateSpriteAtlas(SpriteAtlas &atlas);
 
+	void SetModelTextures(uint size, std::span<const std::vector<uint32_t>> textures);
 	void SetModel(uint id, const Model3D &model);
 	void SetFarModel(uint id, uint far);
 	void SetChunk(ChunkID id, const TerrainChunkMesh &mesh);

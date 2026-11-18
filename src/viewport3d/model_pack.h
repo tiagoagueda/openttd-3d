@@ -139,12 +139,23 @@ public:
 		return it == this->ground.end() ? nullptr : &it->second;
 	}
 
+	/** Along how many pixels the textures of the models are wide and high; 0 when the models have none. */
+	uint GetModelTextureSize() const { return this->model_texture_size; }
+
+	/**
+	 * The textures of the models, all GetModelTextureSize() wide and high, in the format of 32bpp blitters.
+	 * ModelVertex::texture is an index into these.
+	 */
+	std::span<const std::vector<uint32_t>> GetModelTextures() const { return this->model_textures; }
+
 	static std::array<float, 4> GetTint(Colours colour);
 	static uint32_t GetGrfIDNumber(GrfID grfid);
 
 private:
 	uint LoadModel(const std::string &filename, std::map<std::string, uint> &loaded);
 	void ReadGround(const nlohmann::json &ground);
+	int FindModelTexture(std::string_view uri, std::span<const uint8_t> data);
+	void FinishModelTextures();
 	void ReadEntries(const nlohmann::json &list, std::initializer_list<std::pair<std::string_view, ModelKind>> kinds, std::map<std::string, uint> &loaded);
 
 	using Key = std::tuple<ModelKind, uint32_t, uint16_t>; ///< What is replaced, the NewGRF it is from (0 for the base game) and its number within the NewGRF.
@@ -156,6 +167,17 @@ private:
 	std::map<Key, Entry> entries; ///< What has a model.
 	std::map<std::string, GroundImage, std::less<>> ground; ///< The ground textures, by name; either all that are needed or none.
 	uint ground_tiles = 1; ///< Along how many tiles one ground texture is spread.
+
+	/** An image as it was read from a file. */
+	struct Image {
+		uint width = 0;
+		uint height = 0;
+		std::vector<uint32_t> pixels; ///< The pixels, in the format of 32bpp blitters.
+	};
+	std::vector<Image> model_images; ///< The textures of the models as they were read, until FinishModelTextures() makes #model_textures of them.
+	std::map<std::string, int, std::less<>> model_image_names; ///< Index into #model_images by file name, or by a summary of the contents for images inside models; -1 for images that cannot be used.
+	std::vector<std::vector<uint32_t>> model_textures; ///< See GetModelTextures().
+	uint model_texture_size = 0; ///< See GetModelTextureSize().
 };
 
 #endif /* VIEWPORT3D_MODEL_PACK_H */

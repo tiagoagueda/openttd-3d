@@ -172,6 +172,10 @@ Signals and the barriers of level crossings are "live" models: they are kept per
 The scene is drawn with 4x multisampling where the GPU supports it.
 Parts of a model with a material named `company` take the colour of the owner. Parts with a material named `load` are the cargo: they are drawn only when the vehicle is loaded, lower down the emptier it is.
 
+Models have textures: the base colour texture of each glTF material, multiplied with the colour of the material (and so with the company colour).
+The images are PNG files, inside the model or files of the package that the models name and share; `ModelPack::FindModelTexture()` reads each image once and `FinishModelTextures()` brings them to one size, as they become the layers of one texture array (`s_modelTextures`). Each vertex of a model carries its place in the texture and its layer, or -1 for a plain colour (`ModelVertex`), so a whole model is still one draw call, and the copies of one model are still drawn together.
+The models of OpenGFX3D get grey textures of surfaces (brickwork, roof tiles, planks, sheet metal with seams and rivets, leaves) picked by the name of the material and laid on by size; see its README.
+
 A building with a model is part of the terrain chunk it stands on (`AddTileModel()` in `terrain_mesh.cpp`): the sprites the tile draws for the building are left out and the model is put on the highest corner of the footprint, turned to face the way the building faces.
 Besides houses, industry tiles, rail stations, road stops and objects, models can replace airport tiles, docks, buoys and train, road and ship depots; depots and docks face the way their entrance does, and a ship depot has one model for both its tiles.
 Houses and industries take the colour the game picked for them, stations, stops and objects that of their owner.
@@ -201,7 +205,7 @@ The existing game is touched in a few small places:
 * Tiles with animations that have no model (some industries with NewGRF graphics) rebuild their whole chunk of 64x64 tiles for every animation step; building one chunk takes about 1.5 ms.
 * Sprites far away flicker a little because they have no smaller versions yet.
 * The ground of industries, level crossings, depots, NewGRF stations and other buildings is still made from the sprites of the 2D game where it is not plain landscape, so it looks coarser than roads and the landscape.
-* 3D models have colours per material but no textures yet, vehicles with a model turn in steps of 45 degrees like the sprites do, and liveries other than the company colour are not followed.
+* The textures of 3D models only change their colour (no normal maps, no see-through parts), vehicles with a model turn in steps of 45 degrees like the sprites do, and liveries other than the company colour are not followed.
 * It has been run on Linux with Mesa's software Vulkan and OpenGL drivers, and on Windows with the Direct3D 11 video driver.
 
 ## Roadmap
@@ -210,7 +214,7 @@ Textures for the landscape, the coast, the water, roads and the ground beside tr
 
 1. Fix what turns up while playing the game in 3D.
 2. Replace the last ground made of 2D sprites: industries, level crossings, depots, NewGRF stations and half-tile foundations.
-3. Textures for the 3D models.
+3. Textures for the 3D models (done: surface textures by material; lettering, liveries and textures drawn for single models can follow).
 4. Day and night: light that follows the time of day, lit windows and lamps.
 5. Weather and seasons: snow, rain, autumn colours.
 

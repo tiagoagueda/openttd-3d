@@ -21,6 +21,8 @@ struct ModelVertex {
 	float nx, ny, nz; ///< Direction the surface faces, for the light.
 	uint8_t r, g, b; ///< Colour.
 	uint8_t a; ///< 255 for a fixed colour; 0 when the colour is multiplied with the colour of the owner.
+	float u, v; ///< Position in the texture, which repeats beyond 0 to 1.
+	float texture; ///< Which texture the colour is multiplied with, as given by the #ModelTextureFinder; -1 for none.
 };
 
 /** A 3D model: triangles with a colour per corner. */
@@ -41,6 +43,14 @@ struct ModelInstance {
 	bool operator==(const ModelInstance &other) const = default;
 };
 
-bool LoadGlbModel(std::span<const uint8_t> data, Model3D &model, std::string &error);
+/**
+ * Finds the textures of models, so that models can share them.
+ * @param uri For an image in a file of its own, the name of that file as the model gives it; otherwise empty.
+ * @param data For an image inside the model, the contents of the image file.
+ * @return The number of the texture, or -1 when the image cannot be used.
+ */
+using ModelTextureFinder = std::function<int(std::string_view uri, std::span<const uint8_t> data)>;
+
+bool LoadGlbModel(std::span<const uint8_t> data, Model3D &model, std::string &error, const ModelTextureFinder &find_texture = {});
 
 #endif /* VIEWPORT3D_MODEL3D_H */

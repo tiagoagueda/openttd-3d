@@ -107,6 +107,120 @@ void ModelPack::ReadGround([[maybe_unused]] const nlohmann::json &ground)
 	this->ground_tiles = Clamp(ground.value("tiles", 4), 1, 16);
 #endif /* WITH_PNG && PNG_SIMPLIFIED_READ_SUPPORTED */
 }
+/**
+ * Find a texture of a model, reading its image when no other model used it before.
+ * @param uri For an image in a file of its own, the name of that file within the package; otherwise empty.
+ * @param data For an image inside a model, the contents of the image file.
+ * @return Its index in #model_images, or -1 when the image cannot be used.
+ */
+int ModelPack::FindModelTexture([[maybe_unused]] std::string_view uri, [[maybe_unused]] std::span<const uint8_t> data)
+{
+#if defined(WITH_PNG) && defined(PNG_SIMPLIFIED_READ_SUPPORTED)
+	static constexpr uint MAX_SIZE = 4096;
+	static constexpr size_t MAX_IMAGES = 256;
+
+	std::string name;
+	if (uri.empty()) {
+		/* Models that carry the same image share it too. */
+		name = fmt::format(":{}:{}", data.size(), std::hash<std::string_view>{}(std::string_view(reinterpret_cast<const char *>(data.data()), data.size())));
+	} else {
+		name = uri;
+	}
+	auto [it, inserted] = this->model_image_names.try_emplace(name, -1);
+	if (!inserted) return it->second;
+
+	std::optional<std::vector<uint8_t>> file;
+	if (!uri.empty()) {
+		/* File names stay within the package. */
+		if (uri.find_first_of("/\\:") != std::string::npos || uri.starts_with(".")) {
+			Debug(Facility::Misc, Severity::Error, "[viewport3d] cannot use texture '{}': only files in the folder of the package", uri);
+			return -1;
+		}
+		file = ReadPackFile(uri);
+		if (!file.has_value()) {
+			Debug(Facility::Misc, Severity::Error, "[viewport3d] cannot use texture '{}': file not found", uri);
+			return -1;
+		}
+		data = *file;
+	}
+
+	png_image png{};
+	png.version = PNG_IMAGE_VERSION;
+	Image image;
+	if (this->model_images.size() < MAX_IMAGES && png_image_begin_read_from_memory(&png, data.data(), data.size()) != 0 && png.width <= MAX_SIZE && png.height <= MAX_SIZE) {
+		/* The byte order of 32bpp blitters. */
+		png.format = PNG_FORMAT_BGRA;
+		image.width = png.width;
+		image.height = png.height;
+		image.pixels.resize(static_cast<size_t>(png.width) * png.height);
+		if (png_image_finish_read(&png, nullptr, image.pixels.data(), 0, nullptr) == 0) image.pixels.clear();
+	}
+	png_image_free(&png);
+	if (image.pixels.empty()) {
+		Debug(Facility::Misc, Severity::Error, "[viewport3d] cannot use texture '{}': not a PNG image of at most {} by {} pixels, or too many textures", uri.empty() ? "inside a model" : uri, MAX_SIZE, MAX_SIZE);
+		return -1;
+	}
+
+	it->second = static_cast<int>(this->model_images.size());
+	this->model_images.push_back(std::move(image));
+	return it->second;
+#else
+	return -1;
+#endif /* WITH_PNG && PNG_SIMPLIFIED_READ_SUPPORTED */
+}
+
+/**
+ * Bring the textures of the models to one size, as the layers of one texture on the GPU have to be.
+ */
+void ModelPack::FinishModelTextures()
+{
+	static constexpr uint MAX_SIZE = 1024;
+
+	uint size = 0;
+	for (const Image &image : this->model_images) size = std::max({size, image.width, image.height});
+	if (size == 0) return;
+	size = std::min<uint>(std::bit_ceil(size), MAX_SIZE);
+	this->model_texture_size = size;
+
+	for (Image &image : this->model_images) {
+		if (image.width == size && image.height == size) {
+			this->model_textures.push_back(std::move(image.pixels));
+			continue;
+		}
+		/* Stretch or shrink: each new pixel is the average of the part of the image it covers, or a blend of the pixels around it. */
+		std::vector<uint32_t> &pixels = this->model_textures.emplace_back(static_cast<size_t>(size) * size);
+		const uint step_x = std::max(1U, image.width / size), step_y = std::max(1U, image.height / size);
+		for (uint y = 0; y < size; y++) {
+			for (uint x = 0; x < size; x++) {
+				uint32_t result = 0;
+				if (image.width >= size && image.height >= size) {
+					uint x0 = x * image.width / size, y0 = y * image.height / size;
+					for (uint shift = 0; shift < 32; shift += 8) {
+						uint sum = 0;
+						for (uint dy = 0; dy < step_y; dy++) {
+							for (uint dx = 0; dx < step_x; dx++) sum += (image.pixels[static_cast<size_t>(y0 + dy) * image.width + x0 + dx] >> shift) & 0xFF;
+						}
+						result |= ((sum + step_x * step_y / 2) / (step_x * step_y)) << shift;
+					}
+				} else {
+					float fx = (x + 0.5f) * image.width / size - 0.5f, fy = (y + 0.5f) * image.height / size - 0.5f;
+					int x0 = static_cast<int>(std::floor(fx)), y0 = static_cast<int>(std::floor(fy));
+					float tx = fx - x0, ty = fy - y0;
+					/* The textures repeat, so beyond the edge is the other side. */
+					auto at = [&](int px, int py) { return image.pixels[static_cast<size_t>((py + image.height) % image.height) * image.width + (px + image.width) % image.width]; };
+					for (uint shift = 0; shift < 32; shift += 8) {
+						float value = ((at(x0, y0) >> shift) & 0xFF) * (1 - tx) * (1 - ty) + ((at(x0 + 1, y0) >> shift) & 0xFF) * tx * (1 - ty)
+							+ ((at(x0, y0 + 1) >> shift) & 0xFF) * (1 - tx) * ty + ((at(x0 + 1, y0 + 1) >> shift) & 0xFF) * tx * ty;
+						result |= static_cast<uint32_t>(std::clamp(value + 0.5f, 0.0f, 255.0f)) << shift;
+					}
+				}
+				pixels[static_cast<size_t>(y) * size + x] = result;
+			}
+		}
+	}
+	this->model_images.clear();
+	this->model_image_names.clear();
+}
 
 /**
  * Load a model of the package, once.
@@ -127,7 +241,7 @@ uint ModelPack::LoadModel(const std::string &filename, std::map<std::string, uin
 		auto data = ReadPackFile(filename);
 		Model3D model;
 		std::string error = "file not found";
-		if (data.has_value() && LoadGlbModel(*data, model, error)) {
+		if (data.has_value() && LoadGlbModel(*data, model, error, [this](std::string_view uri, std::span<const uint8_t> image) { return this->FindModelTexture(uri, image); })) {
 			it->second = static_cast<uint>(this->models.size());
 			std::array<float, 6> box{0, 0, 0, 0, 0, 0};
 			if (!model.vertices.empty()) {
@@ -245,6 +359,8 @@ ModelPack::ModelPack()
 			}, loaded);
 		}
 
+		this->FinishModelTextures();
+
 		if (json.contains("ground")) {
 			try {
 				this->ReadGround(json.at("ground"));
@@ -255,7 +371,7 @@ ModelPack::ModelPack()
 		}
 
 		this->name = json.value("name", std::string{"OpenGFX3D"});
-		Debug(Facility::Driver, Severity::Error, "[viewport3d] model package '{}': {} models for {} vehicle and building types", this->name, this->models.size(), this->entries.size());
+		Debug(Facility::Driver, Severity::Error, "[viewport3d] model package '{}': {} models with {} textures for {} vehicle and building types", this->name, this->models.size(), this->model_textures.size(), this->entries.size());
 	} catch (const std::exception &e) {
 		Debug(Facility::Misc, Severity::Error, "[viewport3d] cannot read {}: {}", PACK_INDEX, e.what());
 		this->models.clear();

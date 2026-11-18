@@ -17,11 +17,13 @@
  * What is read from a binary glTF 2.0 file (.glb):
  * - the triangles of all meshes of the default scene, with the transformations of their nodes;
  * - positions, normals (made from the triangles when missing) and indices;
- * - the base colour of the material as the colour of the triangles.
+ * - the base colour of the material as the colour of the triangles;
+ * - the base colour texture of the material and the first set of texture coordinates; the texture is multiplied
+ *   with the base colour, and always repeats.
  * A material with a name that starts with "company" takes the colour of the owner, multiplied with its base colour.
  * Triangles of a material with a name that starts with "load" are the cargo of a vehicle: they are drawn
  * only when the vehicle carries cargo, and sink into the vehicle as it gets emptier.
- * Textures, animations and skins are ignored.
+ * Other textures (normal maps and the like), animations and skins are ignored.
  *
  * glTF has x to the left of the model, y up and z to its front. One unit is one world unit: a tile is 16 long.
  */
@@ -31,7 +33,7 @@ namespace {
 /** Reads a glTF file; errors are reported by throwing a std::string. */
 class GlbReader {
 public:
-	GlbReader(std::span<const uint8_t> data, Model3D &model) : model(model)
+	GlbReader(std::span<const uint8_t> data, Model3D &model, const ModelTextureFinder &find_texture) : model(model), find_texture(find_texture)
 	{
 		if (data.size() < 20 || this->Read32(data, 0) != 0x46546C67) throw std::string("not a binary glTF file");
 		if (this->Read32(data, 4) != 2) throw std::string("only glTF version 2 is supported");
@@ -108,6 +110,8 @@ private:
 	};
 
 	Model3D &model; ///< The model to fill.
+	const ModelTextureFinder &find_texture; ///< Finds the textures.
+	std::map<size_t, int> textures; ///< The textures that were looked up, by the number of their image in the file.
 	std::vector<uint32_t> load_indices; ///< The triangles of the load, until they are added after the others.
 	nlohmann::json json; ///< The scene description.
 	std::span<const uint8_t> bin; ///< The binary data that the scene description refers to.
@@ -160,6 +164,31 @@ private:
 		}
 		result.data = this->bin.subspan(offset);
 		return result;
+	}
+
+	/**
+	 * Find the image of a texture of the file.
+	 * @param index Number of the texture in the file.
+	 * @return The number of the texture for the vertices, or -1 when it cannot be used.
+	 */
+	int GetTexture(size_t index)
+	{
+		if (!this->find_texture) return -1;
+		size_t source = this->json.at("textures").at(index).at("source").get<size_t>();
+		auto [it, inserted] = this->textures.try_emplace(source, -1);
+		if (!inserted) return it->second;
+
+		const nlohmann::json &image = this->json.at("images").at(source);
+		if (image.contains("uri")) {
+			it->second = this->find_texture(image.at("uri").get<std::string>(), {});
+		} else if (image.contains("bufferView")) {
+			const nlohmann::json &view = this->json.at("bufferViews").at(image.at("bufferView").get<size_t>());
+			size_t offset = view.value("byteOffset", static_cast<size_t>(0));
+			size_t length = view.at("byteLength").get<size_t>();
+			if (view.value("buffer", 0) != 0 || offset > this->bin.size() || length > this->bin.size() - offset) throw std::string("image runs past the end of the file");
+			it->second = this->find_texture({}, this->bin.subspan(offset, length));
+		}
+		return it->second;
 	}
 
 	std::array<float, 3> ReadVec3(const Accessor &accessor, size_t i) const
@@ -222,10 +251,20 @@ private:
 		/* The colour of the material. glTF has linear colours; the screen has not. */
 		std::array<uint8_t, 4> colour{200, 200, 200, 255};
 		bool is_load = false;
+		int texture = -1;
+		Accessor coordinates{};
 		if (primitive.contains("material")) {
 			const nlohmann::json &material = this->json.at("materials").at(primitive.at("material").get<size_t>());
 			std::vector<float> factor{1, 1, 1, 1};
-			if (material.contains("pbrMetallicRoughness")) factor = material.at("pbrMetallicRoughness").value("baseColorFactor", factor);
+			if (material.contains("pbrMetallicRoughness")) {
+				const nlohmann::json &surface = material.at("pbrMetallicRoughness");
+				factor = surface.value("baseColorFactor", factor);
+				/* Only textures that use the first set of coordinates, as floats. */
+				if (surface.contains("baseColorTexture") && surface.at("baseColorTexture").value("texCoord", 0) == 0 && attributes.contains("TEXCOORD_0")) {
+					coordinates = this->GetAccessor(attributes.at("TEXCOORD_0").get<size_t>(), "VEC2", 2);
+					if (coordinates.component_type == 5126 && coordinates.count == positions.count) texture = this->GetTexture(surface.at("baseColorTexture").at("index").get<size_t>());
+				}
+			}
 			if (factor.size() != 4) throw std::string("bad material colour");
 			for (int i = 0; i < 3; i++) colour[i] = static_cast<uint8_t>(std::clamp(std::pow(std::max(factor[i], 0.0f), 1 / 2.2f) * 255.0f + 0.5f, 0.0f, 255.0f));
 			std::string name = material.value("name", std::string{});
@@ -243,7 +282,12 @@ private:
 			std::array<float, 3> n{0, 0, 0};
 			/* Good enough for rotations and even scaling, which is what models use. */
 			if (has_normals) n = convert(transform.Direction(this->ReadVec3(normals, i)));
-			this->model.vertices.push_back({p[0], p[1], p[2], n[0], n[1], n[2], colour[0], colour[1], colour[2], colour[3]});
+			float u = 0, v = 0;
+			if (texture >= 0) {
+				u = ReadFloat(coordinates.data, i * coordinates.stride);
+				v = ReadFloat(coordinates.data, i * coordinates.stride + 4);
+			}
+			this->model.vertices.push_back({p[0], p[1], p[2], n[0], n[1], n[2], colour[0], colour[1], colour[2], colour[3], u, v, static_cast<float>(texture)});
 		}
 
 		size_t first_index = this->model.indices.size();
@@ -305,13 +349,14 @@ private:
  * @param data The contents of the file.
  * @param[out] model The model.
  * @param[out] error What is wrong with the file, when it could not be read.
+ * @param find_texture Finds the textures of the model; without it the model gets none.
  * @return Whether the model was read.
  */
-bool LoadGlbModel(std::span<const uint8_t> data, Model3D &model, std::string &error)
+bool LoadGlbModel(std::span<const uint8_t> data, Model3D &model, std::string &error, const ModelTextureFinder &find_texture)
 {
 	model = {};
 	try {
-		GlbReader reader(data, model);
+		GlbReader reader(data, model, find_texture);
 		return true;
 	} catch (const std::string &e) {
 		error = e;
