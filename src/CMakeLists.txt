@@ -47,6 +47,11 @@ add_files(
 )
 
 add_files(
+    traction_power.cpp
+    CONDITION TRACTION_POWER_ENABLED
+)
+
+add_files(
     soundloader_opus.cpp
     CONDITION OpusFile_FOUND
 )
@@ -563,6 +568,7 @@ add_files(
     townname_type.h
     track_func.h
     track_type.h
+    traction.h
     train.h
     train_cmd.cpp
     train_cmd.h

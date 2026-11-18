@@ -41,6 +41,7 @@
 #include "roadveh_cmd.h"
 #include "road_cmd.h"
 #include "newgrf_roadstop.h"
+#include "traction.h"
 
 #include "table/strings.h"
 
@@ -791,13 +792,18 @@ static void RoadVehArrivesAt(const RoadVehicle *v, Station *st)
  */
 int RoadVehicle::UpdateSpeed()
 {
+	/* Short of power on the wire: a tram or trolleybus may not go its full speed. */
+	int max_speed = this->GetCurrentMaxSpeed();
+	int factor = static_cast<int>(GetTractionSpeedFactor(this));
+	if (factor < 256) max_speed = std::max(1, max_speed * factor / 256);
+
 	switch (_settings_game.vehicle.roadveh_acceleration_model) {
 		default: NOT_REACHED();
 		case AccelerationModel::Original:
-			return this->DoUpdateSpeed(this->overtaking != 0 ? 512 : 256, 0, this->GetCurrentMaxSpeed());
+			return this->DoUpdateSpeed(this->overtaking != 0 ? 512 : 256, 0, max_speed);
 
 		case AccelerationModel::Realistic:
-			return this->DoUpdateSpeed(this->GetAcceleration() + (this->overtaking != 0 ? 256 : 0), this->GetAccelerationStatus() == AS_BRAKE ? 0 : 4, this->GetCurrentMaxSpeed());
+			return this->DoUpdateSpeed(this->GetAcceleration() + (this->overtaking != 0 ? 256 : 0), this->GetAccelerationStatus() == AS_BRAKE ? 0 : 4, max_speed);
 	}
 }
 
@@ -1703,7 +1709,8 @@ Money RoadVehicle::GetRunningCost() const
 	uint cost_factor = GetVehicleProperty(this, PROP_ROADVEH_RUNNING_COST_FACTOR, e->VehInfo<RoadVehicleInfo>().running_cost);
 	if (cost_factor == 0) return 0;
 
-	return GetPrice(e->VehInfo<RoadVehicleInfo>().running_cost_class, cost_factor, e->GetGRF());
+	/* Trams and trolleybuses buy their energy when traction power is built in; the rest is a fixed part. */
+	return GetTractionFixedRunningCost(this->roadtype, GetPrice(e->VehInfo<RoadVehicleInfo>().running_cost_class, cost_factor, e->GetGRF()));
 }
 
 bool RoadVehicle::Tick()
