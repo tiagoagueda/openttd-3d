@@ -51,7 +51,39 @@ in the dragged stretch and pylons left without wires). Bulldozing a pylon remove
 
 * Landscaping menu > Power lines opens the power toolbar: line (drag; the end snaps to the nearest
   of the 8 directions), pylon, substation, demolish, remove toggle.
-* Placeholder 2D graphics: the transmitter sprite for pylons, the power station transformer sprite for
-  substations, catenary wire sprites at wire height (diagonals as two conductors).
-  Wires over other tiles are drawn from the viewport loop (`DrawPowerWireAbove()`), also for the 3D view's sprite capture.
+* Wires over other tiles are drawn from the viewport loop (`DrawPowerWireAbove()`), also for the 3D view's sprite capture
+  when the model package has no power models.
 * Land info shows the number of substations in the network, and the owner of a wire above any tile.
+
+## Phase 2: 3D models and 2D sprites
+
+### 3D view
+
+* Models come from OpenGFX3D (`models_power.py`, index type `power`): 0 pylon, 1 overhead substation,
+  2 underground substation, 3 transition pylon, 4 a piece of conductor. The model's x axis follows the line.
+* `AddPowerModels()` in `src/viewport3d/terrain_mesh.cpp` places the pylon or substation, turned along the line
+  (on a bend halfway, so the cross arm lies on the bisector), and the spans that leave it towards N, NE, E or SE;
+  the other spans are added by the tile at their far end. Each span is three conductors `POWER_PHASE` apart at
+  `POWER_WIRE_Z` above each foot, plus an earth wire between two pylons, sagging in six pieces.
+  The constants must match `WIRE_Z`, `PHASE` and `TOP` in `models_power.py`.
+* With power models, the 2D wire sprites are left out of the sprite capture (`_power_wire_sprites`).
+* `MarkPowerTileDirty()` also marks the far ends of a pylon's spans, because the wires follow how both ends turn.
+* Previews: the pylon and substation tools show a see-through model on the tile under the mouse; dragging a line
+  shows see-through pylons and wires where `CmdBuildPowerLine()` would put them (`GetPowerToolPreview()`,
+  `AddPowerLinePreview()`), without checking the land.
+
+### 2D view
+
+* `media/baseset/power.grf` holds 23 sprites drawn from the same models by OpenGFX3D's `make_sprites.py`:
+  8 bpp at normal zoom and 32 bpp at normal, 2x and 4x zoom. The order is described in that script and in
+  `SPR_POWER_*` (`src/table/sprites.h`), which sits just before `SPR_NEWGRFS_BASE`.
+* `LoadSpriteTables()` loads it after the base set; without the file (`_power_sprites_loaded` false) the old
+  stand-ins are drawn.
+* Pylons and substations turn like the 3D models, to one of four directions (`GetPowerSpriteDirection()`).
+  Over other tiles one sprite carries all wires of the tile; on a power tile a half wire runs from the pylon to the
+  edge of the tile for each span.
+
+### Testing
+
+* Console: `power_build line <x1> <y1> <x2> <y2>`, `power_build pylon <x> <y>`, `power_build substation <x> <y>`
+  build for the local company, e.g. from `scripts/game_start.scr`.

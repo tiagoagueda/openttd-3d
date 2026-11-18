@@ -59,6 +59,8 @@
 
 #include "table/strings.h"
 
+#include "power_cmd.h"
+
 #include "safeguards.h"
 
 /* scriptfile handling */
@@ -544,6 +546,42 @@ static bool ConScrollToTile(std::span<std::string_view> argv)
 	}
 
 	return false;
+}
+
+/**
+ * Build power lines, pylons and substations for the local company; for testing and screenshots.
+ * @copydoc IConsoleCmdProc
+ */
+static bool ConPowerBuild(std::span<std::string_view> argv)
+{
+	if (argv.empty()) {
+		IConsolePrint(CC_HELP, "Build power lines for your company. Usage: 'power_build line <x1> <y1> <x2> <y2>', 'power_build pylon <x> <y>', 'power_build substation <x> <y>'.");
+		return true;
+	}
+	if (argv.size() < 4) return false;
+	std::vector<uint> numbers;
+	for (size_t i = 2; i < argv.size(); i++) {
+		auto value = ParseInteger(argv[i], 0);
+		if (!value.has_value()) return false;
+		numbers.push_back(*value);
+	}
+	for (size_t i = 0; i + 1 < numbers.size(); i += 2) {
+		if (numbers[i] >= Map::SizeX() || numbers[i + 1] >= Map::SizeY()) {
+			IConsolePrint(CC_ERROR, "Tile does not exist.");
+			return true;
+		}
+	}
+	TileIndex a = TileXY(numbers[0], numbers[1]);
+	if (argv[1] == "line" && numbers.size() == 4) {
+		Command<Commands::BuildPowerLine>::Post(STR_ERROR_CAN_T_BUILD_POWER_LINE, TileXY(numbers[2], numbers[3]), a);
+	} else if (argv[1] == "pylon" && numbers.size() == 2) {
+		Command<Commands::BuildPowerPylon>::Post(STR_ERROR_CAN_T_BUILD_POWER_PYLON, a);
+	} else if (argv[1] == "substation" && numbers.size() == 2) {
+		Command<Commands::BuildPowerSubstation>::Post(STR_ERROR_CAN_T_BUILD_POWER_SUBSTATION, a, PowerTileKind::OverheadSubstation);
+	} else {
+		return false;
+	}
+	return true;
 }
 
 /**
@@ -3124,6 +3162,7 @@ void IConsoleStdLibRegister()
 	IConsole::CmdRegister("view3d_season",           ConView3DSeason);
 	IConsole::CmdRegister("zoomto",                  ConZoomToLevel);
 	IConsole::CmdRegister("scrollto",                ConScrollToTile);
+	IConsole::CmdRegister("power_build",             ConPowerBuild);
 	IConsole::CmdRegister("alias",                   ConAlias);
 	IConsole::CmdRegister("load",                    ConLoad);
 	IConsole::CmdRegister("load_save",               ConLoad);

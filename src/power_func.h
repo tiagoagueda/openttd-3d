@@ -22,6 +22,12 @@ CommandCost CheckPowerWireClearance(TileIndex tile, int wire_z);
 CommandCost CheckPowerWireAllowsStructure(TileIndex tile, int height);
 bool IsHouseLowForPowerWire(HouseID house);
 
+/** File with the sprites of power lines, in the base set folder. */
+static constexpr std::string_view POWER_GRF = "power.grf";
+/** Whether the sprites of power.grf are loaded. */
+extern bool _power_sprites_loaded;
+/** Whether DrawPowerWireAbove() draws; the 3D view turns it off where it draws the wires with models. */
+extern bool _power_wire_sprites;
 void DrawPowerWireAbove(const TileInfo *ti);
 void AddPowerWireTileDesc(TileIndex tile, TileDesc &td);
 void AllocatePowerLayer();

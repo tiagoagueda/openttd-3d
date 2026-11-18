@@ -377,8 +377,20 @@ static const SpriteID SPR_BRIDGE_DECKS_MGLV = SPR_BRIDGE_DECKS_BASE + 12;
 static const SpriteID SPR_BRIDGE_DECKS_ROAD = SPR_BRIDGE_DECKS_BASE + 18;
 /** @} */
 
+/** @{
+ * Power line sprites, from power.grf; drawn from the models of OpenGFX3D by its make_sprites.py. */
+static constexpr SpriteID SPR_POWER_BASE = SPR_BRIDGE_DECKS_BASE + BRIDGE_DECKS_SPRITE_COUNT;
+static constexpr SpriteID SPR_POWER_PYLON = SPR_POWER_BASE + 0; ///< Pylons: line along x, along y, along the N-S diagonal, along the E-W diagonal.
+static constexpr SpriteID SPR_POWER_SUBSTATION_OVERHEAD = SPR_POWER_BASE + 4; ///< Overhead substations: gantry taking wires along x, along y.
+static constexpr SpriteID SPR_POWER_SUBSTATION_UNDERGROUND = SPR_POWER_BASE + 6; ///< Underground substation.
+static constexpr SpriteID SPR_POWER_TRANSITION_PYLON = SPR_POWER_BASE + 7; ///< Transition pylons, in the same four directions as the pylons.
+static constexpr SpriteID SPR_POWER_WIRES = SPR_POWER_BASE + 11; ///< Wires over one tile: along x, along y, along the N-S diagonal, along the E-W diagonal.
+static constexpr SpriteID SPR_POWER_HALF_WIRES = SPR_POWER_BASE + 15; ///< Wires from the middle of a tile to its edge, by #Direction.
+static constexpr uint16_t POWER_SPRITE_COUNT = 23;
+/** @} */
+
 /** From where can we start putting NewGRFs. */
-static const SpriteID SPR_NEWGRFS_BASE = SPR_BRIDGE_DECKS_BASE + BRIDGE_DECKS_SPRITE_COUNT;
+static const SpriteID SPR_NEWGRFS_BASE = SPR_POWER_BASE + POWER_SPRITE_COUNT;
 
 /** Manager face sprites.
  * @{ */

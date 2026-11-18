@@ -42,6 +42,9 @@
 
 std::unique_ptr<uint16_t[]> _power_layer;
 
+bool _power_wire_sprites = true;
+bool _power_sprites_loaded = false;
+
 /** Allocate an empty power layer for the current map size. Called whenever the map is allocated. */
 void AllocatePowerLayer()
 {
@@ -319,6 +322,14 @@ static CommandCost CheckPowerTileSite(TileIndex tile, DoCommandFlags flags)
 static void MarkPowerTileDirty(TileIndex tile)
 {
 	MarkTileDirtyByTile(tile, (POWER_WIRE_HEIGHT + 1) * TILE_HEIGHT);
+	if (!IsPowerTile(tile)) return;
+	/* The 3D view draws each span from one of its ends, and the wires follow how the pylons at both ends turn. */
+	for (Direction dir : EnumRange(Direction::End)) {
+		uint span = GetPowerSpan(tile, dir);
+		if (span == 0) continue;
+		TileIndex other = StepTile(tile, dir, span);
+		if (other != INVALID_TILE) MarkTileDirtyByTile(other, (POWER_WIRE_HEIGHT + 1) * TILE_HEIGHT);
+	}
 }
 
 /**
@@ -692,14 +703,28 @@ PowerNetworkInfo GetPowerNetworkInfo(TileIndex tile)
 }
 
 /**
- * Draw the placeholder wire pieces for a wire of some kind on a tile.
+ * Draw the wires of some kind over a tile.
  * @param ti The tile.
  * @param kind The kind of wire.
  * @param z Height of the wire in pixels.
  */
 static void DrawWirePieces(const TileInfo *ti, PowerWireKind kind, int z)
 {
-	/* Bounding boxes of the catenary wire sprites; the diagonals are drawn twice, as two conductors. */
+	bool transparent = IsTransparencySet(TransparencyOption::Catenary);
+	if (_power_sprites_loaded) {
+		/* One sprite with all conductors over the whole tile, its origin at the north corner of the tile at the height of the wire. */
+		static const SpriteBounds BOUNDS[4] = {
+			{{0, 5, 0}, {16, 6, 8}, {0, -5, 0}},
+			{{5, 0, 0}, {6, 16, 8}, {-5, 0, 0}},
+			{{0, 0, 0}, {16, 16, 8}, {0, 0, 0}},
+			{{0, 0, 0}, {16, 16, 8}, {0, 0, 0}},
+		};
+		uint index = to_underlying(kind) - to_underlying(PowerWireKind::AxisX);
+		if (index < 4) AddSortableSpriteToDraw(SPR_POWER_WIRES + index, PAL_NONE, ti->x, ti->y, z, BOUNDS[index], transparent);
+		return;
+	}
+
+	/* Stand-ins from the catenary of electrified rail; the diagonals are drawn twice, as two conductors. */
 	static const SpriteBounds X_BOUNDS{{0, 7, 0}, {15, 1, 1}, {}};
 	static const SpriteBounds Y_BOUNDS{{7, 0, 0}, {1, 15, 1}, {}};
 	static const SpriteBounds NS_BOUNDS[2] = {{{8, 0, 0}, {8, 8, 1}, {}}, {{0, 8, 0}, {8, 8, 1}, {}}};
@@ -707,7 +732,6 @@ static void DrawWirePieces(const TileInfo *ti, PowerWireKind kind, int z)
 	/* Offsets of the "both ends" wire sprites from the base wire sprite: X, Y, EW, NS. */
 	static const uint8_t WIRE_X = 0, WIRE_Y = 1, WIRE_EW = 2, WIRE_NS = 3;
 
-	bool transparent = IsTransparencySet(TransparencyOption::Catenary);
 	switch (kind) {
 		case PowerWireKind::AxisX:
 			AddSortableSpriteToDraw(SPR_POWER_WIRE_BASE + WIRE_X, PAL_NONE, ti->x, ti->y, z, X_BOUNDS, transparent);
@@ -727,12 +751,49 @@ static void DrawWirePieces(const TileInfo *ti, PowerWireKind kind, int z)
 }
 
 /**
+ * Which way a pylon or substation turns in the 2D view, following the line through it; on a bend it turns halfway.
+ * @param tile The power tile.
+ * @return 0 along x, 1 along y, 2 along the N-S diagonal, 3 along the E-W diagonal.
+ */
+static uint GetPowerSpriteDirection(TileIndex tile)
+{
+	int x = 0, y = 0;
+	uint count = 0;
+	for (Direction dir : EnumRange(Direction::End)) {
+		if (GetPowerSpan(tile, dir) == 0) continue;
+		TileIndexDiffC d = TileIndexDiffCByDir(dir);
+		if (count == 0) {
+			x = d.x;
+			y = d.y;
+		} else if (count == 1) {
+			x -= d.x;
+			y -= d.y;
+		}
+		count++;
+	}
+	if (count > 2) {
+		/* A junction faces along its first line. */
+		for (Direction dir : EnumRange(Direction::End)) {
+			if (GetPowerSpan(tile, dir) == 0) continue;
+			TileIndexDiffC d = TileIndexDiffCByDir(dir);
+			x = d.x;
+			y = d.y;
+			break;
+		}
+	}
+	if (std::abs(x) >= 2 * std::abs(y)) return 0;
+	if (std::abs(y) >= 2 * std::abs(x)) return 1;
+	return (x > 0) == (y > 0) ? 2 : 3;
+}
+
+/**
  * Draw the overhead wire above a tile that is not a power tile.
  * Called for every tile after its own contents are drawn.
  * @param ti The tile.
  */
 void DrawPowerWireAbove(const TileInfo *ti)
 {
+	if (!_power_wire_sprites) return;
 	if (IsInvisibilitySet(TransparencyOption::Catenary)) return;
 	PowerWireKind kind = GetPowerWireKind(ti->tile);
 	if (kind == PowerWireKind::None) return;
@@ -764,7 +825,26 @@ static void DrawTile_Power(TileInfo *ti)
 	PowerTileKind kind = GetPowerTileKind(ti->tile);
 	if (!IsInvisibilitySet(TransparencyOption::Structures)) {
 		bool transparent = IsTransparencySet(TransparencyOption::Structures);
-		if (kind == PowerTileKind::OverheadSubstation || kind == PowerTileKind::UndergroundSubstation) {
+		if (_power_sprites_loaded) {
+			/* The sprites have their origin at the north corner of the tile. */
+			static const SpriteBounds PYLON_BOUNDS{{6, 6, 0}, {4, 4, 40}, {-6, -6, 0}};
+			static const SpriteBounds YARD_BOUNDS{{1, 1, 0}, {14, 14, 30}, {-1, -1, 0}};
+			uint dir = GetPowerSpriteDirection(ti->tile);
+			switch (kind) {
+				case PowerTileKind::Pylon:
+					AddSortableSpriteToDraw(SPR_POWER_PYLON + dir, PAL_NONE, ti->x, ti->y, ti->z, PYLON_BOUNDS, transparent);
+					break;
+				case PowerTileKind::TransitionPylon:
+					AddSortableSpriteToDraw(SPR_POWER_TRANSITION_PYLON + dir, PAL_NONE, ti->x, ti->y, ti->z, PYLON_BOUNDS, transparent);
+					break;
+				case PowerTileKind::OverheadSubstation:
+					AddSortableSpriteToDraw(SPR_POWER_SUBSTATION_OVERHEAD + (dir == 1 ? 1 : 0), PAL_NONE, ti->x, ti->y, ti->z, YARD_BOUNDS, transparent);
+					break;
+				case PowerTileKind::UndergroundSubstation:
+					AddSortableSpriteToDraw(SPR_POWER_SUBSTATION_UNDERGROUND, PAL_NONE, ti->x, ti->y, ti->z, YARD_BOUNDS, transparent);
+					break;
+			}
+		} else if (kind == PowerTileKind::OverheadSubstation || kind == PowerTileKind::UndergroundSubstation) {
 			static const SpriteBounds SUBSTATION_BOUNDS{{1, 2, 0}, {14, 11, 32}, {}};
 			AddSortableSpriteToDraw(SPR_POWER_SUBSTATION, PAL_NONE, ti->x, ti->y, ti->z, SUBSTATION_BOUNDS, transparent);
 		} else {
@@ -774,11 +854,18 @@ static void DrawTile_Power(TileInfo *ti)
 	}
 
 	if (!IsInvisibilitySet(TransparencyOption::Catenary)) {
-		/* Draw one piece of wire for every kind of wire leaving the tile. */
+		/* Draw one piece of wire for every kind of wire leaving the tile; with power.grf, from the pylon to the edge of the tile. */
 		uint8_t drawn = 0;
 		for (Direction dir : EnumRange(Direction::End)) {
 			uint span = GetPowerSpan(ti->tile, dir);
 			if (span == 0) continue;
+			if (_power_sprites_loaded) {
+				static const SpriteBounds HALF_BOUNDS{{0, 0, 0}, {16, 16, 8}, {0, 0, 0}};
+				TileIndex other = StepTile(ti->tile, dir, span);
+				int z = (other != INVALID_TILE && IsPowerTile(other)) ? GetSpanWireZ(ti->tile, other) : GetPowerWireHeight(ti->tile);
+				AddSortableSpriteToDraw(SPR_POWER_HALF_WIRES + to_underlying(dir), PAL_NONE, ti->x, ti->y, z * TILE_HEIGHT, HALF_BOUNDS, IsTransparencySet(TransparencyOption::Catenary));
+				continue;
+			}
 			PowerWireKind wire = GetPowerWireKindForDir(dir);
 			if (HasBit(drawn, to_underlying(wire))) continue;
 			SetBit(drawn, to_underlying(wire));

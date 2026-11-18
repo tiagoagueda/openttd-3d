@@ -23,6 +23,9 @@
 #include "base_media_graphics.h"
 #include "base_media_sounds.h"
 
+#include "power_func.h"
+#include "fileio_func.h"
+
 #include "table/sprites.h"
 
 #include "safeguards.h"
@@ -195,6 +198,9 @@ static void LoadSpriteTables()
 			PaletteType::DOS != used_set->palette
 		);
 	}
+
+	/* Power lines; without power.grf they are drawn with stand-ins from the base set. */
+	_power_sprites_loaded = FioCheckFileExists(POWER_GRF, Subdirectory::Baseset) && LoadGrfFile(std::string{POWER_GRF}, SPR_POWER_BASE, false) == POWER_SPRITE_COUNT;
 
 	/* Initialize the unicode to sprite mapping table */
 	InitializeUnicodeGlyphMap();

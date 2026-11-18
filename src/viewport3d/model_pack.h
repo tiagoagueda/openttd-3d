@@ -54,6 +54,7 @@ enum class ModelKind : uint8_t {
 	Lock, ///< Canal locks: 0 the middle, 1 the lower end, 2 the upper end.
 	Disaster, ///< Disaster vehicles, by disaster vehicle type.
 	Interface, ///< Parts of the interface in the world: 0 label post, 1 selection edge, 2 selection corner, 3 cursor arrow, 4 hover bracket.
+	Power, ///< Power lines: 0 pylon, 1 overhead substation, 2 underground substation, 3 transition pylon, 4 a piece of conductor.
 };
 
 /**

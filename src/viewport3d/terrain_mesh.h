@@ -94,6 +94,7 @@ struct AtlasSprite;
 bool GetTileModels(TileIndex tile, const ModelPack &pack, std::vector<ModelInstance> &models, std::vector<AnimatedPart> &parts);
 struct View3DPreview;
 void AddPreviewModel(const View3DPreview &preview, TileIndex tile, uint track, const ModelPack &pack, std::vector<ModelInstance> &models);
+void AddPowerLinePreview(TileIndex start, TileIndex end, const ModelPack &pack, std::vector<ModelInstance> &models);
 struct View3DPicture;
 bool AddPictureModels(const View3DPicture &picture, const ModelPack &pack, std::vector<ModelInstance> &models);
 bool HasLiveTileModels(TileIndex tile);

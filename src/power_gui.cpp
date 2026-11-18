@@ -206,3 +206,39 @@ Window *ShowBuildPowerToolbar()
 	CloseWindowByClass(WindowClass::BuildToolbar);
 	return AllocateWindowDescFront<BuildPowerToolbarWindow>(_power_toolbar_desc, POWER_TOOLBAR_NUMBER);
 }
+
+#ifdef WITH_VIEWPORT3D
+#include "viewport3d/view3d_gui.h"
+
+/**
+ * Find what the power line toolbar is about to build, for the 3D view to show.
+ * @param[out] preview What is about to be built.
+ * @return Whether the toolbar is building something with a preview.
+ */
+bool GetPowerToolPreview(View3DPreview &preview)
+{
+	const BuildPowerToolbarWindow *w = dynamic_cast<const BuildPowerToolbarWindow *>(_thd.GetCallbackWnd());
+	if (w == nullptr || w->IsRemoving()) return false;
+	switch (w->last_user_action) {
+		case WID_PT_BUILD_PYLON:
+			preview.kind = View3DPreview::Kind::PowerPylon;
+			return true;
+		case WID_PT_BUILD_SUBSTATION:
+			preview.kind = View3DPreview::Kind::PowerSubstation;
+			return true;
+		case WID_PT_BUILD_LINE: {
+			if (_special_mouse_mode != SpecialMouseMode::Sizing || _thd.select_proc != DDSP_BUILD_POWER_LINE) return false;
+			if (_thd.selstart.x < 0 || _thd.selstart.y < 0 || _thd.selend.x < 0 || _thd.selend.y < 0) return false;
+			TileIndex start = TileVirtXY(_thd.selstart.x, _thd.selstart.y);
+			TileIndex end = TileVirtXY(_thd.selend.x, _thd.selend.y);
+			if (!IsValidTile(start) || !IsValidTile(end)) return false;
+			preview.kind = View3DPreview::Kind::PowerLine;
+			preview.start = start;
+			preview.end = SnapPowerLineEnd(start, end);
+			return true;
+		}
+		default:
+			return false;
+	}
+}
+#endif /* WITH_VIEWPORT3D */
