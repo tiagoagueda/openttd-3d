@@ -27,6 +27,7 @@
 #include "../viewport_type.h"
 #include "../viewport_func.h"
 #include "../zoom_func.h"
+#include "../genworld.h"
 #include "../error.h"
 #include "../openttd.h"
 #include "../tilehighlight_func.h"
@@ -141,11 +142,13 @@ class View3DWindow : public Window {
 	std::chrono::steady_clock::time_point labels_found{}; ///< When the labels were last looked up.
 
 	std::chrono::steady_clock::time_point textures_reset{}; ///< When the ground textures were last started afresh.
+	std::chrono::steady_clock::time_point generating_refresh{}; ///< When the map being made was last shown anew.
 
 	/** A viewport of another window, such as a news message, a town, vehicle or industry window or an extra viewport, that is drawn in 3D. */
 	struct SmallView {
 		WindowClass window_class; ///< Class of the window.
 		WindowNumber window_number; ///< Number of the window.
+		const Window *window = nullptr; ///< The window itself; a new message reuses the class and number of the one before.
 		uint target; ///< Id of its image in the renderer.
 		Camera3D camera; ///< Where it looks from.
 		uint width = 0; ///< Width of the viewport in pixels.
@@ -490,10 +493,20 @@ public:
 		this->view_changed = true;
 	}
 
+	/**
+	 * Whether the player moves the camera and clicks on the map. The title screen and the making of a new map only
+	 * show the map, where the 2D main view goes.
+	 * @return True when the view takes the mouse and keys.
+	 */
+	bool IsInteractive() const
+	{
+		return _game_mode != GameMode::Menu && !_generating_world;
+	}
+
 	void OnClick(Point, WidgetID widget, int) override
 	{
 		/* The left mouse button does what it does in the 2D views: use the active build tool, or click what is there. */
-		if (widget != WID_V3D_VIEW || this->renderer == nullptr) return;
+		if (widget != WID_V3D_VIEW || this->renderer == nullptr || !this->IsInteractive()) return;
 		const NWidgetBase *view = this->GetWidget<NWidgetBase>(WID_V3D_VIEW);
 		if (view->current_x == 0 || view->current_y == 0) return;
 
@@ -504,7 +517,7 @@ public:
 
 	bool OnRightClick(Point, WidgetID widget) override
 	{
-		if (widget != WID_V3D_VIEW || _scrolling_viewport) return false;
+		if (widget != WID_V3D_VIEW || _scrolling_viewport || !this->IsInteractive()) return false;
 		/* Dragging with the right mouse button moves the map like in the 2D views; OnScroll() gets the movement. */
 		_scrolling_viewport = true;
 		_cursor.fix_at = (_settings_client.gui.scroll_mode == ViewportScrollMode::ViewportRMBFixed ||
@@ -535,7 +548,7 @@ public:
 
 	void OnMouseWheel(int wheel, WidgetID widget) override
 	{
-		if (widget != WID_V3D_VIEW) return;
+		if (widget != WID_V3D_VIEW || !this->IsInteractive()) return;
 		this->goal_distance = Clamp(this->goal_distance * std::pow(1.25f, static_cast<float>(wheel)), Camera3D::MIN_DISTANCE, Camera3D::MAX_DISTANCE);
 		/* Zoom towards the spot below the cursor, like maps do. */
 		Vec3 eye, direction;
@@ -551,6 +564,7 @@ public:
 		static constexpr float QUARTER = 1.5707963f;
 		static constexpr float CLASSIC = 0.7853982f;
 		float nearest = CLASSIC + std::round((this->goal_yaw - CLASSIC) / QUARTER) * QUARTER;
+		if (!this->IsInteractive()) return EventState::NotHandled;
 		switch (keycode) {
 			case WKC_PAGEUP: // Turn a quarter to the left.
 				this->goal_yaw = nearest + QUARTER;
@@ -758,7 +772,7 @@ public:
 	 */
 	void AddCursorModels(float seconds)
 	{
-		if (this->model_pack == nullptr || FindWindowFromPt(_cursor.pos.x, _cursor.pos.y) != this) return;
+		if (this->model_pack == nullptr || !this->IsInteractive() || FindWindowFromPt(_cursor.pos.x, _cursor.pos.y) != this) return;
 		const ModelPack::Entry *edge = this->model_pack->Find(ModelKind::Interface, 0, 1);
 		const ModelPack::Entry *corner = this->model_pack->Find(ModelKind::Interface, 0, 2);
 		const ModelPack::Entry *arrow = this->model_pack->Find(ModelKind::Interface, 0, 3);
@@ -918,6 +932,12 @@ public:
 		}
 
 		if (this->main_view) this->FollowMainView();
+		if (_generating_world && std::chrono::steady_clock::now() - this->generating_refresh >= std::chrono::milliseconds(400)) {
+			/* The new map is made without telling which tiles changed; show it as it grows. */
+			this->generating_refresh = std::chrono::steady_clock::now();
+			for (ChunkState &chunk : this->chunks) chunk.dirty = true;
+			this->terrain_changed = true;
+		}
 		this->MoveCamera(delta_ms);
 		if (this->main_view) this->MoveMainView();
 		this->PollRenderer();
@@ -971,6 +991,9 @@ public:
 		this->PollRenderer();
 	}
 
+	/** Whether this is the 3D view in place of the main view. */
+	bool IsMainView() const { return this->main_view; }
+
 	/**
 	 * Draw a viewport of another window from its latest 3D image, and ask for a new image when it moved.
 	 * @param w The window.
@@ -978,7 +1001,7 @@ public:
 	 * @param top Top edge of the area to draw.
 	 * @param right Right edge of the area to draw, exclusive.
 	 * @param bottom Bottom edge of the area to draw, exclusive.
-	 * @return Whether it was drawn; if not, there is no image yet and the 2D view has to do.
+	 * @return Whether it was drawn; if not, the 2D view has to do.
 	 */
 	bool DrawSmallView(const Window &w, int left, int top, int right, int bottom)
 	{
@@ -987,10 +1010,17 @@ public:
 		if (vp.width <= 0 || vp.height <= 0) return false;
 
 		auto it = std::ranges::find_if(this->small_views, [&w](const SmallView &view) { return view.window_class == w.window_class && view.window_number == w.window_number; });
+		if (it != this->small_views.end() && it->window != &w) {
+			/* Another window in its place, such as the next news message: the image is of something else. */
+			this->renderer->ReleaseTarget(it->target);
+			this->small_views.erase(it);
+			it = this->small_views.end();
+		}
 		if (it == this->small_views.end()) {
 			it = this->small_views.emplace(this->small_views.end());
 			it->window_class = w.window_class;
 			it->window_number = w.window_number;
+			it->window = &w;
 			it->target = this->next_small_target++;
 		}
 
@@ -1013,10 +1043,10 @@ public:
 		std::span<const uint32_t> image = this->renderer->GetImage(it->target);
 		int image_width = this->renderer->GetImageWidth(it->target);
 		int image_height = this->renderer->GetImageHeight(it->target);
-		if (image.empty()) return false;
-
-		/* Fill with palette index 0 first, for blitters with an animation buffer; see DrawView(). */
+		/* Fill with palette index 0 first, for blitters with an animation buffer; see DrawView().
+		 * Until the first image is there, that is all: the 2D view for a moment would flash. */
 		GfxFillRect(left, top, right - 1, bottom - 1, PixelColour{0});
+		if (image.empty()) return true;
 		const DrawPixelInfo *dpi = _cur_dpi;
 		Blitter *blitter = BlitterFactory::GetCurrentBlitter();
 		int copy_right = std::min({right, vp.left + image_width, dpi->left + dpi->width});
@@ -1075,7 +1105,7 @@ private:
 	{
 		for (auto it = this->small_views.begin(); it != this->small_views.end();) {
 			const Window *w = FindWindowById(it->window_class, it->window_number);
-			if (w != nullptr && w->viewport != nullptr) {
+			if (w != nullptr && w == it->window && w->viewport != nullptr) {
 				++it;
 				continue;
 			}
@@ -1465,7 +1495,7 @@ static WindowDesc _view3d_main_desc(
 void UpdateView3DMainView()
 {
 	/* Without a 32bpp blitter there is no 3D image to show, so the 2D view stays. */
-	bool wanted = _settings_client.gui.view3d_main && _game_mode != GameMode::Menu && GetMainWindow() != nullptr &&
+	bool wanted = _settings_client.gui.view3d_main && GetMainWindow() != nullptr &&
 			BlitterFactory::GetCurrentBlitter()->GetScreenDepth() == 32;
 	Window *w = FindWindowById(WindowClass::View3DMain, 0);
 	if (!wanted) {
@@ -1529,6 +1559,16 @@ void MarkAreaDirtyForView3D(uint x_start, uint y_start, uint x_end, uint y_end)
 bool DrawViewportIn3D(const Window &w, int left, int top, int right, int bottom)
 {
 	return _view3d_window != nullptr && _view3d_window->DrawSmallView(w, left, top, right, bottom);
+}
+
+/**
+ * Whether the viewports of other windows than the main window are drawn in 3D.
+ * Their pixels then cannot be moved along when they scroll, as the 2D game does: the 3D image looks different from elsewhere.
+ * @return True when they are.
+ */
+bool AreViewportsDrawnIn3D()
+{
+	return _view3d_window != nullptr && _view3d_window->IsMainView();
 }
 
 /**

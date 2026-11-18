@@ -39,5 +39,6 @@ void MarkTileDirtyForView3D(TileIndex tile);
 void MarkAreaDirtyForView3D(uint x_start, uint y_start, uint x_end, uint y_end);
 bool GetView3DTileBelowCursor(Point &pt);
 bool DrawViewportIn3D(const struct Window &w, int left, int top, int right, int bottom);
+bool AreViewportsDrawnIn3D();
 
 #endif /* VIEWPORT3D_VIEW3D_GUI_H */

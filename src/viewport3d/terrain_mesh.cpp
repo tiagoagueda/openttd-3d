@@ -129,6 +129,106 @@ static bool IsSeaCorner(uint x, uint y)
 	return IsSeaTile(x - 1, y - 1) && IsSeaTile(x, y - 1) && IsSeaTile(x - 1, y) && IsSeaTile(x, y);
 }
 
+/** How far below the land around it the water of a river is, in height levels. */
+static constexpr float RIVER_SURFACE = 0.2f;
+/** How far below the land around it the bed of a river is, in height levels. */
+static constexpr float RIVER_BED = 0.6f;
+/** How far into the tile the bank of a river reaches, in tiles. */
+static constexpr float RIVER_BANK = 0.4f;
+
+/**
+ * Whether a tile is flat river that the 3D view draws with banks and a bed below see-through water.
+ * @param tile The tile.
+ * @return True for such a tile.
+ */
+static bool IsRiverBedTile(Tile tile)
+{
+	if (!IsTileType(tile, TileType::Water) || !IsWater(tile) || GetWaterClass(tile) != WaterClass::River) return false;
+	return GetTileSlope(tile) == SLOPE_FLAT && TileHeight(tile) > 0;
+}
+
+/**
+ * Whether the water of a river runs on into a tile, so that there is no bank on that side.
+ * Outside the map counts as land.
+ * @param x X coordinate of the tile.
+ * @param y Y coordinate of the tile.
+ * @return True if the tile has water up to its edges.
+ */
+static bool IsOpenWaterTile(uint x, uint y)
+{
+	if (x >= Map::SizeX() || y >= Map::SizeY()) return false;
+	Tile tile(TileXY(x, y));
+	if (IsTileType(tile, TileType::Water)) return !IsCoast(tile);
+	return HasTileWaterClass(tile) && IsTileOnWater(tile);
+}
+
+/**
+ * Draw a flat river tile as a bed below the land, with banks along the sides where there is land, and see-through water over it.
+ * @param x X coordinate of the tile.
+ * @param y Y coordinate of the tile.
+ * @param h Height of the tile, in height levels.
+ * @param mesh The mesh to add to.
+ */
+static void AddRiverBed(uint x, uint y, int h, TerrainChunkMesh &mesh)
+{
+	/* Which sides and corners have land next to them: NE, SE, SW, NW sides, then N, E, S, W corners. */
+	bool land_ne = !IsOpenWaterTile(x - 1, y), land_sw = !IsOpenWaterTile(x + 1, y);
+	bool land_nw = !IsOpenWaterTile(x, y - 1), land_se = !IsOpenWaterTile(x, y + 1);
+	bool land_n = !IsOpenWaterTile(x - 1, y - 1), land_w = !IsOpenWaterTile(x + 1, y - 1);
+	bool land_e = !IsOpenWaterTile(x - 1, y + 1), land_s = !IsOpenWaterTile(x + 1, y + 1);
+	bool banks = land_ne || land_sw || land_nw || land_se || land_n || land_w || land_e || land_s;
+
+	/* Without banks the tile is one quad; with them, a grid with a ring of bank around the bed. */
+	static constexpr std::array<float, 6> STEPS = {0.0f, RIVER_BANK * 0.4f, RIVER_BANK, 1.0f - RIVER_BANK, 1.0f - RIVER_BANK * 0.4f, 1.0f};
+	static constexpr std::array<float, 2> PLAIN = {0.0f, 1.0f};
+	std::span<const float> steps = banks ? std::span<const float>(STEPS) : std::span<const float>(PLAIN);
+	if ((mesh.vertices.size() + mesh.water.size()) / 4 + 2 * (steps.size() - 1) * (steps.size() - 1) >= MAX_CHUNK_QUADS) return;
+
+	auto ground = [&](float u, float v) {
+		/* How far the point is from the nearest land, in tiles; the bank goes down from the land to the bed. */
+		float d = 1.0f;
+		if (land_ne) d = std::min(d, u);
+		if (land_sw) d = std::min(d, 1.0f - u);
+		if (land_nw) d = std::min(d, v);
+		if (land_se) d = std::min(d, 1.0f - v);
+		if (land_n) d = std::min(d, std::max(u, v));
+		if (land_w) d = std::min(d, std::max(1.0f - u, v));
+		if (land_e) d = std::min(d, std::max(u, 1.0f - v));
+		if (land_s) d = std::min(d, std::max(1.0f - u, 1.0f - v));
+		/* Gentle at the top, steeper towards the water. */
+		float f = std::min(1.0f, d / RIVER_BANK);
+		return h - RIVER_BED * f * (0.5f + 0.5f * f);
+	};
+
+	static constexpr float SUN_X = -0.4683f, SUN_Y = 0.5620f, SUN_Z = 0.6817f;
+	const float surface = h - RIVER_SURFACE;
+	const uint8_t lit = static_cast<uint8_t>(std::clamp(255.0f * (0.45f + 0.80f * SUN_Z) * 0.5f, 0.0f, 255.0f));
+	for (size_t j = 0; j + 1 < steps.size(); j++) {
+		for (size_t i = 0; i + 1 < steps.size(); i++) {
+			float u0 = steps[i], u1 = steps[i + 1], v0 = steps[j], v1 = steps[j + 1];
+			float z00 = ground(u0, v0), z10 = ground(u1, v0), z01 = ground(u0, v1), z11 = ground(u1, v1);
+			/* Light each piece for its own slope. */
+			float nx = -((z10 + z11) - (z00 + z01)) * 0.5f / (u1 - u0) * 1.5f * TILE_HEIGHT / TILE_SIZE;
+			float ny = -((z01 + z11) - (z00 + z10)) * 0.5f / (v1 - v0) * 1.5f * TILE_HEIGHT / TILE_SIZE;
+			float light = (nx * SUN_X + ny * SUN_Y + SUN_Z) / std::sqrt(nx * nx + ny * ny + 1.0f);
+			light = (0.45f + 0.80f * std::max(0.0f, light)) * 0.5f;
+			uint8_t c = static_cast<uint8_t>(std::clamp(255.0f * light, 0.0f, 255.0f));
+			/* The top of the bank is grassy, the bed bare. */
+			bool bed = std::max({z00, z10, z01, z11}) < h - 0.01f;
+			float texture = static_cast<float>(bed ? GROUND_TEXTURE_GRASS : GROUND_TEXTURE_GRASS + 1);
+			auto land = [&](float u, float v, float z) { return TerrainVertex{x + u, y + v, z, c, c, c, 0, texture, u, v}; };
+			mesh.vertices.insert(mesh.vertices.end(), {land(u0, v0, z00), land(u0, v1, z01), land(u1, v0, z10), land(u1, v1, z11)});
+
+			/* The water knows how deep the bed is below it at each corner. */
+			auto water = [&](float u, float v, float z) {
+				uint8_t depth = static_cast<uint8_t>(std::clamp((z - surface + 1.0f) * 64.0f, 0.0f, 255.0f));
+				return TerrainVertex{x + u, y + v, surface, lit, lit, lit, depth, static_cast<float>(GROUND_TEXTURE_SHALLOWS), u, v};
+			};
+			mesh.water.insert(mesh.water.end(), {water(u0, v0, z00), water(u0, v1, z01), water(u1, v0, z10), water(u1, v1, z11)});
+		}
+	}
+}
+
 /**
  * Get the texture and colour to draw the ground of a tile with.
  * Follows what the 2D game draws as ground sprite. Tiles of which the contents cannot be
@@ -366,6 +466,17 @@ static void AddPieceModel(const ModelPack::Entry &entry, uint x, uint y, const s
 		x * TILE_SIZE + cx, y * TILE_SIZE + cy, z, 1,
 	};
 	instance.tint = {1, 1, 1, 1};
+}
+
+/**
+ * Whether a tile is a bus or lorry stop of the base game on normal road, whose ground the 3D view makes itself.
+ * @param tile The tile.
+ * @return True for such a stop.
+ */
+static bool IsBaseRoadStop(TileIndex tile)
+{
+	if (!IsTileType(tile, TileType::Station) || !IsAnyRoadStop(tile) || IsRoadWaypoint(tile) || GetRoadStopSpec(tile) != nullptr) return false;
+	return !HasRoadTypeTram(tile) && HasRoadTypeRoad(tile) && GetRoadTypeRoad(tile) == ROADTYPE_ROAD;
 }
 
 /**
@@ -608,29 +719,24 @@ static void AddRoadWireModels(RoadBits bits, uint x, uint y, const std::array<in
 }
 
 /**
- * Add 3D pavements and tram rails on a road tile.
- * @param tile The tile, a normal road tile.
+ * Add 3D pavements along the sides of a road tile where no road leads, with squares at the corners between roads.
+ * @param all The road and tram bits of the tile.
  * @param x X coordinate of the tile.
  * @param y Y coordinate of the tile.
  * @param heights Heights of the northern, western, eastern and southern corner, in height levels.
  * @param pack The package of 3D models.
  * @param mesh The mesh to add to.
  */
-static void AddRoadModels(Tile tile, uint x, uint y, const std::array<int, 4> &heights, const ModelPack &pack, TerrainChunkMesh &mesh)
+static void AddPavementModels(RoadBits all, uint x, uint y, const std::array<int, 4> &heights, const ModelPack &pack, TerrainChunkMesh &mesh)
 {
 	enum : uint { N, W, E, S };
 	static constexpr float CORNERS[4][2] = {{0, 0}, {TILE_SIZE, 0}, {0, TILE_SIZE}, {TILE_SIZE, TILE_SIZE}};
-	RoadBits road = GetRoadBits(tile, RoadTramType::Road);
-	RoadBits tram = GetRoadBits(tile, RoadTramType::Tram);
-	RoadBits all = road | tram;
 	float tx = x * TILE_SIZE, ty = y * TILE_SIZE;
 	auto corner = [&](uint c) { return std::array<float, 3>{tx + CORNERS[c][0], ty + CORNERS[c][1], heights[c] * HEIGHT_LEVEL_SIZE}; };
 
-	Roadside roadside = GetRoadside(tile);
-	bool paved = roadside == Roadside::Paved || roadside == Roadside::StreetLights || roadside == Roadside::Trees || roadside == Roadside::PavedRoadWorks;
 	const ModelPack::Entry *strip = pack.Find(ModelKind::Roadside, 0, 2);
 	const ModelPack::Entry *square = pack.Find(ModelKind::Roadside, 0, 3);
-	if (paved && road.Any() && strip != nullptr && square != nullptr) {
+	if (strip != nullptr && square != nullptr) {
 		static constexpr float HALF = 1.3f;
 		/* Each side of the tile: the road bit that leads there, its corners in the order that has the inside of the
 		 * tile on the left, and the direction towards the inside. */
@@ -661,6 +767,24 @@ static void AddRoadModels(Tile tile, uint x, uint y, const std::array<int, 4> &h
 			instance.tint = {1, 1, 1, 1};
 		}
 	}
+}
+
+/**
+ * Add 3D pavements and tram rails on a road tile.
+ * @param tile The tile, a normal road tile.
+ * @param x X coordinate of the tile.
+ * @param y Y coordinate of the tile.
+ * @param heights Heights of the northern, western, eastern and southern corner, in height levels.
+ * @param pack The package of 3D models.
+ * @param mesh The mesh to add to.
+ */
+static void AddRoadModels(Tile tile, uint x, uint y, const std::array<int, 4> &heights, const ModelPack &pack, TerrainChunkMesh &mesh)
+{
+	RoadBits road = GetRoadBits(tile, RoadTramType::Road);
+	RoadBits tram = GetRoadBits(tile, RoadTramType::Tram);
+	Roadside roadside = GetRoadside(tile);
+	bool paved = roadside == Roadside::Paved || roadside == Roadside::StreetLights || roadside == Roadside::Trees || roadside == Roadside::PavedRoadWorks;
+	if (paved && road.Any()) AddPavementModels(road | tram, x, y, heights, pack, mesh);
 
 	const ModelPack::Entry *rails = pack.Find(ModelKind::Roadside, 0, 4);
 	if (tram.Any() && rails != nullptr) {
@@ -1694,10 +1818,9 @@ static bool GetGroundPattern(TileIndex tile, Slope slope, const ModelPack *pack,
 		kind = GroundTextures::PatternKind::Rail;
 		bits = static_cast<uint8_t>(TrackBits{GetRailStationTrack(tile)}.base());
 		if (_settings_client.gui.show_track_reservation && HasStationReservation(tile)) reserved = bits;
-	} else if (IsTileType(tile, TileType::Station) && IsAnyRoadStop(tile) && GetRoadStopSpec(tile) == nullptr) {
-		/* Road stops of the base game: road along the stop, the shelters and canopies are models. */
-		if (HasRoadTypeTram(tile) || !HasRoadTypeRoad(tile) || GetRoadTypeRoad(tile) != ROADTYPE_ROAD) return false;
-		kind = GroundTextures::PatternKind::Road;
+	} else if (IsBaseRoadStop(tile)) {
+		/* Road stops of the base game: paved road along the stop, the shelters and canopies are models. */
+		kind = GroundTextures::PatternKind::PavedRoad;
 		Axis axis = IsDriveThroughStopTile(tile) ? GetDriveThroughStopAxis(tile) : DiagDirToAxis(GetBayRoadStopDir(tile));
 		bits = static_cast<uint8_t>((axis == Axis::X ? ROAD_X : ROAD_Y).base());
 	} else {
@@ -2073,7 +2196,9 @@ void BuildTerrainChunkMesh(uint chunk_x, uint chunk_y, GroundTextures &textures,
 			/* Split the tile along the diagonal with the smallest height difference,
 			 * so a single raised or lowered corner gives one flat and one sloped half. */
 			bool split_ns = std::abs(fn - fs) <= std::abs(fw - fe);
-			if (split_ns) {
+			if (pack_ground && IsRiverBedTile(tile)) {
+				AddRiverBed(x, y, hn, mesh);
+			} else if (split_ns) {
 				mesh.vertices.insert(mesh.vertices.end(), {vw, vn, vs, ve});
 			} else {
 				mesh.vertices.insert(mesh.vertices.end(), {vn, ve, vw, vs});
@@ -2102,6 +2227,11 @@ void BuildTerrainChunkMesh(uint chunk_x, uint chunk_y, GroundTextures &textures,
 				AddTrackModels(tile, x, y, {hn, hw, he, hs}, *pack, mesh);
 				AddRailFenceModels(tile, x, y, {hn, hw, he, hs}, *pack, mesh);
 				AddWireModels(tile, x, y, {hn, hw, he, hs}, *pack, mesh);
+			}
+			if (collect && models && IsBaseRoadStop(tile)) {
+				/* Stops of the base game have pavements along both sides, like town streets. */
+				Axis axis = IsDriveThroughStopTile(tile) ? GetDriveThroughStopAxis(tile) : DiagDirToAxis(GetBayRoadStopDir(tile));
+				AddPavementModels(axis == Axis::X ? ROAD_X : ROAD_Y, x, y, {hn, hw, he, hs}, *pack, mesh);
 			}
 			if (collect && models && IsTileType(tile, TileType::Road) && IsNormalRoad(tile)) {
 				AddRoadModels(tile, x, y, {hn, hw, he, hs}, *pack, mesh);

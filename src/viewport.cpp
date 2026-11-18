@@ -370,6 +370,14 @@ static void SetViewportPosition(Window *w, int x, int y)
 
 	if (old_top == 0 && old_left == 0) return;
 
+#ifdef WITH_VIEWPORT3D
+	/* A view in 3D is drawn from a new 3D image as a whole; moving its old pixels along would mix two images. */
+	if (w->window_class != WindowClass::MainWindow && AreViewportsDrawnIn3D()) {
+		AddDirtyBlock(vp.left, vp.top, vp.left + vp.width, vp.top + vp.height);
+		return;
+	}
+#endif
+
 	_vp_move_offs.x = old_left;
 	_vp_move_offs.y = old_top;
 
