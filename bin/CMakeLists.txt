@@ -10,8 +10,15 @@ if(VIEWPORT3D_ENABLED AND EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/opengfx3d/opengfx3d
             ${CMAKE_CURRENT_SOURCE_DIR}/opengfx3d/*.png
     )
 
+    # The built-in trams and trolleybuses, a NewGRF made from the same models, go to the newgrf folder.
+    file(GLOB OPENGFX3D_NEWGRF_FILES CONFIGURE_DEPENDS
+            ${CMAKE_CURRENT_SOURCE_DIR}/opengfx3d/newgrf/*.grf
+    )
+    list(APPEND OPENGFX3D_SOURCE_FILES ${OPENGFX3D_NEWGRF_FILES})
+
     foreach(OPENGFX3D_SOURCE_FILE IN LISTS OPENGFX3D_SOURCE_FILES)
         string(REPLACE "${CMAKE_SOURCE_DIR}/bin/" "" OPENGFX3D_SOURCE_FILE_NAME "${OPENGFX3D_SOURCE_FILE}")
+        string(REPLACE "opengfx3d/newgrf/" "newgrf/" OPENGFX3D_SOURCE_FILE_NAME "${OPENGFX3D_SOURCE_FILE_NAME}")
         string(CONCAT OPENGFX3D_BINARY_FILE "${CMAKE_BINARY_DIR}/" "${OPENGFX3D_SOURCE_FILE_NAME}")
 
         add_custom_command(OUTPUT ${OPENGFX3D_BINARY_FILE}

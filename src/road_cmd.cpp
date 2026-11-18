@@ -70,7 +70,7 @@ void ResetRoadTypes()
 
 	_roadtypes_hidden_mask = {};
 	_roadtypes_road = {ROADTYPE_ROAD, ROADTYPE_TROLLEY};
-	_roadtypes_tram = {ROADTYPE_TRAM};
+	_roadtypes_tram = {ROADTYPE_TRAM, ROADTYPE_HORSE_TRAM, ROADTYPE_TRAM_RESERVED};
 }
 
 void ResolveRoadTypeGUISprites(RoadTypeInfo *rti)

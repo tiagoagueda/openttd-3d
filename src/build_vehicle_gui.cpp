@@ -8,6 +8,7 @@
 /** @file build_vehicle_gui.cpp GUI for building vehicles. */
 
 #include "stdafx.h"
+#include "road_func.h"
 #include "engine_base.h"
 #include "engine_func.h"
 #include "station_base.h"
@@ -1532,6 +1533,7 @@ struct BuildVehicleWindow : Window {
 			EngineID eid = e->index;
 			if (!IsEngineBuildable(eid, VehicleType::Road, _local_company)) continue;
 			if (this->filter.roadtype != INVALID_ROADTYPE && !HasPowerOnRoad(e->VehInfo<RoadVehicleInfo>().roadtype, this->filter.roadtype)) continue;
+			if (this->filter.roadtype != INVALID_ROADTYPE && this->listview_mode == false && !RoadDepotTakesRoadType(this->filter.roadtype, e->VehInfo<RoadVehicleInfo>().roadtype)) continue;
 			if (!bdf.Filter(e->badges)) continue;
 
 			/* Filter by name or NewGRF extra text */

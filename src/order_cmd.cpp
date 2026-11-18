@@ -8,6 +8,7 @@
 /** @file order_cmd.cpp Handling of orders. */
 
 #include "stdafx.h"
+#include "road_func.h"
 #include "debug.h"
 #include "command_func.h"
 #include "company_func.h"
@@ -719,7 +720,7 @@ CommandCost CmdInsertOrder(DoCommandFlags flags, VehicleID veh, VehicleOrderID s
 							break;
 
 						case VehicleType::Road:
-							if (!IsRoadDepotTile(dp->xy)) return CMD_ERROR;
+							if (!IsRoadDepotTile(dp->xy) || !RoadDepotTakesVehicle(dp->xy, RoadVehicle::From(v)->roadtype)) return CMD_ERROR;
 							break;
 
 						case VehicleType::Ship:

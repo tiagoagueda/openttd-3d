@@ -8,6 +8,7 @@
 /** @file roadveh_cmd.cpp Handling of road vehicles. */
 
 #include "stdafx.h"
+#include "road_func.h"
 #include "bridge.h"
 #include "roadveh.h"
 #include "command_func.h"
@@ -271,6 +272,8 @@ CommandCost CmdBuildRoadVehicle(DoCommandFlags flags, TileIndex tile, const Engi
 	RoadType rt = e->VehInfo<RoadVehicleInfo>().roadtype;
 	const RoadTypeInfo *rti = GetRoadTypeInfo(rt);
 	if (!HasTileAnyRoadType(tile, rti->powered_roadtypes)) return CommandCost(STR_ERROR_DEPOT_WRONG_DEPOT_TYPE);
+	/* Trolleybuses only in trolleybus depots, and no other road vehicles there. */
+	if (!RoadDepotTakesVehicle(tile, rt)) return CommandCost(STR_ERROR_DEPOT_WRONG_DEPOT_TYPE);
 
 	if (flags.Test(DoCommandFlag::Execute)) {
 		const RoadVehicleInfo *rvi = &e->VehInfo<RoadVehicleInfo>();
@@ -897,8 +900,8 @@ static Trackdir RoadFindPathToDest(RoadVehicle *v, TileIndex tile, DiagDirection
 	};
 
 	if (IsTileType(tile, TileType::Road)) {
-		if (IsRoadDepot(tile) && (!IsTileOwner(tile, v->owner) || GetRoadDepotDirection(tile) == enterdir)) {
-			/* Road depot owned by another company or with the wrong orientation */
+		if (IsRoadDepot(tile) && (!IsTileOwner(tile, v->owner) || GetRoadDepotDirection(tile) == enterdir || !RoadDepotTakesVehicle(tile, v->roadtype))) {
+			/* Road depot owned by another company, with the wrong orientation, or for other vehicles (trolleybuses) */
 			ts.trackdirs.Reset();
 		}
 	} else if (IsTileType(tile, TileType::Station) && IsBayRoadStopTile(tile)) {

@@ -527,6 +527,16 @@ static bool HasBaseRoadLook(RoadType rt)
 }
 
 /**
+ * Whether a tram type looks like the tram track of the base game, so the 3D view lays its rails as models.
+ * @param rt The tram type.
+ * @return True for the built-in tram types: street, horse and reserved tramway.
+ */
+static bool HasBaseTramLook(RoadType rt)
+{
+	return rt == ROADTYPE_TRAM || rt == ROADTYPE_HORSE_TRAM || rt == ROADTYPE_TRAM_RESERVED;
+}
+
+/**
  * Whether a tile is a bus or lorry stop of the base game on normal road, whose ground the 3D view makes itself.
  * @param tile The tile.
  * @return True for such a stop.
@@ -1306,8 +1316,9 @@ static void AddBridgeLoad(TileIndex head, const std::array<float, 3> &a, const s
 			for (RoadTramType rtt : {RoadTramType::Road, RoadTramType::Tram}) {
 				RoadType rt = GetRoadType(head, rtt);
 				if (rt != INVALID_ROADTYPE && HasRoadCatenaryDrawn(rt)) {
-					const ModelPack::Entry *pair = pack.Find(ModelKind::Catenary, 0, 10);
-					add(GetRoadCatenaryStyle(rt) == CatenaryStyle::Pair && pair != nullptr ? pair : pack.Find(ModelKind::Catenary, 0, 2));
+					/* Trolleybus wire pairs or tram contact wires over both lanes; older packages only have the rail wire. */
+					const ModelPack::Entry *lanes = pack.Find(ModelKind::Catenary, 0, GetRoadCatenaryStyle(rt) == CatenaryStyle::Pair ? 10 : 11);
+					add(lanes != nullptr ? lanes : pack.Find(ModelKind::Catenary, 0, 2));
 				}
 			}
 			break;
@@ -1661,7 +1672,10 @@ static bool AddTileModel(TileIndex tile, const ModelPack &pack, std::vector<Mode
 		case TileType::Road: {
 			if (IsLevelCrossing(tile)) return AddCrossingModel(tile, pack, models);
 			if (!IsRoadDepot(tile)) return false;
-			const ModelPack::Entry *entry = pack.Find(ModelKind::RoadDepot, 0, 0);
+			/* Tram sheds and trolleybus garages have models of their own (ids 2 and 1); older packages only have the garage. */
+			uint16_t depot_id = HasRoadTypeTram(tile) ? 2 : (IsTrolleyRoadType(GetRoadTypeRoad(tile)) ? 1 : 0);
+			const ModelPack::Entry *entry = pack.Find(ModelKind::RoadDepot, 0, depot_id);
+			if (entry == nullptr) entry = pack.Find(ModelKind::RoadDepot, 0, 0);
 			if (entry == nullptr) return false;
 			PlaceModel(*entry, tile, 1, 1, GetRoadDepotDirection(tile), GetOwnerTint(GetTileOwner(tile)), models);
 			return true;
@@ -2016,7 +2030,7 @@ static bool GetGroundPattern(TileIndex tile, Slope slope, const ModelPack *pack,
 		if (HasRoadWorks(tile) || GetDisallowedRoadDirections(tile).Any()) return false;
 		if (HasRoadTypeRoad(tile) && !HasBaseRoadLook(GetRoadTypeRoad(tile))) return false;
 		RoadBits tram = HasRoadTypeTram(tile) ? GetRoadBits(tile, RoadTramType::Tram) : RoadBits{};
-		if (tram.Any() && (pack->Find(ModelKind::Roadside, 0, 4) == nullptr || GetRoadTypeTram(tile) != ROADTYPE_TRAM)) return false;
+		if (tram.Any() && (pack->Find(ModelKind::Roadside, 0, 4) == nullptr || !HasBaseTramLook(GetRoadTypeTram(tile)))) return false;
 		Roadside roadside = GetRoadside(tile);
 		bool paved = roadside == Roadside::Paved || roadside == Roadside::StreetLights || roadside == Roadside::Trees;
 		RoadBits road = HasRoadTypeRoad(tile) ? GetRoadBits(tile, RoadTramType::Road) : RoadBits{};

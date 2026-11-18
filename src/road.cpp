@@ -261,6 +261,18 @@ RoadTypes GetRoadTypes(bool introduces)
  * @param allow_alternate_labels Search in the alternate label lists as well.
  * @return the roadtype.
  */
+/**
+ * Whether a road depot builds and services vehicles of a road type; see RoadDepotTakesRoadType().
+ * @param depot The road depot tile.
+ * @param vehicle_type The road type of the vehicle.
+ * @return \c true if the depot takes the vehicle.
+ */
+bool RoadDepotTakesVehicle(TileIndex depot, RoadType vehicle_type)
+{
+	RoadType depot_type = GetRoadType(depot, GetRoadTramType(vehicle_type));
+	return depot_type != INVALID_ROADTYPE && RoadDepotTakesRoadType(depot_type, vehicle_type);
+}
+
 RoadType GetRoadTypeByLabel(RoadTypeLabel label, bool allow_alternate_labels)
 {
 	extern RoadTypeInfo _roadtypes[ROADTYPE_END];

@@ -137,8 +137,8 @@ static const RoadTypeInfo _original_roadtypes[] = {
 			{ STR_STATION_BUILD_PASSENGER_TRAM_ORIENTATION_TOOLTIP, STR_STATION_BUILD_CARGO_TRAM_ORIENTATION_TOOLTIP },
 		},
 
-		/* Powered roadtypes */
-		{ROADTYPE_TRAM},
+		/* Powered roadtypes: electric trams run on street and reserved track */
+		{ROADTYPE_TRAM, ROADTYPE_TRAM_RESERVED},
 
 		/* flags */
 		{RoadTypeFlag::Catenary, RoadTypeFlag::NoHouses},
@@ -149,8 +149,8 @@ static const RoadTypeInfo _original_roadtypes[] = {
 		/* maintenance cost multiplier */
 		24,
 
-		/* max speed */
-		0,
+		/* max speed: 60 km/h in the street */
+		120,
 
 		/* road type label */
 		ROADTYPE_LABEL_TRAM,
@@ -253,6 +253,168 @@ static const RoadTypeInfo _original_roadtypes[] = {
 
 		/* sort order */
 		0x0B,
+
+		{ nullptr },
+		{ nullptr },
+		{},
+	},
+
+	/* Horse tramway: tram track without wires */
+	{
+		/* GUI sprites */
+		{
+			SPR_IMG_TRAMWAY_X_DIR,
+			SPR_IMG_TRAMWAY_Y_DIR,
+			SPR_IMG_AUTOTRAM,
+			SPR_IMG_ROAD_DEPOT,
+			SPR_IMG_ROAD_TUNNEL,
+			SPR_IMG_CONVERT_TRAM,
+		},
+
+		{
+			SPR_CURSOR_TRAMWAY_NESW,
+			SPR_CURSOR_TRAMWAY_NWSE,
+			SPR_CURSOR_AUTOTRAM,
+			SPR_CURSOR_ROAD_DEPOT,
+			SPR_CURSOR_ROAD_TUNNEL,
+			SPR_CURSOR_CONVERT_TRAM,
+		},
+
+		/* strings */
+		{
+			STR_ROAD_NAME_HORSE_TRAM,
+			STR_ROAD_TOOLBAR_HORSE_TRAM_CONSTRUCTION_CAPTION,
+			STR_ROAD_MENU_HORSE_TRAM_CONSTRUCTION,
+			STR_BUY_VEHICLE_TRAM_VEHICLE_CAPTION,
+			STR_REPLACE_TRAM_VEHICLES,
+			STR_ENGINE_PREVIEW_TRAM_VEHICLE,
+
+			STR_ERROR_CAN_T_BUILD_TRAMWAY_HERE,
+			STR_ERROR_CAN_T_REMOVE_TRAMWAY_FROM,
+			STR_ERROR_CAN_T_BUILD_TRAM_DEPOT,
+			{ STR_ERROR_CAN_T_BUILD_PASSENGER_TRAM_STATION,         STR_ERROR_CAN_T_BUILD_CARGO_TRAM_STATION },
+			{ STR_ERROR_CAN_T_REMOVE_PASSENGER_TRAM_STATION,        STR_ERROR_CAN_T_REMOVE_CARGO_TRAM_STATION },
+			STR_ERROR_CAN_T_CONVERT_TRAMWAY,
+			{ STR_STATION_BUILD_PASSENGER_TRAM_ORIENTATION,         STR_STATION_BUILD_CARGO_TRAM_ORIENTATION },
+			{ STR_STATION_BUILD_PASSENGER_TRAM_ORIENTATION_TOOLTIP, STR_STATION_BUILD_CARGO_TRAM_ORIENTATION_TOOLTIP },
+		},
+
+		/* Powered roadtypes: horses pull trams on any tram track */
+		{ROADTYPE_HORSE_TRAM, ROADTYPE_TRAM, ROADTYPE_TRAM_RESERVED},
+
+		/* flags */
+		{RoadTypeFlag::NoHouses},
+
+		/* cost multiplier: rails without wires */
+		12,
+
+		/* maintenance cost multiplier */
+		18,
+
+		/* max speed */
+		0,
+
+		/* road type label */
+		ROADTYPE_LABEL_HORSE_TRAM,
+
+		/* alternate labels */
+		{},
+
+		/* map colour */
+		PC_BLACK,
+
+		/* introduction date */
+		CalendarTime::INVALID_DATE,
+
+		/* roadtypes required for this to be introduced */
+		{},
+
+		/* introduction road types */
+		{ROADTYPE_HORSE_TRAM},
+
+		/* sort order */
+		0x13,
+
+		{ nullptr },
+		{ nullptr },
+		{},
+	},
+
+	/* Reserved tramway: electric tram track on its own bed */
+	{
+		/* GUI sprites */
+		{
+			SPR_IMG_TRAMWAY_X_DIR,
+			SPR_IMG_TRAMWAY_Y_DIR,
+			SPR_IMG_AUTOTRAM,
+			SPR_IMG_ROAD_DEPOT,
+			SPR_IMG_ROAD_TUNNEL,
+			SPR_IMG_CONVERT_TRAM,
+		},
+
+		{
+			SPR_CURSOR_TRAMWAY_NESW,
+			SPR_CURSOR_TRAMWAY_NWSE,
+			SPR_CURSOR_AUTOTRAM,
+			SPR_CURSOR_ROAD_DEPOT,
+			SPR_CURSOR_ROAD_TUNNEL,
+			SPR_CURSOR_CONVERT_TRAM,
+		},
+
+		/* strings */
+		{
+			STR_ROAD_NAME_TRAM_RESERVED,
+			STR_ROAD_TOOLBAR_TRAM_RESERVED_CONSTRUCTION_CAPTION,
+			STR_ROAD_MENU_TRAM_RESERVED_CONSTRUCTION,
+			STR_BUY_VEHICLE_TRAM_VEHICLE_CAPTION,
+			STR_REPLACE_TRAM_VEHICLES,
+			STR_ENGINE_PREVIEW_TRAM_VEHICLE,
+
+			STR_ERROR_CAN_T_BUILD_TRAMWAY_HERE,
+			STR_ERROR_CAN_T_REMOVE_TRAMWAY_FROM,
+			STR_ERROR_CAN_T_BUILD_TRAM_DEPOT,
+			{ STR_ERROR_CAN_T_BUILD_PASSENGER_TRAM_STATION,         STR_ERROR_CAN_T_BUILD_CARGO_TRAM_STATION },
+			{ STR_ERROR_CAN_T_REMOVE_PASSENGER_TRAM_STATION,        STR_ERROR_CAN_T_REMOVE_CARGO_TRAM_STATION },
+			STR_ERROR_CAN_T_CONVERT_TRAMWAY,
+			{ STR_STATION_BUILD_PASSENGER_TRAM_ORIENTATION,         STR_STATION_BUILD_CARGO_TRAM_ORIENTATION },
+			{ STR_STATION_BUILD_PASSENGER_TRAM_ORIENTATION_TOOLTIP, STR_STATION_BUILD_CARGO_TRAM_ORIENTATION_TOOLTIP },
+		},
+
+		/* Powered roadtypes */
+		{ROADTYPE_TRAM, ROADTYPE_TRAM_RESERVED},
+
+		/* flags */
+		{RoadTypeFlag::Catenary, RoadTypeFlag::NoHouses},
+
+		/* cost multiplier: 1.2 times street track */
+		19,
+
+		/* maintenance cost multiplier */
+		28,
+
+		/* max speed: 80 km/h on its own bed */
+		160,
+
+		/* road type label */
+		ROADTYPE_LABEL_TRAM_RESERVED,
+
+		/* alternate labels */
+		{},
+
+		/* map colour */
+		PC_BLACK,
+
+		/* introduction date: reserved track comes to companies that run electric trams */
+		TimerGameCalendar::DateAtStartOfYear(TimerGameCalendar::Year{1920}),
+
+		/* roadtypes required for this to be introduced */
+		{ROADTYPE_TRAM},
+
+		/* introduction road types */
+		{ROADTYPE_TRAM_RESERVED},
+
+		/* sort order */
+		0x1B,
 
 		{ nullptr },
 		{ nullptr },

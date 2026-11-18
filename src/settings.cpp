@@ -1384,6 +1384,37 @@ bool IsConversionNeeded(const ConfigIniFile &ini, const std::string &group, cons
 	return true;
 }
 
+/** Fork: file name of the built-in trams and trolleybuses (OpenGFX3D, NewGRF ID OG3T) in the newgrf folder. */
+static const std::string_view FORK_TRAMS_GRF = "opengfx3d_trams.grf";
+/** Fork: name of the config item that records the built-in trams were added to the NewGRFs of new games once. */
+static const std::string_view FORK_TRAMS_GRF_ADDED = "trams_newgrf_added";
+/** Fork: whether the built-in trams were added to the NewGRFs of new games, now or in an earlier run. */
+static bool _fork_trams_grf_added = false;
+
+/**
+ * Fork: add the built-in trams and trolleybuses to the NewGRFs of new games, once per config file.
+ * After that the player decides in the NewGRF settings, as for any NewGRF; removing it there sticks.
+ * @param ini The generic config, before its "newgrf" group is read.
+ */
+static void ForkAddTramsNewGRF(IniFile &ini)
+{
+	const IniGroup *fork = ini.GetGroup("fork");
+	if (fork != nullptr && fork->GetItem(FORK_TRAMS_GRF_ADDED) != nullptr) {
+		_fork_trams_grf_added = true;
+		return;
+	}
+	if (!FioCheckFileExists(std::string(FORK_TRAMS_GRF), Subdirectory::NewGrf)) return;
+
+	IniGroup &newgrf = ini.GetOrCreateGroup("newgrf");
+	bool present = false;
+	for (const IniItem &item : newgrf.items) {
+		if (item.name.ends_with(FORK_TRAMS_GRF)) present = true;
+	}
+	if (!present) newgrf.GetOrCreateItem(FORK_TRAMS_GRF);
+	_fork_trams_grf_added = true;
+}
+
+
 /**
  * Load the values from the configuration files
  * @param startup Load the minimal amount of the configuration to "bootstrap" the blitter and such.
@@ -1466,6 +1497,7 @@ void LoadFromConfig(bool startup)
 			_settings_client.gui.default_rail_road_type = static_cast<DefaultRailRoadType>(old_value.value_or(0));
 		}
 
+		ForkAddTramsNewGRF(generic_ini);
 		_grfconfig_newgame = GRFLoadConfig(generic_ini, "newgrf", false);
 		_grfconfig_static  = GRFLoadConfig(generic_ini, "newgrf-static", true);
 		AILoadConfig(generic_ini, "ai_players");
@@ -1542,6 +1574,7 @@ void SaveToConfig()
 	GraphicsSetSaveConfig(generic_ini);
 	GRFSaveConfig(generic_ini, "newgrf", _grfconfig_newgame);
 	GRFSaveConfig(generic_ini, "newgrf-static", _grfconfig_static);
+	if (_fork_trams_grf_added) generic_ini.GetOrCreateGroup("fork").GetOrCreateItem(FORK_TRAMS_GRF_ADDED).SetValue("true");
 	AISaveConfig(generic_ini, "ai_players");
 	GameSaveConfig(generic_ini, "game_scripts");
 	PickerSaveConfig(favs_ini);

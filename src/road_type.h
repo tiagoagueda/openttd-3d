@@ -18,6 +18,8 @@ using RoadTypeLabel = Label<struct RoadTypeLabelTag>;
 static const RoadTypeLabel ROADTYPE_LABEL_ROAD{"ROAD"};
 static const RoadTypeLabel ROADTYPE_LABEL_TRAM{"ELRL"};
 static const RoadTypeLabel ROADTYPE_LABEL_TROLLEY{"ELRD"}; ///< Electrified road for trolleybuses, the label NewGRF road type sets use.
+static const RoadTypeLabel ROADTYPE_LABEL_HORSE_TRAM{"RAIL"}; ///< Tram track without wires, the label NewGRF tram type sets use.
+static const RoadTypeLabel ROADTYPE_LABEL_TRAM_RESERVED{"ELRR"}; ///< Electric tram track on its own bed, beside or away from roads.
 
 /**
  * The different roadtypes we support
@@ -27,6 +29,8 @@ enum RoadType : uint8_t {
 	ROADTYPE_ROAD    = 0,    ///< Basic road type
 	ROADTYPE_TRAM    = 1,    ///< Trams
 	ROADTYPE_TROLLEY = 2,    ///< Electrified road with trolleybus wires
+	ROADTYPE_HORSE_TRAM = 3, ///< Tram track without wires, for horse trams
+	ROADTYPE_TRAM_RESERVED = 4, ///< Electric tram track on its own bed, faster than street track
 	ROADTYPE_END     = 63,   ///< Used for iterations
 	INVALID_ROADTYPE = 63,   ///< flag for invalid roadtype
 };

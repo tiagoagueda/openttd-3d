@@ -13,6 +13,7 @@
 #include "../bridge.h"
 #include "../pbs.h"
 #include "../roadveh.h"
+#include "../road_func.h"
 #include "../station_base.h"
 #include "../train.h"
 #include "../tunnelbridge.h"
@@ -329,6 +330,11 @@ protected:
 			/* don't try to enter other company's depots */
 			if (GetTileOwner(this->new_tile) != this->veh_owner) {
 				this->err = ErrorCode::Owner;
+				return false;
+			}
+			/* nor depots for other vehicles: trolleybuses use trolleybus depots only, and only they do */
+			if (!RoadDepotTakesVehicle(this->new_tile, RoadVehicle::From(this->veh)->roadtype)) {
+				this->err = ErrorCode::NoWay;
 				return false;
 			}
 		}

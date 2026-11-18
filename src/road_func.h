@@ -142,6 +142,32 @@ inline CatenaryStyle GetRoadCatenaryStyle(RoadType roadtype)
 }
 
 /**
+ * Whether a road type carries trolleybus wires.
+ * @param roadtype Road type to test.
+ * @return \c true for electrified road.
+ */
+inline bool IsTrolleyRoadType(RoadType roadtype)
+{
+	return GetRoadCatenaryStyle(roadtype) == CatenaryStyle::Pair;
+}
+
+/**
+ * Whether a road depot of one road type builds and services vehicles of another.
+ * A road depot on electrified road is a trolleybus depot: it takes trolleybuses only, and a road depot
+ * on other road takes no trolleybuses. Tram depots take every tram that can reach them.
+ * @param depot_type The road type of the depot, of the vehicle's half of the road.
+ * @param vehicle_type The road type of the vehicle.
+ * @return \c true if the depot takes the vehicle.
+ */
+inline bool RoadDepotTakesRoadType(RoadType depot_type, RoadType vehicle_type)
+{
+	if (RoadTypeIsTram(vehicle_type)) return true;
+	return IsTrolleyRoadType(depot_type) == IsTrolleyRoadType(vehicle_type);
+}
+
+bool RoadDepotTakesVehicle(TileIndex depot, RoadType vehicle_type);
+
+/**
  * Test if we should draw road catenary
  * @param roadtype Road type to test
  * @return \c true iff the road should have catenary and catenary is visible.
