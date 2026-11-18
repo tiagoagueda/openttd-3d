@@ -14,6 +14,7 @@
 #include "../tile_type.h"
 #include "../direction_type.h"
 #include "../rail_type.h"
+#include "../road_type.h"
 
 /** What a build tool is about to build, so the 3D view can show it before it is built. */
 struct View3DPreview {
@@ -26,6 +27,8 @@ struct View3DPreview {
 		PowerPylon, ///< A power line pylon.
 		PowerSubstation, ///< An overhead power substation.
 		PowerLine, ///< An overhead power line from #start to #end.
+		Track, ///< Pieces of track of type #rail, where the 2D views show the autorail selection.
+		Road, ///< Road or tram pieces along #axis; #road_bits on a single tile.
 	};
 	Kind kind = Kind::None; ///< What is about to be built.
 	DiagDirection direction = DiagDirection::NE; ///< Which way it faces.
@@ -34,6 +37,10 @@ struct View3DPreview {
 	bool drive_through = false; ///< For road stops: a drive-through stop rather than a bay.
 	TileIndex start = INVALID_TILE; ///< For power lines: where the line starts.
 	TileIndex end = INVALID_TILE; ///< For power lines: where the line ends.
+	bool remove = false; ///< For track and road: the tool removes rather than builds.
+	bool tram = false; ///< For road: tram track rather than road.
+	RailType rail = INVALID_RAILTYPE; ///< For track: the track type.
+	RoadBits road_bits{}; ///< For road: the pieces on a single selected tile; longer selections get whole pieces along #axis.
 };
 
 /** A picture of something that can be built, for the buttons of construction windows. */

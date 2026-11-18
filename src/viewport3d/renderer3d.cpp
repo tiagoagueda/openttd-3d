@@ -159,6 +159,7 @@ struct Renderer3D::Impl {
 	Weather3D weather; ///< The weather and season to draw.
 	bgfx::UniformHandle weather_params = BGFX_INVALID_HANDLE; ///< Snow on the ground, wet ground, clouds and lightning.
 	bgfx::UniformHandle season_params = BGFX_INVALID_HANDLE; ///< How far the year is, for leaves and grass.
+	bgfx::UniformHandle snow_height = BGFX_INVALID_HANDLE; ///< How snow depends on the height of the ground.
 	bgfx::ProgramHandle drop_program = BGFX_INVALID_HANDLE; ///< Draws rain and snow.
 	bgfx::VertexLayout drop_layout;
 	bgfx::VertexBufferHandle drop_vertices = BGFX_INVALID_HANDLE; ///< The drops in their cube.
@@ -335,6 +336,7 @@ static bgfx::ShaderHandle CreateShader(const ShaderVariants &variants)
 	/* Rain and snow: drops at made-up places in a cube, four corners each. */
 	impl.weather_params = bgfx::createUniform("u_weather", bgfx::UniformType::Vec4);
 	impl.season_params = bgfx::createUniform("u_season", bgfx::UniformType::Vec4);
+	impl.snow_height = bgfx::createUniform("u_snowHeight", bgfx::UniformType::Vec4);
 	impl.drop_box = bgfx::createUniform("u_dropBox", bgfx::UniformType::Vec4);
 	impl.drop_move = bgfx::createUniform("u_dropMove", bgfx::UniformType::Vec4);
 	impl.drop_shape = bgfx::createUniform("u_dropShape", bgfx::UniformType::Vec4);
@@ -442,7 +444,7 @@ Renderer3D::~Renderer3D()
 	for (bgfx::UniformHandle handle : {impl.haze_colour, impl.haze_params, impl.water, impl.sky_matrix, impl.sky_colour, impl.terrain, impl.terrain_sampler, impl.mix_sampler, impl.layers}) {
 		if (bgfx::isValid(handle)) bgfx::destroy(handle);
 	}
-	for (bgfx::UniformHandle handle : {impl.weather_params, impl.season_params, impl.drop_box, impl.drop_move, impl.drop_shape, impl.drop_fall, impl.drop_look, impl.drop_colour}) {
+	for (bgfx::UniformHandle handle : {impl.weather_params, impl.season_params, impl.snow_height, impl.drop_box, impl.drop_move, impl.drop_shape, impl.drop_fall, impl.drop_look, impl.drop_colour}) {
 		if (bgfx::isValid(handle)) bgfx::destroy(handle);
 	}
 	if (bgfx::isValid(impl.drop_program)) bgfx::destroy(impl.drop_program);
@@ -874,7 +876,7 @@ static ShadowView GetShadowView(const Camera3D &camera, Vec3 sun, bool homogeneo
  * @param sprites Sprites to draw that are in no chunk, such as vehicles; four vertices per sprite.
  * @param models 3D models to draw.
  */
-void Renderer3D::Render(uint target_id, uint width, uint height, const Camera3D &camera, std::span<const ChunkID> chunks, std::span<const SpriteVertex> sprites, std::span<const ModelInstance> models)
+void Renderer3D::Render(uint target_id, uint width, uint height, const Camera3D &camera, std::span<const ChunkID> chunks, std::span<const SpriteVertex> sprites, std::span<const ModelInstance> models, std::span<const TerrainVertex> moving_water)
 {
 	assert(!this->pending);
 	Impl &impl = *this->impl;
@@ -1016,6 +1018,8 @@ void Renderer3D::Render(uint target_id, uint width, uint height, const Camera3D 
 		Lerp(0.85f, 0.97f, mist), 0};
 	const float weather_params[4] = {weather.cover, weather.wet, weather.overcast, weather.flash};
 	const float season_params[4] = {weather.autumn, weather.bare, weather.spring, weather.dry};
+	/* More snow lies higher up; in the depth of winter the highest ground is white even without snow below. */
+	const float snow_height[4] = {weather.peak, std::clamp(0.6f * weather.bare + 0.4f * weather.cover, 0.0f, 0.65f), 1.0f / HEIGHT_LEVEL_SIZE, 0};
 	bgfx::setUniform(impl.haze_colour, haze_colour);
 	bgfx::setUniform(impl.haze_params, haze_params);
 	const float water[4] = {static_cast<float>(GROUND_TEXTURE_WATER), static_cast<float>(GROUND_TEXTURE_SHORE), static_cast<float>(GROUND_TEXTURE_SHORE + 18),
@@ -1036,6 +1040,7 @@ void Renderer3D::Render(uint target_id, uint width, uint height, const Camera3D 
 		bgfx::setUniform(impl.haze_params, haze_params);
 		bgfx::setUniform(impl.weather_params, weather_params);
 		bgfx::setUniform(impl.season_params, season_params);
+		bgfx::setUniform(impl.snow_height, snow_height);
 		bgfx::setUniform(impl.water, water);
 		bgfx::setUniform(impl.terrain, terrain);
 		bgfx::setUniform(impl.layers, layers);
@@ -1207,6 +1212,23 @@ void Renderer3D::Render(uint target_id, uint width, uint height, const Camera3D 
 		bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A | BGFX_STATE_WRITE_Z | BGFX_STATE_DEPTH_TEST_LESS);
 		bgfx::submit(VIEW_SCENE, impl.sprite_program);
 		cast_sprites([&]() { bgfx::setVertexBuffer(0, &buffer); }, num_sprites);
+	}
+
+	uint32_t num_water = static_cast<uint32_t>(std::min<size_t>(moving_water.size() / 4, MAX_CHUNK_QUADS));
+	if (num_water != 0 && bgfx::getAvailTransientVertexBuffer(num_water * 4, impl.layout) >= num_water * 4) {
+		/* Water that moves, such as in the chambers of locks; see-through like the water over coasts. */
+		bgfx::TransientVertexBuffer buffer;
+		bgfx::allocTransientVertexBuffer(&buffer, num_water * 4, impl.layout);
+		std::copy_n(reinterpret_cast<const uint8_t *>(moving_water.data()), num_water * 4 * sizeof(TerrainVertex), buffer.data);
+		bgfx::setTransform(model.m.data());
+		bgfx::setVertexBuffer(0, &buffer);
+		bgfx::setTexture(0, impl.ground_sampler, impl.ground_textures);
+		bgfx::setTexture(2, impl.terrain_sampler, terrain_textures ? impl.terrain_textures : impl.ground_textures);
+		bgfx::setTexture(3, impl.mix_sampler, bgfx::isValid(impl.ground_mix) ? impl.ground_mix : impl.ground_textures);
+		bgfx::setIndexBuffer(impl.quad_indices, 0, num_water * 6);
+		set_scene();
+		bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_DEPTH_TEST_LESS | BGFX_STATE_BLEND_FUNC_SEPARATE(BGFX_STATE_BLEND_SRC_ALPHA, BGFX_STATE_BLEND_INV_SRC_ALPHA, BGFX_STATE_BLEND_ZERO, BGFX_STATE_BLEND_ONE));
+		bgfx::submit(VIEW_SCENE, impl.program);
 	}
 
 	for (const ModelInstance &instance : models) draw_model(instance);

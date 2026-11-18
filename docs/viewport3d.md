@@ -43,6 +43,12 @@ Zooming and turning glide rather than jump, and the camera follows the height of
 Pick a tool from the toolbars of the game as usual, then click or drag in the 3D view.
 The tile selection of the tool is shown in both the 2D and the 3D view.
 While placing a train or road vehicle depot, a rail station or a road stop of the default class, the 3D view also shows a see-through model of it on the selected tiles (`GetRailToolPreview()` in `rail_gui.cpp`, `GetRoadToolPreview()` in `road_gui.cpp`, `AddPreviewModel()` in `terrain_mesh.cpp`).
+The tools that build along lines show what they are about to build the same way, like the 2D views do with their track pieces under the cursor:
+
+* The rail tools (the four track directions and autorail) put a see-through piece of track of the chosen type on each tile where the 2D views draw the autorail selection, while hovering and while dragging (`AddTrackPreviewModel()`). `GetTileMark()` in `viewport.cpp` also tells which piece that is; such tiles get no plate, as the piece shows the place, except a red one where the piece cannot be built on the slope. NewGRF track types show normal track.
+* The road and tram tools (road along x or y, and autoroad) put see-through pieces of road, or of tram rails, along the drag; on a single tile only the half that a click there builds (`AddRoadPreviewModel()`, `interface` model 6 for road, `roadside` model 4 for tram rails). In remove mode the road is red.
+
+Both lie on the foundation the piece would get (`GetRailFoundation()`, `GetRoadFoundation()`), a little above the ground, so a piece over existing track or road still shows.
 
 Changes to the map, such as terraforming, show up in the 3D view right away.
 
@@ -109,6 +115,12 @@ Rivers that run down into the sea are handled the same way, and the open sea is 
 Flat river tiles above sea level (`AddRiverBed()`) are a bed below the land with banks that slope down from every side where there is land, with see-through water a little below the land over them; the same shader shows the bed through the shallow water at the banks.
 River tiles on a slope get the same bed and banks, following the slope, and their water is rapids: the marker layer of the water (`GROUND_TEXTURE_RAPIDS` plus 0 to 3, from `GetRapidsFlow()`) says which way it flows, and `Rapids()` in `fs_terrain.sc` streaks it white with foam that races downhill, smooth at the lip and churning at the foot. The flat river tile below rapids (`GROUND_TEXTURE_RAPIDS_FOOT` plus the direction they come from) gets the foam carried on into it, fading out within half a tile. Without ground textures in the model package, the shader finds sloped water from how its height changes across the screen and draws the same rapids over the water sprite. This is looks only; the river itself is unchanged.
 
+Where a river runs down into the sea, its last sloped tile is rapids as well (`IsShoreSlope()` leaves river tiles out): the water ends at sea level at the lower edge, a curtain of water closes the bed off below the sea, and the sea tile below gets the foam of the foot of the rapids as a see-through quad over it.
+
+Canals (`AddCanalBed()`, with ground textures from the model package) lie between walls of masonry: along each side without water at the same height a wall goes from the bed, half a height level below the water, to a coping a tenth of a level above the land, set a tenth of a tile into the tile; inner corners get a short pillar. The water is see-through enough to make out the bed. Buoys in a canal stand in such water too.
+
+Canal locks (`lock3d.cpp`) fill and empty for the ships that pass them. Ships are longer than a tile, so the three tiles of a lock are one chamber with high walls all along (models `lock` 0 to 2), the lower gates at the outer end of the lower part and the upper gates, on a sill, at the outer end of the upper part. The gate leaves are models of their own (`lock` 3 lower, 4 upper), turned around their hinges for every image, and the water in the chamber is drawn for every image too, as see-through water passed to `Renderer3D::Render()`. A ship that comes towards a lock has it made ready: the far gates close, the chamber fills or empties, the near gates open. While the middle of the ship is in the chamber its gates close behind it, the water takes it up or down (`GetLockShipHeight()` draws the ship on that water) and the gates ahead open. Without ships a lock stays as the last one left it. This is looks only: the game moves ships as before. Test: `test-scripts/CanalTest` (with `canal.cfg`) builds a lock with canals, a depot, buoys and a ship, and logs river mouths.
+
 Plain landscape tiles are handled directly. For every other tile, `CollectTileSprites()` lets the tile draw itself the way it does for a 2D viewport and keeps the list of sprites instead of drawing them.
 The sprites the 2D game draws flat on the ground, such as tracks and roads, are pulled straight into a ground texture for that combination of sprites; these textures are made on demand, up to 1024 of them.
 Every sprite with a bounding box, with the sprites drawn along with it, becomes one upright sprite that stands in the middle of that box.
@@ -152,7 +164,7 @@ Smoke, steam and sparks (effect vehicles) are drawn as see-through 3D puffs (`ef
 
 Disasters (zeppelin, UFOs, planes, helicopter and its rotor, submarines) have models by disaster vehicle type (`disaster`, `AddDisasterModel()`); rotors and UFOs spin. Their shadows are left out, like those of aircraft.
 
-Houses and industries that are still being built show building sites (`construction`): one model per stage of the work and size of the plot, with scaffolding, walls and timbers that grow from stage to stage. Base-game rail and road waypoints (`waypoint`) and canal locks (`lock`, by part) have models too.
+Houses and industries that are still being built show building sites (`construction`): one model per stage of the work and size of the plot, with scaffolding, walls and timbers that grow from stage to stage. Base-game rail and road waypoints (`waypoint`) and canal locks (`lock`, by part, and the leaves of their gates) have models too.
 
 The sky is one triangle behind everything (`vs_sky`, `fs_sky`), pale at the horizon and deeper blue above; terrain, sprites and models fade into the colour of the horizon with distance (`shaders/haze.sh`). Water moves with small waves, and foam washes along the edge of the water on coast tiles (`fs_terrain.sc`; `u_water` tells which ground textures are water and the time, `u_terrain` how the ground textures of the model package are used).
 
@@ -245,6 +257,18 @@ What glows at night goes by the name of the material in the model files, so the 
 | ends in `_on`, `_glow` or `ufo_light` | Glows without lighting the ground: signals, crossing lights, furnaces. |
 
 The patches of light are flat fans of triangles, made per model in `MakeLightPools()` in `renderer3d.cpp` and added to the picture after the model, just above the ground the model stands on. They do not follow slopes, and nothing is really lit by them: buildings next to a street lamp stay dark.
+
+## Life in towns
+
+These are looks only as well; nothing in the game changes and nothing is saved.
+
+* **Smoke from chimneys.** Models say where smoke rises: a list `smoke` in the `extras` of a node of the glTF file, each point the top of a chimney with its radius as a fourth number (`Model.smoke_at()` in OpenGFX3D). `PlaceModel()` in `terrain_mesh.cpp` turns each point into a moving part of kind `PartKind::Smoke`, and `PlaceSmoke()` puts a few puffs on it for every image: each rises, drifts with the wind of the weather, grows and fades, and starts over at the chimney. Puffs are the model of effect 0 (chimney smoke), see-through. Industries always smoke; of houses only some do, chosen by their place, more when it is cold or snowy (`PartScene::house_smoke`). The smoke the 2D game makes as effect vehicles is still drawn as well.
+* **Lighthouse.** Parts in the index can have `"night"`: such a part shows only after dusk, see-through by that much (`PartKind::Night`). The lighthouse has two beams of light that turn around its lamp; their material ends in `_glow`, so they shine.
+* **Street lamps.** Straight town streets with pavements and no lamps of the 2D game get a 3D street lamp on every tile, on alternate sides of the street at the kerb (`AddStreetLamps()`). Like other lamps they light up at night and cast a pool of light. `IsStreetLampPowered()` decides whether they get power; for now always. It is the place where the energy network can leave lamps dark in towns without power; they then use `roadside` model 5, a lamp that does not glow.
+* **People.** Straight stretches of pavement are found when a chunk is built (`AddWalkways()`, up to 16 tiles, ending at the edge of the chunk), with more people where more houses line the street. For every image, `Walkway::Place()` puts each person at a place that follows from the time: they walk up and down the stretch at their own pace, keep to the right and turn around at its ends. Each step shows one of four models (`pedestrian` 0 to 3, or 4 to 7 for people in a dress), and their clothes take a colour of their own through the colour of the owner. Fewer people are out at night and in rain, snow or fog, and none are drawn when the camera is far away.
+* **Snow and height.** More snow lies higher up (`SnowCover()` in `shaders/weather.sh`, used for the ground and for models): at five height levels lies the snow of the weather, at sea level half of it, and every level higher adds a tenth, up to more than twice as much. In winter the highest ground around (the top two fifths up to the highest height level of the chunks built so far, which counts as at least 16 levels) is white even when there is no snow below (`WithPeak()` in `view3d_gui.cpp`, `u_snowHeight`).
+
+All of these change by themselves, so while any is in view a new image is made for every frame, as with moving vehicles.
 
 ## Limitations
 

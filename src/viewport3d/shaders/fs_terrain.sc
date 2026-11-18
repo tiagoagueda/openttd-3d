@@ -243,7 +243,7 @@ void main()
 		}
 	}
 
-	ground = GroundWeather(ground, v_texcoord0.xy, land, v_color0.g * 2.0);
+	ground = GroundWeather(ground, v_texcoord0.xy, land, v_color0.g * 2.0, v_tile.z * u_layers.w);
 
 	/* The colour of the vertices has the light of late morning in it. To light the ground for the time of day, find which way
 	 * the ground faces from how its position changes across the screen. The baked light makes slopes steeper than they are, so do the same. */

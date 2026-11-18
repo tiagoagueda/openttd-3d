@@ -2209,6 +2209,16 @@ bool GetRailToolPreview(View3DPreview &preview)
 			preview.kind = View3DPreview::Kind::RailStation;
 			preview.axis = _station_gui.axis;
 			return true;
+		case WID_RAT_BUILD_NS:
+		case WID_RAT_BUILD_X:
+		case WID_RAT_BUILD_EW:
+		case WID_RAT_BUILD_Y:
+		case WID_RAT_AUTORAIL:
+			/* The pieces themselves come from the selection, as the 2D views draw them. */
+			preview.kind = View3DPreview::Kind::Track;
+			preview.rail = _cur_railtype;
+			preview.remove = _remove_button_clicked;
+			return true;
 		default:
 			return false;
 	}

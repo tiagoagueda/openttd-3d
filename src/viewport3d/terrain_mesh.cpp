@@ -28,6 +28,7 @@
 #include "../table/tree_land.h"
 
 #include "model_pack.h"
+#include "lock3d.h"
 #include "../debug.h"
 #include "../company_func.h"
 #include "../house.h"
@@ -96,6 +97,8 @@ static bool IsShoreSlope(Tile tile, uint x, uint y)
 {
 	if (IsTileType(tile, TileType::Water)) {
 		if (!IsCoast(tile) && !IsWater(tile)) return false;
+		/* A river that runs down into the sea is rapids, see #IsRiverBedTile. */
+		if (IsWater(tile) && GetWaterClass(tile) == WaterClass::River) return false;
 	} else if (IsTileType(tile, TileType::Trees)) {
 		if (GetTreeGround(tile) != TreeGround::Shore) return false;
 	} else {
@@ -140,8 +143,7 @@ static constexpr float RIVER_BANK = 0.4f;
 
 /**
  * Whether a tile is river that the 3D view draws with banks and a bed below see-through water:
- * flat river, or a step of a river down a slope, which becomes rapids.
- * A river that runs down into the sea is a coast instead, see #IsShoreSlope.
+ * flat river, or a step of a river down a slope, which becomes rapids; also where it runs down into the sea.
  * @param tile The tile.
  * @return True for such a tile.
  */
@@ -149,7 +151,7 @@ static bool IsRiverBedTile(Tile tile)
 {
 	if (!IsTileType(tile, TileType::Water) || !IsWater(tile) || GetWaterClass(tile) != WaterClass::River) return false;
 	auto [slope, z] = GetTileSlopeZ(tile);
-	return (slope == SLOPE_FLAT || IsInclinedSlope(slope)) && z > 0;
+	return (slope == SLOPE_FLAT && z > 0) || IsInclinedSlope(slope);
 }
 
 /**
@@ -169,6 +171,21 @@ static int GetRapidsFlow(uint x, uint y)
 	if (down_y > 0) return 1;
 	if (down_x < 0) return 2;
 	if (down_y < 0) return 3;
+	return -1;
+}
+
+/**
+ * Whether rapids end on a tile, and from which side they come.
+ * @param x X coordinate of the tile.
+ * @param y Y coordinate of the tile.
+ * @return 0 to 3 for rapids that flow in down along x, along y, up along x and up along y; -1 when no rapids end here.
+ */
+static int GetRapidsFootFlow(uint x, uint y)
+{
+	if (GetRapidsFlow(x - 1, y) == 0) return 0;
+	if (GetRapidsFlow(x, y - 1) == 1) return 1;
+	if (GetRapidsFlow(x + 1, y) == 2) return 2;
+	if (GetRapidsFlow(x, y + 1) == 3) return 3;
 	return -1;
 }
 
@@ -202,6 +219,16 @@ static void AddRiverBed(uint x, uint y, int hn, int hw, int he, int hs, TerrainC
 	bool land_nw = !IsOpenWaterTile(x, y - 1), land_se = !IsOpenWaterTile(x, y + 1);
 	bool land_n = !IsOpenWaterTile(x - 1, y - 1), land_w = !IsOpenWaterTile(x + 1, y - 1);
 	bool land_e = !IsOpenWaterTile(x - 1, y + 1), land_s = !IsOpenWaterTile(x + 1, y + 1);
+	/* Where a river runs down into the sea, the coasts beside the sea below are not banks of the river. */
+	if (std::min({hn, hw, he, hs}) == 0) {
+		switch (GetRapidsFlow(x, y)) {
+			case 0: land_w = land_s = false; break;
+			case 1: land_e = land_s = false; break;
+			case 2: land_n = land_e = false; break;
+			case 3: land_n = land_w = false; break;
+			default: break;
+		}
+	}
 	bool banks = land_ne || land_sw || land_nw || land_se || land_n || land_w || land_e || land_s;
 
 	/* Without banks the tile is one quad; with them, a grid with a ring of bank around the bed. */
@@ -231,7 +258,13 @@ static void AddRiverBed(uint x, uint y, int hn, int hw, int he, int hs, TerrainC
 	};
 
 	static constexpr float SUN_X = -0.4683f, SUN_Y = 0.5620f, SUN_Z = 0.6817f;
-	auto surface = [&](float u, float v) { return land(u, v) - RIVER_SURFACE; };
+	/* Rapids that run down into the sea end at sea level, where the river meets it. */
+	int flow = GetRapidsFlow(x, y);
+	bool mouth = std::min({hn, hw, he, hs}) == 0 && flow >= 0;
+	auto surface = [&](float u, float v) {
+		float z = land(u, v);
+		return mouth ? z - RIVER_SURFACE * std::min(1.0f, z) : z - RIVER_SURFACE;
+	};
 	/* The water is lit for the slope it is on, like the land; the shader relights it from there. */
 	float wx = -((hw + hs) - (hn + he)) * 0.5f * 1.5f * TILE_HEIGHT / TILE_SIZE;
 	float wy = -((he + hs) - (hn + hw)) * 0.5f * 1.5f * TILE_HEIGHT / TILE_SIZE;
@@ -239,18 +272,13 @@ static void AddRiverBed(uint x, uint y, int hn, int hw, int he, int hs, TerrainC
 	const uint8_t lit = static_cast<uint8_t>(std::clamp(255.0f * (0.45f + 0.80f * std::max(0.0f, water_light)) * 0.5f, 0.0f, 255.0f));
 	/* Water on a slope is rapids, and the marker says which way it flows. Still water at the foot of rapids gets the foam that they wash into it. */
 	float water_texture = static_cast<float>(GROUND_TEXTURE_SHALLOWS);
-	int flow = GetRapidsFlow(x, y);
+	int foot = GetRapidsFootFlow(x, y);
 	if (flow >= 0) {
 		water_texture = static_cast<float>(GROUND_TEXTURE_RAPIDS + flow);
-	} else if (GetRapidsFlow(x - 1, y) == 0) {
-		water_texture = static_cast<float>(GROUND_TEXTURE_RAPIDS_FOOT);
-	} else if (GetRapidsFlow(x, y - 1) == 1) {
-		water_texture = static_cast<float>(GROUND_TEXTURE_RAPIDS_FOOT + 1);
-	} else if (GetRapidsFlow(x + 1, y) == 2) {
-		water_texture = static_cast<float>(GROUND_TEXTURE_RAPIDS_FOOT + 2);
-	} else if (GetRapidsFlow(x, y + 1) == 3) {
-		water_texture = static_cast<float>(GROUND_TEXTURE_RAPIDS_FOOT + 3);
+	} else if (foot >= 0) {
+		water_texture = static_cast<float>(GROUND_TEXTURE_RAPIDS_FOOT + foot);
 	}
+
 	for (size_t j = 0; j + 1 < steps.size(); j++) {
 		for (size_t i = 0; i + 1 < steps.size(); i++) {
 			float u0 = steps[i], u1 = steps[i + 1], v0 = steps[j], v1 = steps[j + 1];
@@ -275,6 +303,238 @@ static void AddRiverBed(uint x, uint y, int hn, int hw, int he, int hs, TerrainC
 			};
 			mesh.water.insert(mesh.water.end(), {water(u0, v0, z00), water(u0, v1, z01), water(u1, v0, z10), water(u1, v1, z11)});
 		}
+	}
+
+	if (mouth && mesh.water.size() / 4 < MAX_CHUNK_QUADS) {
+		/* Where the rapids meet the sea, close the bed off below the water, so one cannot look under the sea. */
+		static constexpr float EDGES[4][4] = {{1, 0, 1, 1}, {0, 1, 1, 1}, {0, 0, 0, 1}, {0, 0, 1, 0}};
+		const float *e = EDGES[flow];
+		auto curtain = [&](float u, float v, float z) { return TerrainVertex{x + u, y + v, z, lit, lit, lit, 0, water_texture, u, v}; };
+		mesh.water.insert(mesh.water.end(), {curtain(e[0], e[1], 0.0f), curtain(e[0], e[1], -RIVER_BED), curtain(e[2], e[3], 0.0f), curtain(e[2], e[3], -RIVER_BED)});
+	}
+}
+
+/** How far the water of a canal is below the land around it, in height levels: none, the walls stand up a little instead. */
+static constexpr float CANAL_SURFACE = 0.0f;
+/** How deep a canal is below its water, in height levels. */
+static constexpr float CANAL_DEPTH = 0.5f;
+/** How far the walls of a canal stand up above the land, in height levels. */
+static constexpr float CANAL_COPING = 0.1f;
+/** How wide the top of the wall of a canal is, in tiles. */
+static constexpr float CANAL_WALL = 0.1f;
+/** Colour of the masonry of canal walls. */
+static constexpr TerrainColour CANAL_STONE{0xa4, 0x98, 0x86};
+/** Colour of the stones on top of canal walls. */
+static constexpr TerrainColour CANAL_COPING_STONE{0xc4, 0xbc, 0xac};
+
+/**
+ * Add a quad of a single colour, lit for the way it faces, to the terrain.
+ * @param a, b, c, d Corners, in tiles and height levels; a and d are opposite, as for every quad of the terrain.
+ * @param colour The colour.
+ * @param mesh The mesh to add to.
+ */
+static void AddPlainQuad(const std::array<float, 3> &a, const std::array<float, 3> &b, const std::array<float, 3> &c, const std::array<float, 3> &d, const TerrainColour &colour, TerrainChunkMesh &mesh)
+{
+	if ((mesh.vertices.size() + mesh.water.size()) / 4 >= MAX_CHUNK_QUADS) return;
+	static constexpr float SUN_X = -0.4683f, SUN_Y = 0.5620f, SUN_Z = 0.6817f;
+	static constexpr float Z = HEIGHT_LEVEL_SIZE / TILE_SIZE;
+	/* The normal, from the two diagonals, in tiles; pointing up or towards the sun side does not matter for walls that are lit from both. */
+	float ux = d[0] - a[0], uy = d[1] - a[1], uz = (d[2] - a[2]) * Z;
+	float vx = c[0] - b[0], vy = c[1] - b[1], vz = (c[2] - b[2]) * Z;
+	float nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
+	float len = std::sqrt(nx * nx + ny * ny + nz * nz);
+	if (len <= 0) return;
+	if (nz < 0) { nx = -nx; ny = -ny; nz = -nz; }
+	float light = (0.45f + 0.80f * std::max(0.0f, (nx * SUN_X + ny * SUN_Y + nz * SUN_Z) / len)) * 0.5f;
+	uint8_t r = static_cast<uint8_t>(std::clamp(colour.r * light, 0.0f, 255.0f));
+	uint8_t g = static_cast<uint8_t>(std::clamp(colour.g * light, 0.0f, 255.0f));
+	uint8_t bl = static_cast<uint8_t>(std::clamp(colour.b * light, 0.0f, 255.0f));
+	auto vertex = [&](const std::array<float, 3> &p) {
+		return TerrainVertex{p[0], p[1], p[2], r, g, bl, 0, static_cast<float>(GROUND_TEXTURE_NONE), p[0] - std::floor(p[0]), p[1] - std::floor(p[1])};
+	};
+	mesh.vertices.insert(mesh.vertices.end(), {vertex(a), vertex(b), vertex(c), vertex(d)});
+}
+
+/**
+ * Add an upright wall of a single colour between two points on the map.
+ * @param ax, ay One end, in tiles.
+ * @param bx, by The other end.
+ * @param bottom, top Heights of its foot and top, in height levels.
+ * @param side Which side faces the light more: the wall is lit as if it faced that way, (x, y).
+ * @param colour The colour.
+ * @param mesh The mesh to add to.
+ */
+static void AddWall(float ax, float ay, float bx, float by, float bottom, float top, std::array<float, 2> side, const TerrainColour &colour, TerrainChunkMesh &mesh)
+{
+	if (top <= bottom || (mesh.vertices.size() + mesh.water.size()) / 4 >= MAX_CHUNK_QUADS) return;
+	static constexpr float SUN_X = -0.4683f, SUN_Y = 0.5620f;
+	float light = (0.45f + 0.80f * std::max(0.0f, side[0] * SUN_X + side[1] * SUN_Y)) * 0.5f;
+	uint8_t r = static_cast<uint8_t>(std::clamp(colour.r * light, 0.0f, 255.0f));
+	uint8_t g = static_cast<uint8_t>(std::clamp(colour.g * light, 0.0f, 255.0f));
+	uint8_t b = static_cast<uint8_t>(std::clamp(colour.b * light, 0.0f, 255.0f));
+	auto vertex = [&](float x, float y, float z) { return TerrainVertex{x, y, z, r, g, b, 0, static_cast<float>(GROUND_TEXTURE_NONE), 0.0f, 0.0f}; };
+	mesh.vertices.insert(mesh.vertices.end(), {vertex(ax, ay, top), vertex(bx, by, top), vertex(ax, ay, bottom), vertex(bx, by, bottom)});
+}
+
+/**
+ * Whether a tile is a canal that the 3D view draws between walls.
+ * @param tile The tile.
+ * @return True for flat canal tiles.
+ */
+static bool IsCanalBedTile(Tile tile)
+{
+	if (GetTileSlope(tile) != SLOPE_FLAT) return false;
+	if (IsTileType(tile, TileType::Water)) return IsWater(tile) && GetWaterClass(tile) == WaterClass::Canal;
+	/* Buoys in a canal stand in its water. */
+	return IsBuoyTile(tile) && GetWaterClass(tile) == WaterClass::Canal;
+}
+
+/**
+ * Whether the water of a canal runs on into a tile at the same height, so that there is no wall on that side.
+ * @param x X coordinate of the tile.
+ * @param y Y coordinate of the tile.
+ * @param z Height of the canal, in height levels.
+ * @return True when there is water at that height up to the edges of the tile.
+ */
+static bool IsOpenCanalWater(uint x, uint y, int z)
+{
+	if (!IsOpenWaterTile(x, y)) return false;
+	TileIndex t = TileXY(x, y);
+	if (IsTileType(t, TileType::Water) && IsLock(t)) {
+		/* Only along the lock, where its walls go on from those of the canal. */
+		return GetTileMaxZ(t) == z && GetLockPart(t) != LockPart::Middle;
+	}
+	auto [slope, h] = GetTileSlopeZ(t);
+	return slope == SLOPE_FLAT && h == z;
+}
+
+/**
+ * Draw a canal: water between walls of masonry, with a bed below the water, as the 2D game draws its edges.
+ * @param x X coordinate of the tile.
+ * @param y Y coordinate of the tile.
+ * @param z Height of the tile, in height levels.
+ * @param mesh The mesh to add to.
+ */
+static void AddCanalBed(uint x, uint y, int z, TerrainChunkMesh &mesh)
+{
+	/* Which sides and corners have no water next to them: NE, SW, NW, SE sides, then N, W, E, S corners. */
+	bool land_ne = !IsOpenCanalWater(x - 1, y, z), land_sw = !IsOpenCanalWater(x + 1, y, z);
+	bool land_nw = !IsOpenCanalWater(x, y - 1, z), land_se = !IsOpenCanalWater(x, y + 1, z);
+	bool land_n = !IsOpenCanalWater(x - 1, y - 1, z), land_w = !IsOpenCanalWater(x + 1, y - 1, z);
+	bool land_e = !IsOpenCanalWater(x - 1, y + 1, z), land_s = !IsOpenCanalWater(x + 1, y + 1, z);
+
+	const float x0 = static_cast<float>(x), y0 = static_cast<float>(y), x1 = x0 + 1, y1 = y0 + 1;
+	const float w = CANAL_WALL;
+	const float top = z + CANAL_COPING, bed = z - CANAL_SURFACE - CANAL_DEPTH, water = z - CANAL_SURFACE;
+	/* The water and the bed reach as far as the walls. */
+	float wx0 = land_ne ? x0 + w : x0, wx1 = land_sw ? x1 - w : x1;
+	float wy0 = land_nw ? y0 + w : y0, wy1 = land_se ? y1 - w : y1;
+
+	/* The bed, a little darker than bare land. */
+	if ((mesh.vertices.size() + mesh.water.size()) / 4 + 24 >= MAX_CHUNK_QUADS) return;
+	static constexpr float SUN_Z = 0.6817f;
+	uint8_t c = static_cast<uint8_t>(std::clamp(255.0f * (0.45f + 0.80f * SUN_Z) * 0.5f * 0.8f, 0.0f, 255.0f));
+	float soil = static_cast<float>(GROUND_TEXTURE_GRASS);
+	auto ground = [&](float vx, float vy) { return TerrainVertex{vx, vy, bed, c, c, c, 0, soil, vx - x0, vy - y0}; };
+	mesh.vertices.insert(mesh.vertices.end(), {ground(wx0, wy0), ground(wx0, wy1), ground(wx1, wy0), ground(wx1, wy1)});
+
+	/* The water, see-through enough to make out the bed. */
+	uint8_t lit = static_cast<uint8_t>(std::clamp(255.0f * (0.45f + 0.80f * SUN_Z) * 0.5f, 0.0f, 255.0f));
+	uint8_t depth = static_cast<uint8_t>(std::clamp((1.0f - CANAL_DEPTH) * 64.0f, 0.0f, 255.0f));
+	auto surface = [&](float vx, float vy) { return TerrainVertex{vx, vy, water, lit, lit, lit, depth, static_cast<float>(GROUND_TEXTURE_SHALLOWS), vx - x0, vy - y0}; };
+	mesh.water.insert(mesh.water.end(), {surface(wx0, wy0), surface(wx0, wy1), surface(wx1, wy0), surface(wx1, wy1)});
+
+	/* A wall along each side with land: the top of it, its face into the canal, and a little step up from the land. */
+	auto coping = [&](float ax, float ay, float bx, float by) {
+		AddPlainQuad({ax, ay, top}, {ax, by, top}, {bx, ay, top}, {bx, by, top}, CANAL_COPING_STONE, mesh);
+	};
+	if (land_ne) {
+		coping(x0, wy0 - (land_nw ? w : 0), x0 + w, wy1 + (land_se ? w : 0));
+		AddWall(x0 + w, wy0, x0 + w, wy1, bed, top, {1, 0}, CANAL_STONE, mesh);
+		AddWall(x0, y0, x0, y1, z, top, {-1, 0}, CANAL_STONE, mesh);
+	}
+	if (land_sw) {
+		coping(x1 - w, wy0 - (land_nw ? w : 0), x1, wy1 + (land_se ? w : 0));
+		AddWall(x1 - w, wy0, x1 - w, wy1, bed, top, {-1, 0}, CANAL_STONE, mesh);
+		AddWall(x1, y0, x1, y1, z, top, {1, 0}, CANAL_STONE, mesh);
+	}
+	if (land_nw) {
+		coping(wx0, y0, wx1, y0 + w);
+		AddWall(wx0, y0 + w, wx1, y0 + w, bed, top, {0, 1}, CANAL_STONE, mesh);
+		AddWall(x0, y0, x1, y0, z, top, {0, -1}, CANAL_STONE, mesh);
+	}
+	if (land_se) {
+		coping(wx0, y1 - w, wx1, y1);
+		AddWall(wx0, y1 - w, wx1, y1 - w, bed, top, {0, -1}, CANAL_STONE, mesh);
+		AddWall(x0, y1, x1, y1, z, top, {0, 1}, CANAL_STONE, mesh);
+	}
+	/* Where only a corner has land, a short pillar of wall fills it. */
+	auto pillar = [&](float px, float py, float sx, float sy) {
+		/* px, py: the corner of the tile; sx, sy: which way the tile lies from it. */
+		float qx = px + sx * w, qy = py + sy * w;
+		coping(std::min(px, qx), std::min(py, qy), std::max(px, qx), std::max(py, qy));
+		AddWall(qx, py, qx, qy, bed, top, {sx, 0}, CANAL_STONE, mesh);
+		AddWall(px, qy, qx, qy, bed, top, {0, sy}, CANAL_STONE, mesh);
+	};
+	if (land_n && !land_ne && !land_nw) pillar(x0, y0, 1, 1);
+	if (land_w && !land_sw && !land_nw) pillar(x1, y0, -1, 1);
+	if (land_e && !land_ne && !land_se) pillar(x0, y1, 1, -1);
+	if (land_s && !land_sw && !land_se) pillar(x1, y1, -1, -1);
+}
+
+/**
+ * Draw the bed of one part of a lock that moves its gates and water, and the water outside its gates; see lock3d.h.
+ * The walls are in the models of the parts, the gates and the water of the chamber are drawn anew for every image.
+ * @param tile The part of the lock.
+ * @param mesh The mesh to add to.
+ */
+static void AddLockBed(TileIndex tile, TerrainChunkMesh &mesh)
+{
+	if ((mesh.vertices.size() + mesh.water.size()) / 4 + 4 >= MAX_CHUNK_QUADS) return;
+	TileIndex middle = GetLockMiddleTile(tile);
+	const int high = GetTileMaxZ(middle), low = high - 1;
+	const LockPart part = GetLockPart(tile);
+	/* Where along the lock this part is. */
+	const float a0 = part == LockPart::Lower ? -1.5f : (part == LockPart::Middle ? -0.5f : 0.5f), a1 = a0 + 1;
+	const float bed = low - LOCK_DEPTH;
+
+	static constexpr float SUN_Z = 0.6817f;
+	const uint8_t c = static_cast<uint8_t>(std::clamp(255.0f * (0.45f + 0.80f * SUN_Z) * 0.5f * 0.8f, 0.0f, 255.0f));
+	const uint8_t lit = static_cast<uint8_t>(std::clamp(255.0f * (0.45f + 0.80f * SUN_Z) * 0.5f, 0.0f, 255.0f));
+	auto vertex = [&](float along, float across, float z, uint8_t colour, uint8_t depth, float texture) {
+		std::array<float, 2> p = GetLockPoint(middle, along, across);
+		return TerrainVertex{p[0], p[1], z, colour, colour, colour, depth, texture, p[0] - std::floor(p[0]), p[1] - std::floor(p[1])};
+	};
+	auto bed_quad = [&](float b0, float b1, float z) {
+		float soil = static_cast<float>(GROUND_TEXTURE_GRASS);
+		mesh.vertices.insert(mesh.vertices.end(), {vertex(b0, -0.5f, z, c, 0, soil), vertex(b0, 0.5f, z, c, 0, soil), vertex(b1, -0.5f, z, c, 0, soil), vertex(b1, 0.5f, z, c, 0, soil)});
+	};
+	auto water_quad = [&](float b0, float b1, float z, float below) {
+		uint8_t depth = static_cast<uint8_t>(std::clamp((1.0f - below) * 64.0f, 0.0f, 255.0f));
+		float shallows = static_cast<float>(GROUND_TEXTURE_SHALLOWS);
+		mesh.water.insert(mesh.water.end(), {vertex(b0, -0.5f, z, lit, depth, shallows), vertex(b0, 0.5f, z, lit, depth, shallows), vertex(b1, -0.5f, z, lit, depth, shallows), vertex(b1, 0.5f, z, lit, depth, shallows)});
+	};
+
+	switch (part) {
+		case LockPart::Lower:
+			/* Outside the lower gates the water is that of the canal below. */
+			bed_quad(a0, a1, bed);
+			water_quad(a0, -LOCK_GATE, low, LOCK_DEPTH);
+			break;
+		case LockPart::Middle:
+			bed_quad(a0, a1, bed);
+			break;
+		case LockPart::Upper: {
+			/* The upper gates stand on a sill, the bed of the canal above; outside them the water is that of the canal. */
+			bed_quad(a0, LOCK_GATE, bed);
+			bed_quad(LOCK_GATE, a1, high - LOCK_DEPTH);
+			water_quad(LOCK_GATE, a1, high, LOCK_DEPTH);
+			std::array<float, 2> p = GetLockPoint(middle, LOCK_GATE, -0.5f), q = GetLockPoint(middle, LOCK_GATE, 0.5f);
+			std::array<float, 2> centre = GetLockPoint(middle, 0, 0), ahead = GetLockPoint(middle, 1, 0);
+			AddWall(p[0], p[1], q[0], q[1], bed, high - LOCK_DEPTH, {centre[0] - ahead[0], centre[1] - ahead[1]}, CANAL_STONE, mesh);
+			break;
+		}
+		default: break;
 	}
 }
 
@@ -494,9 +754,11 @@ static constexpr float TRACK_PIECES[6][4] = {
  * @param cy Where the middle of the model goes, in world units within the tile along y.
  * @param dx Direction of the model along x, of length one together with dy.
  * @param dy Direction of the model along y.
- * @param mesh The mesh to add to.
+ * @param tint Colour to multiply the model with; its alpha makes it see-through.
+ * @param lift How far to raise the model above the ground, in world units.
+ * @param models The models to add to.
  */
-static void AddPieceModel(const ModelPack::Entry &entry, uint x, uint y, const std::array<int, 4> &heights, float cx, float cy, float dx, float dy, TerrainChunkMesh &mesh)
+static void AddPieceModel(const ModelPack::Entry &entry, uint x, uint y, const std::array<int, 4> &heights, float cx, float cy, float dx, float dy, const std::array<float, 4> &tint, float lift, std::vector<ModelInstance> &models)
 {
 	auto [hn, hw, he, hs] = heights;
 	/* The plane that fits the corners best, as in AddGroundModel(). */
@@ -504,9 +766,9 @@ static void AddPieceModel(const ModelPack::Entry &entry, uint x, uint y, const s
 	float ax = ((hw + hs) - (hn + he)) * 0.5f * HEIGHT_LEVEL_SIZE / TILE_SIZE;
 	float ay = ((he + hs) - (hn + hw)) * 0.5f * HEIGHT_LEVEL_SIZE / TILE_SIZE;
 	float s = entry.scale;
-	float z = zc + ax * (cx - TILE_SIZE * 0.5f) + ay * (cy - TILE_SIZE * 0.5f);
+	float z = lift + zc + ax * (cx - TILE_SIZE * 0.5f) + ay * (cy - TILE_SIZE * 0.5f);
 
-	ModelInstance &instance = mesh.models.emplace_back();
+	ModelInstance &instance = models.emplace_back();
 	instance.model = entry.model;
 	instance.transform.m = {
 		dx * s, dy * s, (ax * dx + ay * dy) * s, 0,
@@ -514,7 +776,24 @@ static void AddPieceModel(const ModelPack::Entry &entry, uint x, uint y, const s
 		0, 0, s, 0,
 		x * TILE_SIZE + cx, y * TILE_SIZE + cy, z, 1,
 	};
-	instance.tint = {1, 1, 1, 1};
+	instance.tint = tint;
+}
+
+/**
+ * Add a model that lies along a line on the ground of a tile, like a piece of track, tilted along the slope of the tile.
+ * @param entry The model; it runs along its x axis.
+ * @param x X coordinate of the tile.
+ * @param y Y coordinate of the tile.
+ * @param heights Heights of the northern, western, eastern and southern corner, in height levels.
+ * @param cx Where the middle of the model goes, in world units within the tile along x.
+ * @param cy Where the middle of the model goes, in world units within the tile along y.
+ * @param dx Direction of the model along x, of length one together with dy.
+ * @param dy Direction of the model along y.
+ * @param mesh The mesh to add to.
+ */
+static void AddPieceModel(const ModelPack::Entry &entry, uint x, uint y, const std::array<int, 4> &heights, float cx, float cy, float dx, float dy, TerrainChunkMesh &mesh)
+{
+	AddPieceModel(entry, x, y, heights, cx, cy, dx, dy, {1, 1, 1, 1}, 0, mesh.models);
 }
 
 /**
@@ -832,6 +1111,8 @@ static void AddPavementModels(RoadBits all, uint x, uint y, const std::array<int
 	}
 }
 
+static void AddStreetLamps(Tile tile, uint x, uint y, const std::array<int, 4> &heights, const ModelPack &pack, TerrainChunkMesh &mesh);
+
 /**
  * Add 3D pavements and tram rails on a road tile.
  * @param tile The tile, a normal road tile.
@@ -848,6 +1129,7 @@ static void AddRoadModels(Tile tile, uint x, uint y, const std::array<int, 4> &h
 	Roadside roadside = GetRoadside(tile);
 	bool paved = roadside == Roadside::Paved || roadside == Roadside::StreetLights || roadside == Roadside::Trees || roadside == Roadside::PavedRoadWorks;
 	if (paved && road.Any()) AddPavementModels(road | tram, x, y, heights, pack, mesh);
+	if (paved && road.Any()) AddStreetLamps(tile, x, y, heights, pack, mesh);
 
 	const ModelPack::Entry *rails = pack.Find(ModelKind::Roadside, 0, 4);
 	if (tram.Any() && rails != nullptr) {
@@ -858,6 +1140,223 @@ static void AddRoadModels(Tile tile, uint x, uint y, const std::array<int, 4> &h
 		for (const auto &[bit, dir] : BITS) {
 			if (tram.Test(bit)) AddPieceModel(*rails, x, y, heights, TILE_SIZE * 0.5f, TILE_SIZE * 0.5f, dir[0], dir[1], mesh);
 		}
+	}
+}
+
+/**
+ * A number from 0 to 1 made from another number, the same every time.
+ * @param n The number.
+ */
+static float Random01(uint32_t n)
+{
+	n = (n ^ 61) ^ (n >> 16);
+	n *= 9;
+	n ^= n >> 4;
+	n *= 0x27d4eb2d;
+	n ^= n >> 15;
+	return (n & 0xFFFFFF) / 16777216.0f;
+}
+
+/**
+ * Whether the street lamps of a town street have power to light up at night.
+ * This is where the energy network (a separate branch of the fork) can decide that lamps stay dark where towns get no power;
+ * until then all lamps light up.
+ * @param tile The road tile.
+ * @return True when the lamps light up at night.
+ */
+static bool IsStreetLampPowered([[maybe_unused]] TileIndex tile)
+{
+	return true;
+}
+
+/**
+ * Add 3D street lamps along a straight town street that has pavements but no lamps of the 2D game:
+ * one on every tile, on alternate sides of the street, at the kerb, reaching over the road.
+ * @param tile The tile, a normal road tile.
+ * @param x X coordinate of the tile.
+ * @param y Y coordinate of the tile.
+ * @param heights Heights of the northern, western, eastern and southern corner, in height levels.
+ * @param pack The package of 3D models.
+ * @param mesh The mesh to add to.
+ */
+static void AddStreetLamps(Tile tile, uint x, uint y, const std::array<int, 4> &heights, const ModelPack &pack, TerrainChunkMesh &mesh)
+{
+	if (GetRoadside(tile) != Roadside::Paved || HasRoadWorks(tile)) return;
+	RoadBits all = GetAllRoadBits(tile);
+	bool along_x = all == ROAD_X;
+	bool along_y = all == ROAD_Y;
+	if (!along_x && !along_y) return;
+
+	const ModelPack::Entry *lamp = pack.Find(ModelKind::Roadside, 0, 0);
+	if (!IsStreetLampPowered(tile)) {
+		const ModelPack::Entry *dark = pack.Find(ModelKind::Roadside, 0, 5);
+		if (dark != nullptr) lamp = dark;
+	}
+	if (lamp == nullptr) return;
+
+	/* Near the kerb, on the side that changes from tile to tile, reaching towards the middle of the road. */
+	static constexpr float KERB_DISTANCE = 2.1f;
+	bool far_side = ((along_x ? x : y) & 1) != 0;
+	float edge = far_side ? TILE_SIZE - KERB_DISTANCE : KERB_DISTANCE;
+	float px = along_x ? TILE_SIZE * 0.5f : edge;
+	float py = along_x ? edge : TILE_SIZE * 0.5f;
+	float dx = along_x ? 0.0f : (far_side ? -1.0f : 1.0f);
+	float dy = along_x ? (far_side ? -1.0f : 1.0f) : 0.0f;
+
+	auto [hn, hw, he, hs] = heights;
+	float zc = (hn + hw + he + hs) * 0.25f * HEIGHT_LEVEL_SIZE;
+	float ax = ((hw + hs) - (hn + he)) * 0.5f * HEIGHT_LEVEL_SIZE / TILE_SIZE;
+	float ay = ((he + hs) - (hn + hw)) * 0.5f * HEIGHT_LEVEL_SIZE / TILE_SIZE;
+	static constexpr float KERB = 0.16f;
+	float z = zc + ax * (px - TILE_SIZE * 0.5f) + ay * (py - TILE_SIZE * 0.5f) + KERB;
+	float s = lamp->scale;
+	ModelInstance &instance = mesh.models.emplace_back();
+	instance.model = lamp->model;
+	instance.transform.m = {dx * s, dy * s, 0, 0, -dy * s, dx * s, 0, 0, 0, 0, s, 0, x * TILE_SIZE + px, y * TILE_SIZE + py, z, 1};
+	instance.tint = {1, 1, 1, 1};
+}
+
+/**
+ * Whether a tile is a town street with a pavement along one of its sides.
+ * @param x X coordinate of the tile.
+ * @param y Y coordinate of the tile.
+ * @param side The side, by the road bit that would lead there.
+ * @return True when people can walk along that side.
+ */
+static bool HasPavement(uint x, uint y, RoadBit side)
+{
+	if (x >= Map::MaxX() || y >= Map::MaxY()) return false;
+	Tile tile(TileXY(x, y));
+	if (!IsTileType(tile, TileType::Road) || !IsNormalRoad(tile)) return false;
+	Roadside roadside = GetRoadside(tile);
+	if (roadside != Roadside::Paved && roadside != Roadside::StreetLights && roadside != Roadside::Trees && roadside != Roadside::PavedRoadWorks) return false;
+	if (GetRoadBits(tile, RoadTramType::Road).None()) return false;
+	return !GetAllRoadBits(tile).Test(side);
+}
+
+/**
+ * Find the straight stretches of pavement in a chunk, on which people walk up and down.
+ * A stretch ends where the pavement does, at the edge of the chunk, or after 16 tiles.
+ * More people walk where more houses line the street.
+ * @param chunk_x X coordinate of the chunk, in chunks.
+ * @param chunk_y Y coordinate of the chunk, in chunks.
+ * @param mesh The mesh to add to.
+ */
+static void AddWalkways(uint chunk_x, uint chunk_y, TerrainChunkMesh &mesh)
+{
+	static constexpr uint MAX_TILES = 16;
+	static constexpr float HALF = 1.3f; ///< From the edge of the tile to the middle of the pavement.
+	static constexpr float KERB = 0.16f;
+	uint x0 = chunk_x * TERRAIN_CHUNK_SIZE, y0 = chunk_y * TERRAIN_CHUNK_SIZE;
+	uint x1 = std::min(x0 + TERRAIN_CHUNK_SIZE, Map::MaxX()), y1 = std::min(y0 + TERRAIN_CHUNK_SIZE, Map::MaxY());
+
+	/* Each side: the road bit that leads there, whether the side runs along x, which neighbour lies beyond it, and where the pavement is. */
+	struct Side { RoadBit bit; bool along_x; int nx, ny; float offset; };
+	static constexpr Side SIDES[4] = {
+		{RoadBit::NW, true, 0, -1, HALF}, {RoadBit::SE, true, 0, 1, TILE_SIZE - HALF},
+		{RoadBit::NE, false, -1, 0, HALF}, {RoadBit::SW, false, 1, 0, TILE_SIZE - HALF},
+	};
+	for (uint y = y0; y < y1; y++) {
+		for (uint x = x0; x < x1; x++) {
+			for (const Side &side : SIDES) {
+				if (!HasPavement(x, y, side.bit)) continue;
+				/* Only from the first tile of a stretch. */
+				uint along = side.along_x ? x : y;
+				uint first = side.along_x ? x0 : y0;
+				auto at = [&](uint a) { return side.along_x ? std::pair<uint, uint>{a, y} : std::pair<uint, uint>{x, a}; };
+				if (along > first && (along - first) % MAX_TILES != 0) {
+					auto [px, py] = at(along - 1);
+					if (HasPavement(px, py, side.bit)) continue;
+				}
+				uint end = side.along_x ? x1 : y1;
+				uint length = 0;
+				uint houses = 0;
+				Walkway walkway;
+				while (length < MAX_TILES && along + length < end) {
+					auto [tx, ty] = at(along + length);
+					if (!HasPavement(tx, ty, side.bit)) break;
+					int hx = static_cast<int>(tx) + side.nx, hy = static_cast<int>(ty) + side.ny;
+					if (hx >= 0 && hy >= 0 && static_cast<uint>(hx) < Map::MaxX() && static_cast<uint>(hy) < Map::MaxY() && IsTileType(TileXY(hx, hy), TileType::House)) houses++;
+					/* A point at the start of the tile and one in its middle. */
+					for (float f : {0.02f, 0.5f}) {
+						float wx = side.along_x ? (tx + f) * TILE_SIZE : tx * TILE_SIZE + side.offset;
+						float wy = side.along_x ? ty * TILE_SIZE + side.offset : (ty + f) * TILE_SIZE;
+						walkway.points.push_back({wx, wy, GetSlopePixelZ(static_cast<int>(wx), static_cast<int>(wy), true) * WORLD_Z_SCALE + KERB});
+					}
+					length++;
+				}
+				if (length < 2) continue;
+				/* The end of the last tile. */
+				auto [tx, ty] = at(along + length - 1);
+				float wx = side.along_x ? (tx + 0.98f) * TILE_SIZE : tx * TILE_SIZE + side.offset;
+				float wy = side.along_x ? ty * TILE_SIZE + side.offset : (ty + 0.98f) * TILE_SIZE;
+				walkway.points.push_back({wx, wy, GetSlopePixelZ(static_cast<int>(wx), static_cast<int>(wy), true) * WORLD_Z_SCALE + KERB});
+				walkway.people = std::min(0.2f * length + 0.7f * houses, 1.2f * length);
+				walkway.seed = TileXY(x, y).base() * 4 + static_cast<uint>(&side - SIDES);
+				mesh.walkways.push_back(std::move(walkway));
+			}
+		}
+	}
+}
+
+/**
+ * Add the people walking along the pavement at this moment.
+ * Each walks up and down the stretch at a pace of their own, keeping to their right, and turns around at its ends.
+ * @param scene What the world looks like at this moment.
+ * @param models The models to add to.
+ */
+void Walkway::Place(const PartScene &scene, std::vector<ModelInstance> &models) const
+{
+	if (this->points.size() < 2 || scene.walkers[0] == UINT_MAX) return;
+	static constexpr float SPACING = TILE_SIZE * 0.5f; ///< Between two points.
+	static constexpr float STRIDE = 0.42f; ///< Distance walked from one model of a step to the next.
+	/* Shirts and dresses. */
+	static constexpr std::array<float, 3> CLOTHES[] = {
+		{0.80f, 0.20f, 0.18f}, {0.20f, 0.36f, 0.72f}, {0.92f, 0.86f, 0.70f}, {0.24f, 0.52f, 0.30f}, {0.88f, 0.62f, 0.16f},
+		{0.52f, 0.30f, 0.58f}, {0.92f, 0.92f, 0.94f}, {0.30f, 0.30f, 0.32f}, {0.62f, 0.78f, 0.90f}, {0.86f, 0.46f, 0.56f},
+	};
+	float length = SPACING * (this->points.size() - 1);
+	float wanted = this->people * scene.people;
+	uint count = static_cast<uint>(wanted + Random01(this->seed * 31U + 7U));
+	for (uint i = 0; i < count; i++) {
+		uint32_t id = this->seed * 977U + i * 7919U;
+		float speed = 1.0f + 0.7f * Random01(id);
+		float s = Random01(id + 1) * 2.0f * length + speed * scene.seconds;
+		float u = std::fmod(s, 2.0f * length);
+		bool forward = u < length;
+		float d = forward ? u : 2.0f * length - u;
+
+		/* Where along the stretch, and its direction there. */
+		uint k = std::min<uint>(static_cast<uint>(d / SPACING), static_cast<uint>(this->points.size()) - 2);
+		float f = d / SPACING - k;
+		const auto &a = this->points[k];
+		const auto &b = this->points[k + 1];
+		float dx = b[0] - a[0], dy = b[1] - a[1];
+		float n = std::sqrt(dx * dx + dy * dy);
+		if (n <= 0) continue;
+		dx /= n;
+		dy /= n;
+		if (!forward) {
+			dx = -dx;
+			dy = -dy;
+		}
+		/* Keep to the right of the way one walks, a little apart from the others. */
+		float side = -0.42f + (Random01(id + 2) - 0.5f) * 0.3f;
+		float px = a[0] + (b[0] - a[0]) * f - dy * side;
+		float py = a[1] + (b[1] - a[1]) * f + dx * side;
+		float pz = a[2] + (b[2] - a[2]) * f;
+
+		uint step = static_cast<uint>(s / STRIDE) % 4;
+		uint model = scene.walkers[(Random01(id + 3) < 0.5f ? 4 : 0) + step];
+		if (model == UINT_MAX) model = scene.walkers[step];
+		if (model == UINT_MAX) continue;
+		float scale = 0.92f + 0.16f * Random01(id + 4);
+		const auto &colour = CLOTHES[static_cast<uint>(Random01(id + 5) * std::size(CLOTHES)) % std::size(CLOTHES)];
+
+		ModelInstance &instance = models.emplace_back();
+		instance.model = model;
+		instance.transform.m = {dx * scale, dy * scale, 0, 0, -dy * scale, dx * scale, 0, 0, 0, 0, scale, 0, px, py, pz, 1};
+		instance.tint = {colour[0], colour[1], colour[2], 1};
 	}
 }
 
@@ -1122,6 +1621,7 @@ static void AddFences(Tile tile, uint x, uint y, SpriteAtlas &atlas, const Model
  * @param models The models to add to.
  */
 static std::vector<AnimatedPart> *_tile_parts = nullptr; ///< Where PlaceModel() puts the moving parts of models, if anywhere.
+static const ModelPack *_tile_pack = nullptr; ///< The package of the models PlaceModel() places, while #_tile_parts is set.
 
 /**
  * Place a model at a point, turned to face a direction.
@@ -1157,9 +1657,83 @@ static ModelInstance &PlaceModelAt(const ModelPack::Entry &entry, float x, float
  * @param seconds The moment, in seconds since some start.
  * @return The part.
  */
-ModelInstance AnimatedPart::Place(float seconds) const
+/**
+ * Add the puffs of smoke that rise from a chimney at this moment.
+ * Each chimney has a few puffs at a time, each older than the last; a puff rises, drifts with the wind,
+ * grows and fades, and starts over at the top of the chimney when it is gone.
+ * @param part The chimney.
+ * @param scene What the world looks like at this moment.
+ * @param models The models to add to.
+ */
+static void PlaceSmoke(const AnimatedPart &part, const PartScene &scene, std::vector<ModelInstance> &models)
 {
-	float t = seconds + this->phase;
+	if (scene.puff == UINT_MAX) return;
+	const bool house = part.amount < 0;
+	/* Of houses, only some have the fire lit; which ones goes by the phase, which comes from the place of the house. */
+	float strength = 1.0f;
+	if (house) {
+		float lot = Random01(std::bit_cast<uint32_t>(part.phase));
+		if (lot >= scene.house_smoke) return;
+		strength = 0.55f + 0.45f * std::min(1.0f, (scene.house_smoke - lot) * 4.0f);
+	}
+	const Matrix4 &m = part.transform;
+	/* The top of the chimney in the world, and the scale of the building. */
+	float x = m.m[0] * part.at[0] + m.m[4] * part.at[1] + m.m[8] * part.at[2] + m.m[12];
+	float y = m.m[1] * part.at[0] + m.m[5] * part.at[1] + m.m[9] * part.at[2] + m.m[13];
+	float z = m.m[2] * part.at[0] + m.m[6] * part.at[1] + m.m[10] * part.at[2] + m.m[14];
+	float scale = std::sqrt(m.m[8] * m.m[8] + m.m[9] * m.m[9] + m.m[10] * m.m[10]);
+	float radius = std::abs(part.amount) * scale;
+
+	static constexpr int PUFFS = 7;
+	const float life = house ? 5.5f : 8.0f; ///< Seconds a puff lives.
+	const float rise = house ? 6.0f : 13.0f + 3.0f * radius; ///< How high it rises in that time.
+	const std::array<float, 3> colour = house ? std::array<float, 3>{0.82f, 0.82f, 0.84f} : std::array<float, 3>{0.66f, 0.66f, 0.68f};
+	for (int k = 0; k < PUFFS; k++) {
+		float t = (scene.seconds + part.phase) / life + static_cast<float>(k) / PUFFS;
+		float age = t - std::floor(t);
+		/* Each puff wanders a little on its own way; which way changes with every new puff. */
+		uint32_t round = static_cast<uint32_t>(static_cast<int32_t>(std::floor(t))) * 7919U + static_cast<uint32_t>(k) * 104729U + std::bit_cast<uint32_t>(part.phase);
+		float wx = (Random01(round) - 0.5f) * 0.5f, wy = (Random01(round + 1) - 0.5f) * 0.5f;
+		/* Smoke comes out fast and slows down as it cools. */
+		float up = rise * age * (1.6f - 0.6f * age);
+		float drift = up + age * 2.0f;
+		float s = scene.puff_scale * radius * (0.55f + 2.2f * age) / 3.0f;
+		float alpha = 0.62f * strength * std::pow(1.0f - age, 1.3f) * std::min(1.0f, age * 10.0f);
+		if (alpha < 0.01f) continue;
+		float yaw = Random01(round + 2) * 6.2831853f;
+		float c = std::cos(yaw) * s, n = std::sin(yaw) * s;
+		ModelInstance &instance = models.emplace_back();
+		instance.model = scene.puff;
+		instance.transform.m = {
+			c, n, 0, 0,
+			-n, c, 0, 0,
+			0, 0, s, 0,
+			x + (scene.wind_x + wx) * drift, y + (scene.wind_y + wy) * drift, z + up + s * 0.5f, 1,
+		};
+		instance.tint = {colour[0], colour[1], colour[2], alpha};
+		instance.load = 0;
+	}
+}
+
+/**
+ * Add the models of the part as it is at this moment.
+ * @param scene What the world looks like at this moment.
+ * @param models The models to add to.
+ */
+void AnimatedPart::Place(const PartScene &scene, std::vector<ModelInstance> &models) const
+{
+	if (this->kind == PartKind::Smoke) {
+		PlaceSmoke(*this, scene, models);
+		return;
+	}
+	float opacity = 1.0f;
+	if (this->kind == PartKind::Night) {
+		/* Shows only after dusk, see-through. */
+		opacity = this->amount * std::clamp((scene.night - 0.15f) * 1.6f, 0.0f, 1.0f);
+		if (opacity < 0.01f) return;
+	}
+
+	float t = scene.seconds + this->phase;
 	float angle = this->spin * t;
 	if (this->swing != 0) angle += this->swing * std::sin(t * 6.2831853f / this->period);
 
@@ -1176,11 +1750,11 @@ ModelInstance AnimatedPart::Place(float seconds) const
 		k.x * k.z * v + k.y * s, k.y * k.z * v - k.x * s, c + k.z * k.z * v, 0,
 		this->at[0] + k.x * lift, this->at[1] + k.y * lift, this->at[2] + k.z * lift, 1,
 	};
-	ModelInstance instance;
+	ModelInstance &instance = models.emplace_back();
 	instance.model = this->model;
 	instance.transform = this->transform * local;
 	instance.tint = this->tint;
-	return instance;
+	if (this->kind == PartKind::Night) instance.tint[3] = std::min(opacity, 0.99f);
 }
 
 static void PlaceModel(const ModelPack::Entry &entry, TileIndex tile, uint size_x, uint size_y, DiagDirection front, const std::array<float, 4> &tint, std::vector<ModelInstance> &models)
@@ -1200,7 +1774,20 @@ static void PlaceModel(const ModelPack::Entry &entry, TileIndex tile, uint size_
 	/* Parts of neighbouring buildings move a little out of step, as the 2D game does too. */
 	float phase = (tile.base() * 2654435761U >> 20) / 4096.0f * 4.0f;
 	for (const ModelPack::ModelPart &part : entry.parts) {
-		_tile_parts->push_back({instance.transform, tint, part.model, part.at, part.axis, part.spin, part.swing, part.period, part.lift, phase});
+		AnimatedPart &added = _tile_parts->emplace_back(instance.transform, tint, part.model, part.at, part.axis, part.spin, part.swing, part.period, part.lift, phase);
+		if (part.night > 0) {
+			added.kind = PartKind::Night;
+			added.amount = part.night;
+		}
+	}
+	/* Smoke rises from the chimneys of the model; of houses from some only, more in the cold. */
+	if (_tile_pack != nullptr && instance.model < _tile_pack->GetModels().size()) {
+		bool house = IsTileType(tile, TileType::House);
+		for (const auto &[x, y, z, size] : _tile_pack->GetModels()[instance.model].smoke) {
+			AnimatedPart &added = _tile_parts->emplace_back(instance.transform, std::array<float, 4>{1, 1, 1, 1}, UINT_MAX, std::array<float, 3>{x, y, z}, std::array<float, 3>{0, 0, 1}, 0.0f, 0.0f, 1.0f, 0.0f, phase * 3.1f + x + y);
+			added.kind = PartKind::Smoke;
+			added.amount = house ? -size : size;
+		}
 	}
 }
 
@@ -1935,8 +2522,10 @@ bool GetTileModels(TileIndex tile, const ModelPack &pack, std::vector<ModelInsta
 	parts.clear();
 	if (pack.IsEmpty()) return false;
 	_tile_parts = &parts;
+	_tile_pack = &pack;
 	bool replaced = AddTileModel(tile, pack, models);
 	_tile_parts = nullptr;
+	_tile_pack = nullptr;
 	return replaced;
 }
 
@@ -2023,6 +2612,81 @@ void AddPowerLinePreview(TileIndex start, TileIndex end, const ModelPack &pack, 
 		add_pylon(b);
 		AddPowerSpanWires(a, b, pack, GHOST, models);
 		cur += step;
+	}
+}
+
+/**
+ * The heights of the corners of a tile once a foundation is built on it, as for AddPieceModel().
+ * @param tile The tile.
+ * @param foundation The foundation that what is built on it gets.
+ * @return Heights of the northern, western, eastern and southern corner, in height levels.
+ */
+static std::array<int, 4> GetHeightsOnFoundation(TileIndex tile, Foundation foundation)
+{
+	auto [slope, z] = GetTileSlopeZ(tile);
+	/* Where it cannot be built, it lies on the bare slope. */
+	if (foundation != Foundation::Invalid) z += ApplyFoundationToSlope(foundation, slope);
+	slope = RemoveHalftileSlope(slope);
+	return {z + GetSlopeZInCorner(slope, Corner::N), z + GetSlopeZInCorner(slope, Corner::W), z + GetSlopeZInCorner(slope, Corner::E), z + GetSlopeZInCorner(slope, Corner::S)};
+}
+
+/**
+ * The colour of a see-through preview of track or road: the colour of the local company, or red where it would be removed or cannot be built.
+ * @param red Whether to show it red.
+ * @return The tint, with its alpha.
+ */
+static std::array<float, 4> GetPreviewTint(bool red)
+{
+	std::array<float, 4> tint = red ? std::array<float, 4>{1.0f, 0.25f, 0.2f, 1.0f} : GetOwnerTint(_local_company);
+	tint[3] = 0.6f;
+	return tint;
+}
+
+/**
+ * Add a see-through piece of track where a rail tool is about to build or remove it, like the autorail selection of the 2D views.
+ * @param preview What the tool builds.
+ * @param tile The tile.
+ * @param track The piece of track on the tile.
+ * @param red Whether the piece cannot be built on this slope, or is about to be removed.
+ * @param pack The package of 3D models.
+ * @param models The models to add to.
+ */
+void AddTrackPreviewModel(const View3DPreview &preview, TileIndex tile, Track track, bool red, const ModelPack &pack, std::vector<ModelInstance> &models)
+{
+	if (track >= Track::End) return;
+	bool diagonal = track != Track::X && track != Track::Y;
+	const ModelPack::Entry *entry = preview.rail != INVALID_RAILTYPE ? GetTrackPiece(preview.rail, diagonal, pack) : nullptr;
+	/* Track types of NewGRFs have no model of their own; normal track shows where they go. */
+	if (entry == nullptr) entry = pack.Find(ModelKind::Track, 0, diagonal ? 1 : 0);
+	if (entry == nullptr) return;
+
+	std::array<int, 4> heights = GetHeightsOnFoundation(tile, GetRailFoundation(GetTileSlope(tile), TrackBits{track}));
+	const float *p = TRACK_PIECES[to_underlying(track)];
+	/* Lifted a little, so a piece over existing track still shows. */
+	AddPieceModel(*entry, TileX(tile), TileY(tile), heights, p[0], p[1], p[2], p[3], GetPreviewTint(red || preview.remove), 0.15f, models);
+}
+
+/**
+ * Add see-through pieces of road or tram track where a road tool is about to build or remove them.
+ * @param preview What the tool builds.
+ * @param tile The tile.
+ * @param bits The pieces on the tile.
+ * @param pack The package of 3D models.
+ * @param models The models to add to.
+ */
+void AddRoadPreviewModel(const View3DPreview &preview, TileIndex tile, RoadBits bits, const ModelPack &pack, std::vector<ModelInstance> &models)
+{
+	const ModelPack::Entry *entry = preview.tram ? pack.Find(ModelKind::Roadside, 0, 4) : pack.Find(ModelKind::Interface, 0, 6);
+	if (entry == nullptr || bits.None()) return;
+
+	std::array<int, 4> heights = GetHeightsOnFoundation(tile, GetRoadFoundation(GetTileSlope(tile), bits));
+	/* From the middle of the tile towards the edge each bit leads to, as in AddRoadModels(). */
+	static constexpr std::pair<RoadBit, std::array<float, 2>> BITS[4] = {
+		{RoadBit::NW, {0, -1}}, {RoadBit::SW, {1, 0}}, {RoadBit::SE, {0, 1}}, {RoadBit::NE, {-1, 0}},
+	};
+	std::array<float, 4> tint = GetPreviewTint(preview.remove);
+	for (const auto &[bit, dir] : BITS) {
+		if (bits.Test(bit)) AddPieceModel(*entry, TileX(tile), TileY(tile), heights, TILE_SIZE * 0.5f, TILE_SIZE * 0.5f, dir[0], dir[1], tint, 0.1f, models);
 	}
 }
 
@@ -2384,9 +3048,11 @@ static TileGround AddTileSprites(uint x, uint y, const std::array<uint8_t, 4> &h
 
 	/* A building with a 3D model keeps its ground and foundation, but not its other sprites. */
 	_tile_parts = &mesh.parts;
+	_tile_pack = pack;
 	bool replaced = !ground_only && pack != nullptr && !pack->IsEmpty() && AddTileModel(tile, *pack, mesh.models);
 	if (cable_models) AddPowerCableModels(tile, *pack, mesh.models);
 	_tile_parts = nullptr;
+	_tile_pack = nullptr;
 
 	/* Signals with a 3D model replace the sprites the 2D game draws for them. */
 	static std::vector<std::pair<int, int>> signal_places;
@@ -2590,9 +3256,12 @@ void BuildTerrainChunkMesh(uint chunk_x, uint chunk_y, GroundTextures &textures,
 
 	/* With ground textures in the model package, coasts are land that goes down into the water. */
 	const bool pack_ground = textures.IsMixing();
+	const bool models_ok = pack != nullptr && !pack->IsEmpty();
 	mesh.models.clear();
 	mesh.parts.clear();
+	mesh.walkways.clear();
 	mesh.live.clear();
+	mesh.locks.clear();
 	mesh.vertices.reserve(TERRAIN_CHUNK_SIZE * TERRAIN_CHUNK_SIZE * 4);
 	mesh.min_height = UINT_MAX;
 	mesh.max_height = 0;
@@ -2647,7 +3316,12 @@ void BuildTerrainChunkMesh(uint chunk_x, uint chunk_y, GroundTextures &textures,
 			}
 
 			/* The selection of a build tool, the catchment area of a station and such are marked on top of the ground. */
-			TileMark mark = GetTileMark(tile);
+			Track autorail;
+			bool autorail_red;
+			TileMark mark = GetTileMark(tile, autorail, autorail_red);
+			/* The piece of track of a rail tool shows as a see-through model (AddTrackPreviewModel()) instead,
+			 * like the 2D views draw only the piece; where it cannot be built, the tile is marked red as well. */
+			if (autorail != Track::Invalid && pack != nullptr && pack->Find(ModelKind::Track, 0, 0) != nullptr) mark = autorail_red ? TileMark::Red : TileMark::None;
 
 			TileGround ground;
 			if (collect) {
@@ -2725,12 +3399,31 @@ void BuildTerrainChunkMesh(uint chunk_x, uint chunk_y, GroundTextures &textures,
 			/* Split the tile along the diagonal with the smallest height difference,
 			 * so a single raised or lowered corner gives one flat and one sloped half. */
 			bool split_ns = std::abs(fn - fs) <= std::abs(fw - fe);
+			bool lock = pack_ground && models_ok && IsTileType(tile, TileType::Water) && IsLock(tile) && HasLockAnimation(*pack)
+					&& pack->Find(ModelKind::Lock, 0, to_underlying(GetLockPart(tile))) != nullptr;
 			if (pack_ground && IsRiverBedTile(tile)) {
 				AddRiverBed(x, y, hn, hw, he, hs, mesh);
+			} else if (pack_ground && IsCanalBedTile(tile)) {
+				AddCanalBed(x, y, hn, mesh);
+			} else if (lock) {
+				AddLockBed(tile, mesh);
+				if (GetLockPart(tile) == LockPart::Middle) mesh.locks.push_back(tile);
 			} else if (split_ns) {
 				mesh.vertices.insert(mesh.vertices.end(), {vw, vn, vs, ve});
 			} else {
 				mesh.vertices.insert(mesh.vertices.end(), {vn, ve, vw, vs});
+			}
+
+			if (pack_ground && !collect && IsTileType(tile, TileType::Water) && IsWater(tile) && !IsRiverBedTile(tile) && !IsCanalBedTile(tile)
+					&& hn == hw && hn == he && hn == hs && (mesh.vertices.size() + mesh.water.size()) / 4 < MAX_CHUNK_QUADS) {
+				/* Still water where rapids end, such as the sea at the mouth of a river, gets the foam they wash into it. */
+				int foot = GetRapidsFootFlow(x, y);
+				if (foot >= 0) {
+					uint8_t lit = static_cast<uint8_t>(std::clamp(255.0f * (AMBIENT + DIFFUSE * SUN_Z) * 0.5f, 0.0f, 255.0f));
+					float marker = static_cast<float>(GROUND_TEXTURE_RAPIDS_FOOT + foot);
+					auto foam = [&](uint vx, uint vy) { return TerrainVertex{static_cast<float>(vx), static_cast<float>(vy), hn + 0.002f, lit, lit, lit, 0, marker, static_cast<float>(vx - x), static_cast<float>(vy - y)}; };
+					mesh.water.insert(mesh.water.end(), {foam(x, y), foam(x, y + 1), foam(x + 1, y), foam(x + 1, y + 1)});
+				}
 			}
 
 			if (mark != TileMark::None) AddTileMark(mark, x, y, {static_cast<float>(fn), static_cast<float>(fw), static_cast<float>(fe), static_cast<float>(fs)}, split_ns, pack, mesh);
@@ -2778,6 +3471,8 @@ void BuildTerrainChunkMesh(uint chunk_x, uint chunk_y, GroundTextures &textures,
 	}
 
 	if (mesh.min_height > mesh.max_height) mesh.min_height = mesh.max_height;
+
+	if (pack != nullptr && pack->Find(ModelKind::Pedestrian, 0, 0) != nullptr) AddWalkways(chunk_x, chunk_y, mesh);
 
 	/* FNV-1a hash, to cheaply see whether the chunk looks different from last time. */
 	uint64_t hash = 0xcbf29ce484222325ULL;

@@ -16,6 +16,7 @@
 #include "terrain_mesh.h"
 #include "tile_sprites.h"
 #include "model_pack.h"
+#include "lock3d.h"
 #include "../newgrf_commons.h"
 #include "../blitter/factory.hpp"
 #include "../gfx_func.h"
@@ -26,6 +27,7 @@
 #include "../strings_func.h"
 #include "../tile_map.h"
 #include "../vehicle_base.h"
+#include "../road_func.h"
 #include "../core/backup_type.hpp"
 #include "../viewport_type.h"
 #include "../viewport_func.h"
@@ -67,7 +69,9 @@ class View3DWindow : public Window {
 		uint min_height = 0; ///< Lowest height level in the chunk; only valid when built.
 		uint max_height = 0; ///< Highest height level in the chunk; only valid when built.
 		std::vector<AnimatedPart> parts; ///< Parts of models in the chunk that move.
+		std::vector<Walkway> walkways; ///< Pavements in the chunk on which people walk.
 		std::map<TileIndex, std::vector<ModelInstance>> live; ///< Models in the chunk that change often, by tile.
+		std::vector<TileIndex> locks; ///< Locks in the chunk whose gates and water move.
 	};
 	std::map<TileIndex, uint64_t> tile_keys; ///< Rail tiles and level crossings in built chunks, by GetTileChangeKey().
 	std::vector<uint16_t> built_tiles; ///< Type and height of every tile when its chunk was last built, by tile index.
@@ -115,6 +119,7 @@ class View3DWindow : public Window {
 	Vec3 zoom_anchor{}; ///< Spot on the ground below the cursor when zooming started.
 	bool view_changed = true; ///< Whether the camera or image size changed since the last render.
 	float hour = -2.0f; ///< The hour of the day the renderer has the light of; see GetView3DHour().
+	uint peak_level = 0; ///< Highest height level of the chunks built so far; more snow lies higher up.
 
 	bool main_view = false; ///< Whether this is the 3D view in place of the main view, rather than a window of its own.
 	Point main_scrollpos{INT_MIN, INT_MIN}; ///< Where the 2D main view was when we last looked; it moves us when it moves.
@@ -134,6 +139,8 @@ class View3DWindow : public Window {
 	std::unique_ptr<SpriteAtlas> atlas; ///< The sprites of the 2D game that the chunks use.
 	std::unique_ptr<ModelPack> model_pack; ///< The package of 3D models, if there is one.
 	std::vector<ModelInstance> vehicle_models; ///< The vehicles in view that are drawn with a 3D model.
+	std::vector<ModelInstance> lock_models; ///< The gates of locks in view; reused.
+	std::vector<TerrainVertex> moving_water; ///< The water in the chambers of locks in view.
 	std::vector<SpriteVertex> vehicle_sprites; ///< The vehicles in view.
 	std::vector<VehicleSpritePlace> vehicle_places; ///< Where the vehicles in view are, to find the one below the cursor.
 	uint64_t vehicle_hash = 0; ///< Hash of the vehicles in the last image, to see whether any moved.
@@ -173,6 +180,7 @@ class View3DWindow : public Window {
 	std::vector<SpriteVertex> small_sprites; ///< Vehicles in a small view; reused.
 	std::vector<VehicleSpritePlace> small_places; ///< Places of the vehicles in a small view; not used, but needed to find them.
 	std::vector<ModelInstance> small_models; ///< Models in a small view; reused.
+	std::vector<TerrainVertex> small_water; ///< The water in the chambers of locks in a small view; reused.
 
 	/** A picture for a button of a construction window. */
 	struct Picture {
@@ -865,16 +873,36 @@ public:
 			AddPowerLinePreview(preview.start, preview.end, *this->model_pack, this->vehicle_models);
 			return;
 		}
-		if ((_thd.drawstyle & HT_DRAG_MASK) != HT_RECT || _thd.pos.x < 0 || _thd.pos.y < 0) return;
+		HighLightStyle style = _thd.drawstyle & HT_DRAG_MASK;
+		if ((style != HT_RECT && style != HT_RAIL && style != HT_LINE) || _thd.pos.x < 0 || _thd.pos.y < 0) return;
 		if (preview.kind == View3DPreview::Kind::None && !GetRailToolPreview(preview) && !GetRoadToolPreview(preview)) return;
+		/* Track goes where the 2D views draw the autorail selection; anything else fills the selected rectangle. */
+		if ((style == HT_RECT) == (preview.kind == View3DPreview::Kind::Track)) return;
 
 		uint x0 = _thd.pos.x / TILE_SIZE, y0 = _thd.pos.y / TILE_SIZE;
 		uint w = std::max(1, _thd.size.x / static_cast<int>(TILE_SIZE)), h = std::max(1, _thd.size.y / static_cast<int>(TILE_SIZE));
-		/* A large drag would put a lot of models on the screen; the selection on the ground still shows it. */
-		if (w * h > 256) return;
+		/* A large drag would put a lot of models on the screen; the selection on the ground still shows it.
+		 * Track and road are thin pieces along a line, so they can go much further. */
+		uint limit = preview.kind == View3DPreview::Kind::Track ? 128 * 128 : (preview.kind == View3DPreview::Kind::Road ? 1024 : 256);
+		if (w * h > limit) return;
 		for (uint y = y0; y < y0 + h && y < Map::SizeY(); y++) {
 			for (uint x = x0; x < x0 + w && x < Map::SizeX(); x++) {
-				AddPreviewModel(preview, TileXY(x, y), preview.axis == Axis::X ? y - y0 : x - x0, *this->model_pack, this->vehicle_models);
+				TileIndex tile = TileXY(x, y);
+				switch (preview.kind) {
+					case View3DPreview::Kind::Track: {
+						Track track;
+						bool red;
+						GetTileMark(tile, track, red);
+						AddTrackPreviewModel(preview, tile, track, red, *this->model_pack, this->vehicle_models);
+						break;
+					}
+					case View3DPreview::Kind::Road:
+						AddRoadPreviewModel(preview, tile, w * h == 1 ? preview.road_bits : AxisToRoadBits(preview.axis), *this->model_pack, this->vehicle_models);
+						break;
+					default:
+						AddPreviewModel(preview, tile, preview.axis == Axis::X ? y - y0 : x - x0, *this->model_pack, this->vehicle_models);
+						break;
+				}
 			}
 		}
 	}
@@ -1005,19 +1033,19 @@ public:
 
 		bool geometry_changed = (this->view_changed || this->terrain_changed) && this->UpdateChunks(this->camera, view->current_x, view->current_y, this->visible_chunks, true);
 
+		/* Locks move their gates and water for the ships in them, and the ships float on that water. */
+		this->AddLocks(this->visible_chunks, this->lock_models, this->moving_water);
 		/* Vehicles move all the time, so they are looked up for every image. */
 		Matrix4 view_proj = this->camera.GetProjectionMatrix(static_cast<float>(view->current_x) / view->current_y, this->renderer->HomogeneousDepth()) * this->camera.GetViewMatrix();
 		BuildVehicleSprites(this->camera, Frustum3D(view_proj), *this->atlas, this->model_pack.get(), this->vehicle_sprites, this->vehicle_places, this->vehicle_models);
+		this->vehicle_models.insert(this->vehicle_models.end(), this->lock_models.begin(), this->lock_models.end());
 		/* Moving parts of buildings are drawn anew for every image, like vehicles. */
 		float seconds = std::chrono::duration<float>(now - this->opened).count();
-		for (Renderer3D::ChunkID id : this->visible_chunks) {
-			for (const AnimatedPart &part : this->chunks[id].parts) this->vehicle_models.push_back(part.Place(seconds));
-			for (const auto &[tile, models] : this->chunks[id].live) this->vehicle_models.insert(this->vehicle_models.end(), models.begin(), models.end());
-		}
+		this->AddMovingParts(this->camera, this->visible_chunks, seconds, this->vehicle_models);
 		this->AddPreviewModels();
 		this->AddLabels(view_proj, view->current_x, view->current_y);
 		this->AddCursorModels(seconds);
-		uint64_t hash = HashMoving(this->vehicle_sprites, this->vehicle_models);
+		uint64_t hash = HashMoving(this->vehicle_sprites, this->vehicle_models, this->moving_water);
 		bool vehicles_changed = hash != this->vehicle_hash;
 
 		this->renderer->UpdateGroundTextures(*this->ground_textures);
@@ -1031,11 +1059,79 @@ public:
 
 		this->weather = weather;
 		this->weather_drawn = now;
-		this->renderer->SetWeather(weather);
-		this->renderer->Render(0, view->current_x, view->current_y, this->camera, this->visible_chunks, this->vehicle_sprites, this->vehicle_models);
+		this->renderer->SetWeather(this->WithPeak(weather));
+		this->renderer->Render(0, view->current_x, view->current_y, this->camera, this->visible_chunks, this->vehicle_sprites, this->vehicle_models, this->moving_water);
 		this->view_changed = false;
 		this->vehicle_hash = hash;
 		this->PollRenderer();
+	}
+
+	/**
+	 * The weather with the height of the highest ground seen, so that more snow lies higher up.
+	 * The highest ground counts as at least 16 height levels, so on flat maps no hill gets a white top of its own.
+	 * @param weather The weather.
+	 * @return The weather with Weather3D::peak.
+	 */
+	Weather3D WithPeak(Weather3D weather) const
+	{
+		static constexpr uint MIN_PEAK = 16;
+		weather.peak = std::max(this->peak_level, MIN_PEAK) * HEIGHT_LEVEL_SIZE;
+		return weather;
+	}
+
+	/**
+	 * What moving parts, smoke and people look like at this moment.
+	 * @param seconds Seconds since the window opened.
+	 * @return The scene.
+	 */
+	PartScene GetPartScene(float seconds) const
+	{
+		PartScene scene;
+		scene.seconds = seconds;
+		scene.night = GetLighting3D(this->hour).lamps;
+		const Weather3D &w = this->weather;
+		/* People light their fires when it is cold, and fewer of them in summer. */
+		scene.house_smoke = std::clamp(0.22f + 0.6f * w.bare + 0.4f * w.cover + 0.15f * w.overcast - 0.15f * w.dry, 0.1f, 0.95f);
+		/* Without wind smoke still leans a little, so it does not look like a column. */
+		scene.wind_x = 0.18f + 1.6f * w.wind_x;
+		scene.wind_y = 0.08f + 1.6f * w.wind_y;
+		scene.people = (1.0f - 0.75f * scene.night) * (1.0f - 0.65f * std::max(w.rain, w.snow)) * (1.0f - 0.3f * w.fog);
+		if (this->model_pack != nullptr) {
+			if (const ModelPack::Entry *puff = this->model_pack->Find(ModelKind::Effect, 0, 0); puff != nullptr) {
+				scene.puff = puff->model;
+				scene.puff_scale = puff->scale;
+			}
+			for (uint i = 0; i < scene.walkers.size(); i++) {
+				const ModelPack::Entry *walker = this->model_pack->Find(ModelKind::Pedestrian, 0, i);
+				scene.walkers[i] = walker == nullptr ? UINT_MAX : walker->model;
+			}
+		} else {
+			scene.walkers.fill(UINT_MAX);
+		}
+		return scene;
+	}
+
+	/**
+	 * Add what moves by itself in some chunks: the moving parts of buildings, smoke from chimneys, people on the pavements, and live models such as signals.
+	 * @param camera The camera that looks at them.
+	 * @param chunks The chunks.
+	 * @param seconds Seconds since the window opened.
+	 * @param models The models to add to.
+	 */
+	void AddMovingParts(const Camera3D &camera, std::span<const Renderer3D::ChunkID> chunks, float seconds, std::vector<ModelInstance> &models)
+	{
+		PartScene scene = this->GetPartScene(seconds);
+		/* People are too small to see from far away. */
+		static constexpr float PEOPLE_DISTANCE = 2200.0f;
+		const bool people = camera.distance < PEOPLE_DISTANCE;
+		for (Renderer3D::ChunkID id : chunks) {
+			const ChunkState &chunk = this->chunks[id];
+			for (const AnimatedPart &part : chunk.parts) part.Place(scene, models);
+			if (people) {
+				for (const Walkway &walkway : chunk.walkways) walkway.Place(scene, models);
+			}
+			for (const auto &[tile, live] : chunk.live) models.insert(models.end(), live.begin(), live.end());
+		}
 	}
 
 	/**
@@ -1173,18 +1269,36 @@ private:
 	 * @param models Everything drawn with models that is looked up anew for every image.
 	 * @return The hash.
 	 */
-	static uint64_t HashMoving(std::span<const SpriteVertex> sprites, std::span<const ModelInstance> models)
+	static uint64_t HashMoving(std::span<const SpriteVertex> sprites, std::span<const ModelInstance> models, std::span<const TerrainVertex> water)
 	{
 		uint64_t hash = 0xcbf29ce484222325ULL;
 		const uint8_t *data = reinterpret_cast<const uint8_t *>(sprites.data());
 		for (size_t i = 0; i < sprites.size() * sizeof(SpriteVertex); i++) {
 			hash = (hash ^ data[i]) * 0x100000001b3ULL;
 		}
+		for (const TerrainVertex &vertex : water) hash = (hash ^ std::bit_cast<uint32_t>(vertex.z)) * 0x100000001b3ULL;
 		for (const ModelInstance &instance : models) {
 			hash = (hash ^ instance.model) * 0x100000001b3ULL;
 			for (float f : instance.transform.m) hash = (hash ^ std::bit_cast<uint32_t>(f)) * 0x100000001b3ULL;
 		}
 		return hash;
+	}
+
+	/**
+	 * Get the gates and the water of the locks in some chunks as they are now.
+	 * @param chunks The chunks.
+	 * @param[out] models The gates.
+	 * @param[out] water The water in the chambers.
+	 */
+	void AddLocks(std::span<const Renderer3D::ChunkID> chunks, std::vector<ModelInstance> &models, std::vector<TerrainVertex> &water)
+	{
+		models.clear();
+		water.clear();
+		if (this->model_pack == nullptr || this->model_pack->IsEmpty()) return;
+		BeginLocks3D();
+		for (Renderer3D::ChunkID id : chunks) {
+			for (TileIndex tile : this->chunks[id].locks) AddLockMovingParts(tile, *this->model_pack, models, water);
+		}
 	}
 
 	/** Take a finished image, and have whichever view it is for drawn again. */
@@ -1293,23 +1407,22 @@ private:
 			/* Chunks only seen here are built here; then our own view may have to be drawn again too. */
 			if (this->UpdateChunks(view.camera, view.width, view.height, this->small_chunks, false)) this->view_changed = true;
 
+			this->AddLocks(this->small_chunks, this->lock_models, this->small_water);
 			Matrix4 view_proj = view.camera.GetProjectionMatrix(static_cast<float>(view.width) / view.height, this->renderer->HomogeneousDepth()) * view.camera.GetViewMatrix();
 			BuildVehicleSprites(view.camera, Frustum3D(view_proj), *this->atlas, this->model_pack.get(), this->small_sprites, this->small_places, this->small_models);
+			this->small_models.insert(this->small_models.end(), this->lock_models.begin(), this->lock_models.end());
 			float seconds = std::chrono::duration<float>(now - this->opened).count();
-			for (Renderer3D::ChunkID id : this->small_chunks) {
-				for (const AnimatedPart &part : this->chunks[id].parts) this->small_models.push_back(part.Place(seconds));
-				for (const auto &[tile, models] : this->chunks[id].live) this->small_models.insert(this->small_models.end(), models.begin(), models.end());
-			}
-			uint64_t hash = HashMoving(this->small_sprites, this->small_models);
+			this->AddMovingParts(view.camera, this->small_chunks, seconds, this->small_models);
+			uint64_t hash = HashMoving(this->small_sprites, this->small_models, this->small_water);
 			/* Rain, snow and a change of the weather need a new image as well. */
 			Weather3D weather = GetWeather3D();
 			if (!view.changed && hash == view.hash && !weather.IsMoving() && weather.LooksLike(view.weather)) continue;
 			view.weather = weather;
-			this->renderer->SetWeather(weather);
+			this->renderer->SetWeather(this->WithPeak(weather));
 
 			this->renderer->UpdateGroundTextures(*this->ground_textures);
 			this->renderer->UpdateSpriteAtlas(*this->atlas);
-			this->renderer->Render(view.target, view.width, view.height, view.camera, this->small_chunks, this->small_sprites, this->small_models);
+			this->renderer->Render(view.target, view.width, view.height, view.camera, this->small_chunks, this->small_sprites, this->small_models, this->small_water);
 			view.changed = false;
 			view.hash = hash;
 			this->next_small_view = index + 1;
@@ -1552,8 +1665,11 @@ private:
 					chunk.hash = this->scratch_mesh.hash;
 					chunk.min_height = this->scratch_mesh.min_height;
 					chunk.max_height = this->scratch_mesh.max_height;
+					this->peak_level = std::max(this->peak_level, chunk.max_height);
 					chunk.parts = this->scratch_mesh.parts;
+					chunk.walkways = this->scratch_mesh.walkways;
 					chunk.live = this->scratch_mesh.live;
+					chunk.locks = this->scratch_mesh.locks;
 					this->RememberTileKeys(cx, cy);
 
 					if (std::chrono::steady_clock::now() - start > BUILD_BUDGET) out_of_time = true;

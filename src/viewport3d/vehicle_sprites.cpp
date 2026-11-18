@@ -9,6 +9,7 @@
 
 #include "../stdafx.h"
 #include "vehicle_sprites.h"
+#include "lock3d.h"
 #include "../effectvehicle_base.h"
 #include "../effectvehicle_func.h"
 #include "../transparency.h"
@@ -184,6 +185,8 @@ static bool AddVehicleModel(const Vehicle *v, const ModelPack *pack, std::vector
 		up.x * s, up.y * s, up.z * s, 0,
 		static_cast<float>(v->x_pos), static_cast<float>(v->y_pos), v->z_pos * WORLD_Z_SCALE, 1,
 	};
+	/* In the chamber of a lock a ship floats on its water, which rises and falls in its own time. */
+	GetLockShipHeight(v, instance.transform.m[14]);
 
 	/* The load shows how full the vehicle is; a little cargo shows a little load. */
 	instance.load = 0;

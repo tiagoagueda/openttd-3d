@@ -22,8 +22,9 @@ float GroundNoise(vec2 p)
  * @param at The place on the map, in tiles.
  * @param land How much snow can lie here: 1 on the landscape, less on roads, 0 on water.
  * @param light The light on the ground here, 1 on flat land.
+ * @param z The height of the ground in world units; there is more snow higher up.
  */
-vec3 GroundWeather(vec3 ground, vec2 at, float land, float light)
+vec3 GroundWeather(vec3 ground, vec2 at, float land, float light, float z)
 {
 	/* Only what is green changes with the season. */
 	float green = clamp((ground.g - max(ground.r, ground.b)) * 7.0, 0.0, 1.0) * step(0.001, land);
@@ -37,7 +38,7 @@ vec3 GroundWeather(vec3 ground, vec2 at, float land, float light)
 
 	/* Snow comes in patches that grow until they meet. */
 	float lumps = 0.65 * GroundNoise(at * 0.9) + 0.35 * GroundNoise(at * 3.1 + vec2(7.3, 1.9));
-	float snow = smoothstep(0.0, 0.3, u_weather.x * 1.3 - lumps) * land;
+	float snow = smoothstep(0.0, 0.3, SnowCover(z) * 1.3 - lumps) * land;
 	/* Snow is so light that slopes would stand out as lighter and darker tiles; take half of that away. */
 	vec3 white = SNOW_COLOUR * (0.94 + 0.06 * GroundNoise(at * 9.0)) / sqrt(clamp(light, 0.5, 1.6));
 

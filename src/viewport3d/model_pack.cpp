@@ -315,6 +315,7 @@ void ModelPack::ReadEntries(const nlohmann::json &list, std::initializer_list<st
 				part.swing = item.value("swing", 0.0f);
 				part.period = std::max(0.05f, item.value("period", 1.0f));
 				part.lift = item.value("lift", 0.0f);
+				part.night = std::clamp(item.value("night", 0.0f), 0.0f, 0.99f);
 				parts.push_back(part);
 			}
 		}
@@ -380,7 +381,7 @@ ModelPack::ModelPack()
 				{"dock", ModelKind::Dock}, {"buoy", ModelKind::Buoy}, {"rail_depot", ModelKind::RailDepot},
 				{"road_depot", ModelKind::RoadDepot}, {"ship_depot", ModelKind::ShipDepot},
 				{"tree", ModelKind::Tree}, {"field", ModelKind::Field}, {"rough", ModelKind::Rough}, {"rocks", ModelKind::Rocks}, {"effect", ModelKind::Effect}, {"track", ModelKind::Track}, {"signal", ModelKind::Signal}, {"fence", ModelKind::Fence}, {"catenary", ModelKind::Catenary}, {"bridge", ModelKind::Bridge}, {"tunnel", ModelKind::Tunnel}, {"crossing", ModelKind::Crossing}, {"roadside", ModelKind::Roadside},
-				{"construction", ModelKind::Construction}, {"waypoint", ModelKind::Waypoint}, {"lock", ModelKind::Lock}, {"disaster", ModelKind::Disaster}, {"interface", ModelKind::Interface}, {"power", ModelKind::Power},
+				{"construction", ModelKind::Construction}, {"waypoint", ModelKind::Waypoint}, {"lock", ModelKind::Lock}, {"disaster", ModelKind::Disaster}, {"interface", ModelKind::Interface}, {"power", ModelKind::Power}, {"pedestrian", ModelKind::Pedestrian},
 			}, loaded);
 		}
 

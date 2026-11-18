@@ -58,7 +58,7 @@ public:
 	/** Set the colour around what is drawn in the following images, as 0xRRGGBBAA; 0 for the sky. */
 	void SetBackground(uint32_t rgba) { this->background = rgba; }
 	bool IsBusy() const { return this->pending; }
-	void Render(uint target_id, uint width, uint height, const Camera3D &camera, std::span<const ChunkID> chunks, std::span<const SpriteVertex> sprites, std::span<const ModelInstance> models);
+	void Render(uint target_id, uint width, uint height, const Camera3D &camera, std::span<const ChunkID> chunks, std::span<const SpriteVertex> sprites, std::span<const ModelInstance> models, std::span<const TerrainVertex> moving_water = {});
 	bool Poll(uint *target_id = nullptr);
 	void ReleaseTarget(uint target_id);
 

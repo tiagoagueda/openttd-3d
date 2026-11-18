@@ -55,6 +55,7 @@ enum class ModelKind : uint8_t {
 	Disaster, ///< Disaster vehicles, by disaster vehicle type.
 	Interface, ///< Parts of the interface in the world: 0 label post, 1 selection edge, 2 selection corner, 3 cursor arrow, 4 hover bracket.
 	Power, ///< Power lines: 0 pylon, 1 overhead substation, 2 underground substation, 3 transition pylon, 4 a piece of conductor.
+	Pedestrian, ///< People on the pavements: four steps of walking each, 0 to 3 and 4 to 7 for two kinds of people.
 };
 
 /**
@@ -72,6 +73,7 @@ public:
 		float swing = 0; ///< Radians it swings to either side, back and forth.
 		float period = 1; ///< Seconds for one swing back and forth.
 		float lift = 0; ///< World units it moves along its axis and back, once per period.
+		float night = 0; ///< When above 0, the part shows only at night, see-through by this much: the beams of a lighthouse.
 	};
 
 	/** A model for something on the map. */

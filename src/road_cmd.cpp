@@ -241,8 +241,6 @@ static const std::array<NonSteepSlopeIndexArray<RoadBits>, 2> _invalid_tileh_slo
 	}}}
 }};
 
-static Foundation GetRoadFoundation(Slope tileh, RoadBits bits);
-
 /**
  * Is it allowed to remove the given road bits from the given tile?
  * @param tile      the tile to remove the road from
@@ -1289,7 +1287,7 @@ struct DrawRoadTileStruct {
  * @param bits The RoadBits part
  * @return The resulting Foundation
  */
-static Foundation GetRoadFoundation(Slope tileh, RoadBits bits)
+Foundation GetRoadFoundation(Slope tileh, RoadBits bits)
 {
 	/* Flat land and land without a road doesn't require a foundation */
 	if (tileh == SLOPE_FLAT || bits.None()) return Foundation::None;
