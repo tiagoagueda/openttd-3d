@@ -23,6 +23,7 @@ void main()
 	gl_Position = mul(u_viewProj, world);
 	vec3 normal = normalize(mul(model, vec4(a_normal, 0.0)).xyz);
 	vec3 colour = mix(a_color0.rgb * i_data4.rgb, a_color0.rgb, a_color0.a);
+	colour = ModelWeather(colour, a_color0.a, normal, i_data3.xyz, a_position.z, 1.0);
 	v_color0 = vec4(colour, 1.0);
 	v_texcoord0 = vec3(u_modelLight.x, u_modelLight.y * max(dot(normal, u_modelSun.xyz), 0.0), 0.0);
 	v_texcoord1 = mul(u_shadowMtx, world);

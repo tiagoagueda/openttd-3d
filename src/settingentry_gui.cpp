@@ -629,6 +629,7 @@ SettingsContainer &GetSettingsTree()
 #ifdef WITH_VIEWPORT3D
 				viewports->Add(new SettingEntry("gui.view3d_main"));
 				viewports->Add(new SettingEntry("gui.view3d_interface"));
+				viewports->Add(new SettingEntry("gui.view3d_weather"));
 #endif
 				/* While the horizontal scrollwheel scrolling is written as general code, only
 				 *  the cocoa (OSX) driver generates input for it.

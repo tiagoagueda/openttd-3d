@@ -17,5 +17,7 @@ add_files(
     vehicle_sprites.h
     view3d_gui.cpp
     view3d_gui.h
+    weather3d.cpp
+    weather3d.h
     CONDITION VIEWPORT3D_ENABLED
 )

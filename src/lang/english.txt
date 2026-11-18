@@ -1729,6 +1729,14 @@ STR_CONFIG_SETTING_SCROLLMODE_LMB                               :Move map with L
 STR_CONFIG_SETTING_VIEW3D_MAIN                                  :Show the map in 3D: {STRING2}
 STR_CONFIG_SETTING_VIEW3D_INTERFACE                             :3D-styled windows and buttons: {STRING2}
 STR_CONFIG_SETTING_VIEW3D_INTERFACE_HELPTEXT                    :While the map is shown in 3D, draw windows, buttons and the toolbar shaded like real raised and pressed buttons. Needs a 32bpp blitter
+STR_CONFIG_SETTING_VIEW3D_WEATHER                               :Seasons and weather in the 3D view: {STRING2}
+STR_CONFIG_SETTING_VIEW3D_WEATHER_HELPTEXT                      :Let the 3D view follow the time of the year: fresh green in spring, autumn colours, bare trees and snow in winter, and a dry season in the tropics. With weather there are also clouds, rain, thunderstorms, snowfall and fog. It only changes how the map looks, not the game
+###length 4
+STR_CONFIG_SETTING_VIEW3D_WEATHER_OFF                           :Off
+STR_CONFIG_SETTING_VIEW3D_WEATHER_SEASONS                       :Seasons only
+STR_CONFIG_SETTING_VIEW3D_WEATHER_OCCASIONAL                    :Seasons and some weather
+STR_CONFIG_SETTING_VIEW3D_WEATHER_FREQUENT                      :Seasons and a lot of weather
+
 STR_CONFIG_SETTING_VIEW3D_MAIN_HELPTEXT                         :Draw the main view of the map in 3D. Drag with the right mouse button to move, hold Ctrl while dragging to rotate and tilt, and use the mouse wheel to zoom. Extra viewports stay in 2D
 
 STR_CONFIG_SETTING_SMOOTH_SCROLLING                             :Smooth viewport scrolling: {STRING2}

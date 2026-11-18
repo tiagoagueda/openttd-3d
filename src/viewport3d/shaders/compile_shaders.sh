@@ -52,3 +52,5 @@ compile vs_model_instanced vertex
 compile vs_shadow_instanced vertex
 compile vs_sky vertex
 compile fs_sky fragment
+compile vs_weather vertex
+compile fs_weather fragment

@@ -1,6 +1,9 @@
 /*
  * Haze in the distance for the OpenTTD 3D viewport: far away things fade into the colour of the sky at the horizon.
+ * The weather changes the colours before the haze is added.
  */
+
+#include "weather.sh"
 
 /* rgb: colour of the haze. */
 uniform vec4 u_hazeColour;
@@ -23,5 +26,5 @@ float HazeAmount(vec4 world)
  */
 vec3 ApplyHaze(vec3 colour, float amount)
 {
-	return mix(colour, u_hazeColour.rgb, amount);
+	return mix(WeatherGrade(colour), u_hazeColour.rgb, amount);
 }

@@ -50,6 +50,8 @@ vec3 TerrainAverage(float layer)
 	return texture2DArrayLod(s_terrain, vec3(0.5, 0.5, layer), 16.0).rgb;
 }
 
+#include "weather_terrain.sh"
+
 /* Water of the model package: two copies of the texture drift across each other. */
 vec3 Water(vec2 at, float t)
 {
@@ -66,6 +68,8 @@ void main()
 	float t = u_water.w;
 	float alpha = 1.0;
 	vec3 ground;
+	/* How much snow can lie here. */
+	float land = 1.0;
 
 	/* The same texture, looked at from much further away, makes some regions lighter and others darker,
 	 * so the eye does not find the texture repeating. */
@@ -93,12 +97,14 @@ void main()
 			+ share.a * Terrain(at, u_layers.y + 2.0);
 		/* The sprites are shaded for their slope already; the vertex colour lights the tile for its slope as well. */
 		ground += sprites.rgb * (u_layers.z / max(v_color0.g, 0.05));
+		land = 0.6 * (1.0 - IsWaterColour(ground));
 	} else if (shallows || layer < u_terrain.x - 0.5) {
 
 		if (shallows || abs(layer - u_water.x) < 0.5) {
 			/* How deep the water is: the vertices hold the height of the ground under it.
 			 * The edge of the water wanders a little from the straight line across the tile, and the surface goes up and down. */
 			float depth = 1.0 - v_color0.a * 255.0 / 64.0;
+			land = 0.0;
 			float wander = Terrain(at * 2.7, LAYER_GRASS).g / max(TerrainAverage(LAYER_GRASS).g, 0.01) - 1.0;
 			float surge = sin(t * 1.3 + (at.x + at.y) * 2.1) * sin(t * 0.7 + (at.x - at.y) * 1.3);
 			float near_land = 1.0 - smoothstep(0.5, 0.9, depth);
@@ -143,6 +149,7 @@ void main()
 
 		if (water || coast) {
 			float wet = water ? 1.0 : IsWaterColour(ground);
+			land = 1.0 - wet;
 			/* Waves of a few sizes and directions, moving at their own speeds, lighten and darken the water. */
 			float waves = 0.5 * sin(dot(at, vec2(5.3, 2.1)) + t * 1.1) + 0.3 * sin(dot(at, vec2(-3.7, 7.9)) + t * 1.6)
 				+ 0.2 * sin(dot(at, vec2(17.3, -11.1)) + t * 2.3) * sin(dot(at, vec2(9.1, 14.7)) - t * 1.9);
@@ -164,6 +171,8 @@ void main()
 			}
 		}
 	}
+
+	ground = GroundWeather(ground, v_texcoord0.xy, land, v_color0.g * 2.0);
 
 	/* In shadow only the light from all around is left, about half of the light on flat ground. */
 	float sun = ShadowVisibility(v_texcoord1);

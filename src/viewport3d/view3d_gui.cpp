@@ -127,6 +127,8 @@ class View3DWindow : public Window {
 	TerrainChunkMesh scratch_mesh; ///< Reused while building chunks.
 	std::unique_ptr<GroundTextures> ground_textures; ///< The ground textures that the chunks use.
 	bool terrain_textures = false; ///< Whether the landscape has the ground textures of the model package.
+	Weather3D weather; ///< The weather and season of the last image of our own view.
+	std::chrono::steady_clock::time_point weather_drawn; ///< When that image was asked for.
 	std::unique_ptr<SpriteAtlas> atlas; ///< The sprites of the 2D game that the chunks use.
 	std::unique_ptr<ModelPack> model_pack; ///< The package of 3D models, if there is one.
 	std::vector<ModelInstance> vehicle_models; ///< The vehicles in view that are drawn with a 3D model.
@@ -158,6 +160,7 @@ class View3DWindow : public Window {
 		uint height = 0; ///< Height of the viewport in pixels.
 		bool changed = true; ///< Whether the camera or size changed since the last image.
 		uint64_t hash = 0; ///< Hash of the vehicles in the last image.
+		Weather3D weather; ///< The weather and season of the last image.
 		std::chrono::steady_clock::time_point rendered{}; ///< When it was last looked at for a new image.
 	};
 	std::vector<SmallView> small_views; ///< The viewports of other windows.
@@ -1003,8 +1006,16 @@ public:
 
 		this->renderer->UpdateGroundTextures(*this->ground_textures);
 		this->renderer->UpdateSpriteAtlas(*this->atlas);
-		if (!this->view_changed && !geometry_changed && !vehicles_changed) return;
 
+		/* Rain and snow keep falling, so they need a new image all the time, though no more often than the eye needs;
+		 * other weather and the seasons only when they have changed enough to see. */
+		Weather3D weather = GetWeather3D();
+		bool weather_changed = !weather.LooksLike(this->weather) || (weather.IsMoving() && now - this->weather_drawn > std::chrono::milliseconds(30));
+		if (!this->view_changed && !geometry_changed && !vehicles_changed && !weather_changed) return;
+
+		this->weather = weather;
+		this->weather_drawn = now;
+		this->renderer->SetWeather(weather);
 		this->renderer->Render(0, view->current_x, view->current_y, this->camera, this->visible_chunks, this->vehicle_sprites, this->vehicle_models);
 		this->view_changed = false;
 		this->vehicle_hash = hash;
@@ -1274,7 +1285,11 @@ private:
 				for (const auto &[tile, models] : this->chunks[id].live) this->small_models.insert(this->small_models.end(), models.begin(), models.end());
 			}
 			uint64_t hash = HashMoving(this->small_sprites, this->small_models);
-			if (!view.changed && hash == view.hash) continue;
+			/* Rain, snow and a change of the weather need a new image as well. */
+			Weather3D weather = GetWeather3D();
+			if (!view.changed && hash == view.hash && !weather.IsMoving() && weather.LooksLike(view.weather)) continue;
+			view.weather = weather;
+			this->renderer->SetWeather(weather);
 
 			this->renderer->UpdateGroundTextures(*this->ground_textures);
 			this->renderer->UpdateSpriteAtlas(*this->atlas);

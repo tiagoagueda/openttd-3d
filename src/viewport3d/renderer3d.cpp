@@ -33,11 +33,29 @@
 #include "shaders/vs_shadow_instanced.bin.h"
 #include "shaders/vs_sky.bin.h"
 #include "shaders/fs_sky.bin.h"
+#include "shaders/vs_weather.bin.h"
+#include "shaders/fs_weather.bin.h"
 
 #include "../safeguards.h"
 
 /** Texels along each side of the shadow map. */
 static constexpr uint16_t SHADOW_MAP_SIZE = 2048;
+
+/** Number of drops of rain or flakes of snow in the cube that is repeated all over the world. */
+static constexpr uint NUM_DROPS = 16000;
+
+/** A value between two others. */
+static inline float Lerp(float a, float b, float t)
+{
+	return a + (b - a) * t;
+}
+
+/** One corner of a drop of rain or a flake of snow. */
+struct DropVertex {
+	float x, y, z; ///< Place of the drop in the cube, each from 0 to 1.
+	float u, v; ///< Which corner, each -1 or 1.
+	float r1, r2; ///< Two numbers from 0 to 1 that differ per drop.
+};
 
 /** Receives messages from bgfx. */
 struct Renderer3DCallback : public bgfx::CallbackI {
@@ -130,6 +148,18 @@ struct Renderer3D::Impl {
 	bgfx::VertexLayout sky_layout;
 	bgfx::VertexBufferHandle sky_vertices = BGFX_INVALID_HANDLE; ///< One triangle that covers the screen.
 	std::chrono::steady_clock::time_point start = std::chrono::steady_clock::now(); ///< When the renderer started; things move with the time since.
+	Weather3D weather; ///< The weather and season to draw.
+	bgfx::UniformHandle weather_params = BGFX_INVALID_HANDLE; ///< Snow on the ground, wet ground, clouds and lightning.
+	bgfx::UniformHandle season_params = BGFX_INVALID_HANDLE; ///< How far the year is, for leaves and grass.
+	bgfx::ProgramHandle drop_program = BGFX_INVALID_HANDLE; ///< Draws rain and snow.
+	bgfx::VertexLayout drop_layout;
+	bgfx::VertexBufferHandle drop_vertices = BGFX_INVALID_HANDLE; ///< The drops in their cube.
+	bgfx::UniformHandle drop_box = BGFX_INVALID_HANDLE; ///< Where the cube of drops is.
+	bgfx::UniformHandle drop_move = BGFX_INVALID_HANDLE; ///< How far the drops have fallen.
+	bgfx::UniformHandle drop_shape = BGFX_INVALID_HANDLE; ///< Size of the drops, and whether they are snow.
+	bgfx::UniformHandle drop_fall = BGFX_INVALID_HANDLE; ///< Which way the drops fall.
+	bgfx::UniformHandle drop_look = BGFX_INVALID_HANDLE; ///< Which way the camera looks.
+	bgfx::UniformHandle drop_colour = BGFX_INVALID_HANDLE; ///< Colour of the drops.
 	bgfx::IndexBufferHandle quad_indices = BGFX_INVALID_HANDLE; ///< Indices for a full chunk of quads, shared by all chunks.
 	/** Where the images of one view are drawn and read back. */
 	struct Target {
@@ -291,6 +321,37 @@ static bgfx::ShaderHandle CreateShader(const ShaderVariants &variants)
 	static const float SKY_TRIANGLE[] = {-1, -1, 3, -1, -1, 3};
 	impl.sky_vertices = bgfx::createVertexBuffer(bgfx::makeRef(SKY_TRIANGLE, sizeof(SKY_TRIANGLE)), impl.sky_layout);
 
+	/* Rain and snow: drops at made-up places in a cube, four corners each. */
+	impl.weather_params = bgfx::createUniform("u_weather", bgfx::UniformType::Vec4);
+	impl.season_params = bgfx::createUniform("u_season", bgfx::UniformType::Vec4);
+	impl.drop_box = bgfx::createUniform("u_dropBox", bgfx::UniformType::Vec4);
+	impl.drop_move = bgfx::createUniform("u_dropMove", bgfx::UniformType::Vec4);
+	impl.drop_shape = bgfx::createUniform("u_dropShape", bgfx::UniformType::Vec4);
+	impl.drop_fall = bgfx::createUniform("u_dropFall", bgfx::UniformType::Vec4);
+	impl.drop_look = bgfx::createUniform("u_dropLook", bgfx::UniformType::Vec4);
+	impl.drop_colour = bgfx::createUniform("u_dropColour", bgfx::UniformType::Vec4);
+	impl.drop_program = bgfx::createProgram(CreateShader(SHADER_VARIANTS(vs_weather)), CreateShader(SHADER_VARIANTS(fs_weather)), true);
+	impl.drop_layout.begin()
+		.add(bgfx::Attrib::Position, 3, bgfx::AttribType::Float)
+		.add(bgfx::Attrib::TexCoord0, 4, bgfx::AttribType::Float)
+		.end();
+	{
+		const bgfx::Memory *drops = bgfx::alloc(NUM_DROPS * 4 * sizeof(DropVertex));
+		DropVertex *drop = reinterpret_cast<DropVertex *>(drops->data);
+		/* The same made-up places every time; they only have to look scattered. */
+		uint32_t state = 0x2F6E2B1;
+		auto random = [&state]() {
+			state = state * 1664525 + 1013904223;
+			return static_cast<float>(state >> 8) / static_cast<float>(1 << 24);
+		};
+		for (uint i = 0; i < NUM_DROPS; i++) {
+			float x = random(), y = random(), z = random(), r1 = random(), r2 = random();
+			/* In the order of the shared quad indices. */
+			for (auto [u, v] : {std::pair{-1.0f, -1.0f}, std::pair{1.0f, -1.0f}, std::pair{-1.0f, 1.0f}, std::pair{1.0f, 1.0f}}) *drop++ = {x, y, z, u, v, r1, r2};
+		}
+		impl.drop_vertices = bgfx::createVertexBuffer(drops, impl.drop_layout);
+	}
+
 	/* The shadow map; without a depth format that can be compared when sampling, there are no shadows, but the shaders still need a map. */
 	impl.shadow_program = bgfx::createProgram(CreateShader(SHADER_VARIANTS(vs_shadow)), CreateShader(SHADER_VARIANTS(fs_shadow)), true);
 	impl.sprite_shadow_program = bgfx::createProgram(CreateShader(SHADER_VARIANTS(vs_sprite)), CreateShader(SHADER_VARIANTS(fs_sprite_shadow)), true);
@@ -367,6 +428,11 @@ Renderer3D::~Renderer3D()
 	for (bgfx::UniformHandle handle : {impl.haze_colour, impl.haze_params, impl.water, impl.sky_matrix, impl.sky_colour, impl.terrain, impl.terrain_sampler, impl.mix_sampler, impl.layers}) {
 		if (bgfx::isValid(handle)) bgfx::destroy(handle);
 	}
+	for (bgfx::UniformHandle handle : {impl.weather_params, impl.season_params, impl.drop_box, impl.drop_move, impl.drop_shape, impl.drop_fall, impl.drop_look, impl.drop_colour}) {
+		if (bgfx::isValid(handle)) bgfx::destroy(handle);
+	}
+	if (bgfx::isValid(impl.drop_program)) bgfx::destroy(impl.drop_program);
+	if (bgfx::isValid(impl.drop_vertices)) bgfx::destroy(impl.drop_vertices);
 	if (bgfx::isValid(impl.sky_program)) bgfx::destroy(impl.sky_program);
 	if (bgfx::isValid(impl.sky_vertices)) bgfx::destroy(impl.sky_vertices);
 	if (bgfx::isValid(impl.ground_sampler)) bgfx::destroy(impl.ground_sampler);
@@ -592,6 +658,15 @@ void Renderer3D::ClearChunks()
 	this->impl->chunks.clear();
 }
 
+/**
+ * Set the weather and season of the images that are made from now on.
+ * @param weather The weather.
+ */
+void Renderer3D::SetWeather(const Weather3D &weather)
+{
+	this->impl->weather = weather;
+}
+
 /** How the sun looks at the map, for the shadow map. */
 struct ShadowView {
 	Matrix4 view; ///< World to the sun's view.
@@ -736,7 +811,9 @@ void Renderer3D::Render(uint target_id, uint width, uint height, const Camera3D 
 	bgfx::setViewClear(VIEW_SHADOW, BGFX_CLEAR_DEPTH, 0, 1.0f, 0);
 	bgfx::setViewTransform(VIEW_SHADOW, shadow.view.m.data(), shadow.proj.m.data());
 	bgfx::touch(VIEW_SHADOW);
-	const float shadow_params[4] = {impl.shadows ? 1.0f : 0.0f, shadow.bias, 1.0f / SHADOW_MAP_SIZE, 0};
+	/* Clouds and fog take most of the shadows away. */
+	const Weather3D &weather = impl.weather;
+	const float shadow_params[4] = {impl.shadows ? 1.0f : 0.0f, shadow.bias, 1.0f / SHADOW_MAP_SIZE, std::min(0.85f, std::max(weather.overcast, weather.fog))};
 	auto set_shadow = [&]() {
 		bgfx::setTexture(1, impl.shadow_sampler, bgfx::getTexture(impl.shadow_map));
 		bgfx::setUniform(impl.shadow_matrix, shadow.sample.m.data());
@@ -789,8 +866,28 @@ void Renderer3D::Render(uint target_id, uint width, uint height, const Camera3D 
 	/* Far away things fade into the colour of the sky at the horizon; the sky gets deeper blue above it. */
 	static constexpr float HAZE_COLOUR[4] = {0.80f, 0.86f, 0.92f, 1};
 	static constexpr float SKY_COLOUR[4] = {0.40f, 0.60f, 0.86f, 1};
-	const float haze_params[4] = {std::max(250.0f, eye_distance * 1.4f), 1.0f / std::max(800.0f, eye_distance * 5.0f), 0.85f, 0};
-	bgfx::setUniform(impl.haze_colour, HAZE_COLOUR);
+	/* Under clouds the sky and the haze turn grey; fog, and rain and snow a little, bring the haze nearer and make it thicker;
+	 * lightning lights it all up. */
+	const float mist = std::max({weather.fog, 0.3f * weather.rain, 0.4f * weather.snow});
+	const float haze_grey = 0.30f * HAZE_COLOUR[0] + 0.59f * HAZE_COLOUR[1] + 0.11f * HAZE_COLOUR[2];
+	float haze_colour[4], sky_colour[4];
+	for (int i = 0; i < 3; i++) {
+		float cloud = haze_grey * (0.86f - 0.14f * weather.rain);
+		haze_colour[i] = Lerp(HAZE_COLOUR[i], cloud * 1.04f, 0.85f * weather.overcast);
+		sky_colour[i] = Lerp(SKY_COLOUR[i], cloud * (i == 2 ? 0.98f : 0.93f), 0.92f * weather.overcast);
+		sky_colour[i] = Lerp(sky_colour[i], haze_colour[i], weather.fog);
+		haze_colour[i] = std::min(1.0f, haze_colour[i] + 0.5f * weather.flash);
+		sky_colour[i] = std::min(1.0f, sky_colour[i] + 0.6f * weather.flash);
+	}
+	haze_colour[3] = HAZE_COLOUR[3];
+	sky_colour[3] = SKY_COLOUR[3] * (1 - weather.overcast);
+	const float haze_params[4] = {
+		Lerp(std::max(250.0f, eye_distance * 1.4f), eye_distance * 0.55f, mist),
+		1.0f / Lerp(std::max(800.0f, eye_distance * 5.0f), eye_distance * 1.5f, mist),
+		Lerp(0.85f, 0.97f, mist), 0};
+	const float weather_params[4] = {weather.cover, weather.wet, weather.overcast, weather.flash};
+	const float season_params[4] = {weather.autumn, weather.bare, weather.spring, weather.dry};
+	bgfx::setUniform(impl.haze_colour, haze_colour);
 	bgfx::setUniform(impl.haze_params, haze_params);
 	const float water[4] = {static_cast<float>(GROUND_TEXTURE_WATER), static_cast<float>(GROUND_TEXTURE_SHORE), static_cast<float>(GROUND_TEXTURE_SHORE + 18),
 		std::fmod(std::chrono::duration<float>(std::chrono::steady_clock::now() - impl.start).count(), 3600.0f)};
@@ -806,8 +903,10 @@ void Renderer3D::Render(uint target_id, uint width, uint height, const Camera3D 
 	/* Draws are sorted before they are made, so a draw may come before the one these were set for; and they would
 	 * then keep the values of the previous image, which can be of another view. So every draw sets them. */
 	auto set_scene = [&]() {
-		bgfx::setUniform(impl.haze_colour, HAZE_COLOUR);
+		bgfx::setUniform(impl.haze_colour, haze_colour);
 		bgfx::setUniform(impl.haze_params, haze_params);
+		bgfx::setUniform(impl.weather_params, weather_params);
+		bgfx::setUniform(impl.season_params, season_params);
 		bgfx::setUniform(impl.water, water);
 		bgfx::setUniform(impl.terrain, terrain);
 		bgfx::setUniform(impl.layers, layers);
@@ -819,7 +918,8 @@ void Renderer3D::Render(uint target_id, uint width, uint height, const Camera3D 
 	bx::mtxInverse(inverse.m.data(), view_proj.m.data());
 	if (this->background == 0) {
 		bgfx::setUniform(impl.sky_matrix, inverse.m.data());
-		bgfx::setUniform(impl.sky_colour, SKY_COLOUR);
+		bgfx::setUniform(impl.haze_colour, haze_colour);
+		bgfx::setUniform(impl.sky_colour, sky_colour);
 		bgfx::setVertexBuffer(0, impl.sky_vertices);
 		bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_DEPTH_TEST_LEQUAL);
 		bgfx::submit(VIEW_SCENE, impl.sky_program);
@@ -997,6 +1097,61 @@ void Renderer3D::Render(uint target_id, uint width, uint height, const Camera3D 
 			bgfx::submit(VIEW_SHADOW, impl.shadow_instanced_program);
 		}
 		batch.clear();
+	}
+
+	/* Rain and snow: the drops fill a cube around the spot the camera looks at. Two cubes, one twice the size of the other,
+	 * take over from each other as the camera zooms, so drops keep about their size and number on the screen. */
+	if (weather.rain > 0.005f || weather.snow > 0.005f) {
+		const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - impl.start).count();
+		const float zoom = std::log2(eye_distance);
+		const float between = zoom - std::floor(zoom);
+		Vec3 look = Normalise(camera.target - eye);
+		const float drop_look[4] = {look.x, look.y, look.z, 0};
+		Vec3 fall = Normalise(Vec3{weather.wind_x, weather.wind_y, -1});
+
+		auto draw_drops = [&](float size, float show, bool snow, float amount) {
+			uint32_t count = std::min<uint32_t>({static_cast<uint32_t>(NUM_DROPS * amount), NUM_DROPS, MAX_CHUNK_QUADS});
+			if (count == 0 || show < 0.01f) return;
+			/* Snow falls slowly and straighter down than rain. */
+			Vec3 way = snow ? Normalise(Vec3{weather.wind_x * 1.5f, weather.wind_y * 1.5f, -1}) : fall;
+			const double speed = snow ? 0.085 : 0.95;
+			Vec3 centre = camera.target;
+			centre.z += size * 0.12f;
+			float box[4] = {centre.x, centre.y, centre.z, size};
+			float move[4];
+			const float *middle = box;
+			const float direction[3] = {way.x, way.y, way.z};
+			for (int i = 0; i < 3; i++) {
+				/* Minus the middle of the cube, so the drops stay where they are in the world when the camera moves. */
+				double moved = direction[i] * speed * seconds - static_cast<double>(middle[i]) / size + 0.5;
+				move[i] = static_cast<float>(moved - std::floor(moved));
+			}
+			move[3] = show;
+			const float shape[4] = {size * (snow ? 0.0026f : 0.00055f), size * (snow ? 0.0026f : 0.0045f), snow ? 1.0f : 0.0f, static_cast<float>(std::fmod(seconds, 3600.0))};
+			const float drop_fall[4] = {way.x, way.y, way.z, 0};
+			float bright = snow ? 1.0f : 1.0f - 0.25f * weather.overcast + 0.5f * weather.flash;
+			const float colour[4] = {(snow ? 0.97f : 0.78f) * bright, (snow ? 0.98f : 0.84f) * bright, (snow ? 1.0f : 0.94f) * bright, snow ? 0.95f : 0.6f};
+			Matrix4 identity;
+			identity.m[0] = identity.m[5] = identity.m[10] = identity.m[15] = 1;
+			bgfx::setTransform(identity.m.data());
+			bgfx::setVertexBuffer(0, impl.drop_vertices, 0, count * 4);
+			bgfx::setIndexBuffer(impl.quad_indices, 0, count * 6);
+			bgfx::setUniform(impl.drop_box, box);
+			bgfx::setUniform(impl.drop_move, move);
+			bgfx::setUniform(impl.drop_shape, shape);
+			bgfx::setUniform(impl.drop_fall, drop_fall);
+			bgfx::setUniform(impl.drop_look, drop_look);
+			bgfx::setUniform(impl.drop_colour, colour);
+			bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_DEPTH_TEST_LESS | BGFX_STATE_BLEND_ALPHA);
+			bgfx::submit(VIEW_SCENE, impl.drop_program);
+		};
+		const float size = std::exp2(std::floor(zoom));
+		for (bool snow : {false, true}) {
+			float amount = snow ? weather.snow : weather.rain;
+			if (amount <= 0.005f) continue;
+			draw_drops(size, 1 - between, snow, amount);
+			draw_drops(size * 2, between, snow, amount);
+		}
 	}
 
 	/* Copy the finished image into a texture the CPU can read, and ask for its contents. */

@@ -15,6 +15,7 @@
 #include "model3d.h"
 #include "sprite_atlas.h"
 #include "terrain_mesh.h"
+#include "weather3d.h"
 
 #include <unordered_map>
 
@@ -51,6 +52,7 @@ public:
 	void SetFarModel(uint id, uint far);
 	void SetChunk(ChunkID id, const TerrainChunkMesh &mesh);
 	void ClearChunks();
+	void SetWeather(const Weather3D &weather);
 
 	/** Set the colour around what is drawn in the following images, as 0xRRGGBBAA; 0 for the sky. */
 	void SetBackground(uint32_t rgba) { this->background = rgba; }

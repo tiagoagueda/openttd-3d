@@ -277,6 +277,7 @@ void ModelPack::ReadEntries(const nlohmann::json &list, std::initializer_list<st
 			continue;
 		}
 
+		size_t first_new_model = this->models.size();
 		uint model = this->LoadModel(entry.at("model").get<std::string>(), loaded);
 		if (model == UINT_MAX) continue;
 
@@ -324,6 +325,30 @@ void ModelPack::ReadEntries(const nlohmann::json &list, std::initializer_list<st
 		if (result != std::errc{} || end != grfid_text.data() + grfid_text.size()) {
 			Debug(Facility::Misc, Severity::Error, "[viewport3d] {}: bad NewGRF ID '{}'", PACK_INDEX, grfid_text);
 			continue;
+		}
+
+		/* Which leaves change with the seasons. Of the trees, those that keep their leaves all year do not: the firs, spruces and pines
+		 * and the trees of the tropics and of toyland. Elsewhere dark leaves stand for firs, and a model that has them keeps all its leaves. */
+		bool evergreen;
+		if (kind->second == ModelKind::Tree) {
+			static constexpr uint16_t EVERGREEN_TREES[] = {0x01, 0x07, 0x09, 0x0C, 0x0D, 0x0E, 0x13};
+			evergreen = std::ranges::all_of(entry.at("ids"), [](const auto &id) {
+				uint16_t type = id.template get<uint16_t>() & 0x3F;
+				return type >= 0x14 || std::ranges::find(EVERGREEN_TREES, type) != std::end(EVERGREEN_TREES);
+			});
+		} else if (kind->second != ModelKind::Roadside) {
+			/* Buildings use the colours of leaves for lawns, hedges and more, which should not turn red in autumn. */
+			evergreen = true;
+		} else {
+			evergreen = false;
+			for (size_t i = first_new_model; i < this->models.size(); i++) {
+				if (std::ranges::any_of(this->models[i].vertices, [](const ModelVertex &v) { return v.a == ModelVertex::LEAF_EVERGREEN; })) evergreen = true;
+			}
+		}
+		for (size_t i = first_new_model; i < this->models.size(); i++) {
+			for (ModelVertex &v : this->models[i].vertices) {
+				if (v.a == ModelVertex::LEAF_EVERGREEN || (evergreen && v.a == ModelVertex::LEAF)) v.a = evergreen ? 255 : ModelVertex::LEAF;
+			}
 		}
 
 		float scale = entry.value("scale", 1.0f);

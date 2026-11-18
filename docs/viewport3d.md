@@ -78,6 +78,7 @@ All code lives in `src/viewport3d/`:
 | `tile_sprites.h` | Asks a tile which sprites the 2D game draws for it. The implementation is `CollectTileSprites()` in `viewport.cpp`. |
 | `renderer3d.cpp` | The only file that uses bgfx. Draws the chunks into an offscreen image and reads the pixels back. |
 | `camera3d.h` | Orbit camera, matrices and frustum culling. |
+| `weather3d.cpp` | The season and the weather of the moment. |
 | `shaders/` | Shader sources and their precompiled forms. |
 
 The renderer creates its own GPU device without a window, renders offscreen, and copies the finished image back to normal memory.
@@ -153,6 +154,31 @@ Houses and industries that are still being built show building sites (`construct
 
 The sky is one triangle behind everything (`vs_sky`, `fs_sky`), pale at the horizon and deeper blue above; terrain, sprites and models fade into the colour of the horizon with distance (`shaders/haze.sh`). Water moves with small waves, and foam washes along the edge of the water on coast tiles (`fs_terrain.sc`; `u_water` tells which ground textures are water and the time, `u_terrain` how the ground textures of the model package are used).
 
+### Seasons and weather
+
+The setting "Seasons and weather in the 3D view" (`gui.view3d_weather`, Interface > Viewports) has four values: off, seasons only, seasons and some weather (the default), seasons and a lot of weather.
+Both are only looks. Nothing in the game changes, nothing is saved, and in multiplayer every player can have a setting of their own.
+
+`GetWeather3D()` in `weather3d.cpp` says what the image looks like at this moment (`Weather3D`): how much cloud, rain, snowfall and fog there is, how wet the ground is, how much snow lies on it, and how far the year is for leaves and grass.
+
+* The season follows the date of the game. Temperate: fresh green and blossom in spring, drier grass in late summer, autumn colours from mid-September, bare trees and snow in winter. Sub-arctic: the same with a longer winter. Sub-tropical: a dry season in the middle of the year with yellow grass and a rainy season around it. Toyland has no seasons and no weather.
+* The weather comes in spells of 24 days. What a spell brings is made up from its number and the seed of the map, with chances that depend on the climate and the season (`GetWeatherChances()`), so it is the same for every view and after loading a game. A spell turns into the next one over a quarter of its length. Snow on the ground and wet ground are worked out from the last ten spells: snow piles up while it snows, melts slowly in winter and fast in rain or outside winter.
+* Thunderstorms have lightning: a flash now and then that lights up the land and the sky.
+
+How it is drawn:
+
+* Sky and haze (`Renderer3D::Render()`): clouds turn the sky and the haze grey; fog, and rain and snow a little, bring the haze nearer and make it thicker. Shadows fade under clouds (`u_shadowParams.w`). `WeatherGrade()` in `shaders/weather.sh`, called from `ApplyHaze()`, makes everything a little darker and greyer under clouds.
+* Ground (`GroundWeather()` in `shaders/weather_terrain.sh`, called at the end of `fs_terrain.sc`): what is green changes colour with the season, wet ground is darker, and snow comes in patches that grow until they meet. Roads and other built ground get less snow, water none.
+* Models (`ModelWeather()` in `shaders/weather.sh`, called from the vertex shaders of models): snow lies on faces that look up, except low down, where the ground has its own snow (this keeps rails in sight). Leaves change colour: corners of materials with `leaf`, `leaves` or `foliage` in their name get alpha `ModelVertex::LEAF` (`model3d.cpp`). Each tree turns at its own time and to its own colour, from a number made of its place on the map. `ModelPack::ReadEntries()` keeps the flag only for trees that lose their leaves and for the trees along roads; firs, spruces, pines, the trees of the tropics and the green of buildings stay as they are.
+* Rain and snow (`vs_weather.sc`, `fs_weather.sc`): 16000 drops at fixed made-up places in a cube that repeats all over the world; the cube around the spot the camera looks at is drawn, and the drops move through it with the time. Two cubes, one twice the size of the other, take over from each other as the camera zooms, so drops keep their size and number on the screen. Rain is streaks along the way it falls, snow soft flakes that sway.
+
+While it rains or snows a new image is made about 30 times a second; other weather and the seasons only ask for one when something changed enough to see.
+The uniforms are `u_weather` (snow on the ground, wet, clouds, lightning) and `u_season` (autumn, bare, spring, dry).
+
+For testing and pictures, the console has `view3d_weather <auto|clear|cloudy|rain|storm|snow|fog> [snow on the ground 0-100]` and `view3d_season <auto|1-12>`.
+
+Sprites of the 2D game (things without a model) do not change with the seasons and get no snow.
+
 Models can have a simpler version for far away (`far` in the index), or be left out there, like the stones of rough land. The renderer picks it per copy by the distance to the camera.
 
 Copies of the same model are drawn in one go with GPU instancing (`vs_model_instanced`, `vs_shadow_instanced`), which keeps forests of 3D trees fast; the load of a vehicle is still drawn one by one.
@@ -221,7 +247,7 @@ Textures for the landscape, the coast, the water, roads and the ground beside tr
 2. Replace the last ground made of 2D sprites (done for level crossings, depots, industries with models and NewGRF stations with models; half-tile foundations remain).
 3. Textures for the 3D models (done: surface textures by material; lettering, liveries and textures drawn for single models can follow).
 4. Day and night: light that follows the time of day, lit windows and lamps.
-5. Weather and seasons: snow, rain, autumn colours.
+5. Weather and seasons: snow, rain, autumn colours. Done, see "Seasons and weather".
 
 ## Changing the shaders
 

@@ -20,9 +20,12 @@ struct ModelVertex {
 	float x, y, z; ///< Position.
 	float nx, ny, nz; ///< Direction the surface faces, for the light.
 	uint8_t r, g, b; ///< Colour.
-	uint8_t a; ///< 255 for a fixed colour; 0 when the colour is multiplied with the colour of the owner.
+	uint8_t a; ///< 255 for a fixed colour; 0 when the colour is multiplied with the colour of the owner; #LEAF for leaves.
 	float u, v; ///< Position in the texture, which repeats beyond 0 to 1.
 	float texture; ///< Which texture the colour is multiplied with, as given by the #ModelTextureFinder; -1 for none.
+
+	static constexpr uint8_t LEAF = 208; ///< Alpha of leaves that change colour with the seasons; the shaders take 184 to 232 for it.
+	static constexpr uint8_t LEAF_EVERGREEN = 216; ///< Alpha of dark leaves while a model is read; ModelPack turns it into #LEAF or 255.
 };
 
 /** A 3D model: triangles with a colour per corner. */

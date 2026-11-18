@@ -53,6 +53,7 @@
 
 #ifdef WITH_VIEWPORT3D
 #	include "viewport3d/view3d_gui.h"
+#	include "viewport3d/weather3d.h"
 #endif
 
 #include "table/strings.h"
@@ -282,6 +283,73 @@ static bool ConView3D(std::span<std::string_view> argv)
 		return true;
 	}
 	ShowView3DWindow(argv.size() > 1 ? argv[1] : std::string_view{});
+#else
+	IConsolePrint(CC_ERROR, "This build of OpenTTD does not include the 3D view (OPTION_VIEWPORT3D).");
+#endif
+	return true;
+}
+
+/**
+ * Pick the weather of the 3D view, for testing and for pictures.
+ * @copydoc IConsoleCmdProc
+ */
+static bool ConView3DWeather(std::span<std::string_view> argv)
+{
+	if (argv.size() < 2) {
+		IConsolePrint(CC_HELP, "Pick the weather of the 3D view. Usage: 'view3d_weather <auto|clear|cloudy|rain|storm|snow|fog> [snow on the ground, 0-100]'.");
+		IConsolePrint(CC_HELP, "With 'auto' the weather follows the setting 'view3d_weather' again.");
+		return true;
+	}
+
+#ifdef WITH_VIEWPORT3D
+	static constexpr std::pair<std::string_view, Weather3DKind> KINDS[] = {
+		{"auto", Weather3DKind::Auto}, {"clear", Weather3DKind::Clear}, {"cloudy", Weather3DKind::Cloudy}, {"rain", Weather3DKind::Rain},
+		{"storm", Weather3DKind::Storm}, {"snow", Weather3DKind::Snow}, {"fog", Weather3DKind::Fog},
+	};
+	auto kind = std::ranges::find(KINDS, argv[1], &std::pair<std::string_view, Weather3DKind>::first);
+	if (kind == std::end(KINDS)) {
+		IConsolePrint(CC_ERROR, "Unknown weather '{}'.", argv[1]);
+		return true;
+	}
+	float cover = -1;
+	if (argv.size() > 2) {
+		auto percent = ParseType<uint>(argv[2]);
+		if (!percent.has_value() || *percent > 100) {
+			IConsolePrint(CC_ERROR, "The snow on the ground goes from 0 to 100.");
+			return true;
+		}
+		cover = *percent / 100.0f;
+	}
+	SetWeather3DOverride(kind->second, cover);
+#else
+	IConsolePrint(CC_ERROR, "This build of OpenTTD does not include the 3D view (OPTION_VIEWPORT3D).");
+#endif
+	return true;
+}
+
+/**
+ * Pick the season of the 3D view, for testing and for pictures.
+ * @copydoc IConsoleCmdProc
+ */
+static bool ConView3DSeason(std::span<std::string_view> argv)
+{
+	if (argv.size() < 2) {
+		IConsolePrint(CC_HELP, "Pick the time of the year that the 3D view shows. Usage: 'view3d_season <auto|1-12>', with the number of a month.");
+		IConsolePrint(CC_HELP, "With 'auto' the season follows the date of the game again.");
+		return true;
+	}
+
+#ifdef WITH_VIEWPORT3D
+	if (argv[1] == "auto") {
+		SetSeason3DOverride(-1);
+		return true;
+	}
+	auto month = ParseType<uint>(argv[1]);
+	if (!month.has_value() || *month < 1 || *month > 12) {
+		IConsolePrint(CC_ERROR, "The month goes from 1 to 12.");
+		return true;
+	}
+	SetSeason3DOverride(*month - 1);
 #else
 	IConsolePrint(CC_ERROR, "This build of OpenTTD does not include the 3D view (OPTION_VIEWPORT3D).");
 #endif
@@ -3012,6 +3080,8 @@ void IConsoleStdLibRegister()
 	IConsole::CmdRegister("screenshot",              ConScreenShot);
 	IConsole::CmdRegister("script",                  ConScript);
 	IConsole::CmdRegister("view3d",                  ConView3D);
+	IConsole::CmdRegister("view3d_weather",          ConView3DWeather);
+	IConsole::CmdRegister("view3d_season",           ConView3DSeason);
 	IConsole::CmdRegister("zoomto",                  ConZoomToLevel);
 	IConsole::CmdRegister("scrollto",                ConScrollToTile);
 	IConsole::CmdRegister("alias",                   ConAlias);

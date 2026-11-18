@@ -21,6 +21,7 @@
  * - the base colour texture of the material and the first set of texture coordinates; the texture is multiplied
  *   with the base colour, and always repeats.
  * A material with a name that starts with "company" takes the colour of the owner, multiplied with its base colour.
+ * A material with "leaf", "leaves" or "foliage" in its name changes colour with the seasons.
  * Triangles of a material with a name that starts with "load" are the cargo of a vehicle: they are drawn
  * only when the vehicle carries cargo, and sink into the vehicle as it gets emptier.
  * Other textures (normal maps and the like), animations and skins are ignored.
@@ -269,6 +270,11 @@ private:
 			for (int i = 0; i < 3; i++) colour[i] = static_cast<uint8_t>(std::clamp(std::pow(std::max(factor[i], 0.0f), 1 / 2.2f) * 255.0f + 0.5f, 0.0f, 255.0f));
 			std::string name = material.value("name", std::string{});
 			if (name.starts_with("company")) colour[3] = 0;
+			/* Leaves change with the seasons, but not those of palms, jungle trees and cacti; ModelPack sorts out the dark ones, which are mostly firs. */
+			auto has = [&name](std::string_view part) { return name.find(part) != std::string::npos; };
+			if ((has("leaf") || has("leaves") || has("foliage")) && !has("palm") && !has("jungle") && !has("dry")) {
+				colour[3] = has("dark") || has("blue") ? ModelVertex::LEAF_EVERGREEN : ModelVertex::LEAF;
+			}
 			is_load = name.starts_with("load");
 		}
 

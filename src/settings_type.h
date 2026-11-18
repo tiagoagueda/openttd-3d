@@ -234,6 +234,7 @@ struct GUISettings {
 	bool smooth_scroll; ///< smooth scroll viewports
 	bool view3d_main; ///< show the map in 3D in place of the main view
 	bool view3d_interface; ///< with the map in 3D, draw windows and buttons shaded as if they were raised and pressed
+	uint8_t view3d_weather; ///< seasons and weather in the 3D view; see #View3DWeatherSetting
 	bool measure_tooltip; ///< show a permanent tooltip when dragging tools
 	uint8_t liveries; ///< options for displaying company liveries, 0=none, 1=self, 2=all
 	bool prefer_teamchat; ///< choose the chat message target with \<ENTER\>, true=all clients, false=your team
