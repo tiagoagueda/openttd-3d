@@ -3915,13 +3915,6 @@ void ViewportData::CancelFollow(const Window &viewport_window)
 	this->follow_vehicle = VehicleID::Invalid();
 }
 
-#ifdef WITH_VIEWPORT3D
-/**
- * Find out which sprites the tile draws, by letting it draw itself as for a viewport and keeping the result.
- * Must be called from the thread that draws the windows, and not while a viewport is being drawn.
- * @param tile The tile.
- * @param[out] sprites The sprites; previous contents are discarded.
- */
 static int _bridge_middle_first = -1; ///< While collecting the sprites of a tile: the first sprite of the bridge above it, if any.
 
 /** Note that the sprites drawn from now on, while drawing a tile, belong to the bridge above the tile. */
@@ -3930,6 +3923,13 @@ void MarkBridgeMiddleSprites()
 	_bridge_middle_first = static_cast<int>(_vd.parent_sprites_to_draw.size());
 }
 
+#ifdef WITH_VIEWPORT3D
+/**
+ * Find out which sprites the tile draws, by letting it draw itself as for a viewport and keeping the result.
+ * Must be called from the thread that draws the windows, and not while a viewport is being drawn.
+ * @param tile The tile.
+ * @param[out] sprites The sprites; previous contents are discarded.
+ */
 void CollectTileSprites(TileIndex tile, TileSprites &sprites)
 {
 	sprites.ground.clear();
