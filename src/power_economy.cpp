@@ -270,30 +270,36 @@ static void UpdatePowerNetworks()
 			edges[n].emplace_back(other, length * (diagonal ? 34 : 24));
 		}
 
-		/* Underground cables, from an underground substation or a transition pylon to the next one; they lose half as much. */
-		if (!CanAttachPowerCables(nodes[n])) continue;
+		/* Underground cables, from an underground substation or a transition pylon to every other one the cables of the
+		 * same owner reach; cables join wherever they meet on a tile. They lose half as much as overhead lines. */
+		if (!CanAttachPowerCables(nodes[n]) || !HasPowerCable(nodes[n])) continue;
 		Owner owner = GetTileOwner(nodes[n]);
-		for (Direction dir : EnumRange(Direction::End)) {
-			if (!HasBit(GetPowerCableDirs(nodes[n]), to_underlying(dir))) continue;
-			TileIndex tile = nodes[n];
-			Direction step = dir;
-			uint32_t weight = 0;
-			int other = -1;
-			for (uint guard = 0; guard < Map::Size(); guard++) {
-				if (!HasBit(GetPowerCableDirs(tile), to_underlying(step)) || GetPowerCableOwner(tile) != owner) break;
-				tile = GetPowerSpanEnd(tile, step, 1);
-				if (tile == INVALID_TILE || !HasBit(GetPowerCableDirs(tile), to_underlying(ReverseDir(step)))) break;
-				weight += (to_underlying(step) % 2 == 0) ? 17 : 12;
-				if (CanAttachPowerCables(tile)) {
-					if (GetTileOwner(tile) == owner) other = node_of(tile);
-					break;
-				}
-				/* Continue or bend: the one other direction the cable leaves this tile in. */
-				uint8_t rest = GetPowerCableDirs(tile) & ~(1 << to_underlying(ReverseDir(step)));
-				if (CountBits(rest) != 1) break;
-				step = static_cast<Direction>(FindFirstBit(rest));
+		std::map<TileIndex, uint32_t> dist{{nodes[n], 0}};
+		using Item = std::pair<uint32_t, TileIndex>;
+		std::priority_queue<Item, std::vector<Item>, std::greater<Item>> queue;
+		queue.emplace(0, nodes[n]);
+		while (!queue.empty()) {
+			auto [d, tile] = queue.top();
+			queue.pop();
+			if (d != dist[tile]) continue;
+			if (tile != nodes[n] && CanAttachPowerCables(tile)) {
+				/* Another substation or transition pylon: an edge, and the cable network goes on from there by its own edges. */
+				int other = node_of(tile);
+				if (other >= 0 && GetTileOwner(tile) == owner) edges[n].emplace_back(other, d);
+				continue;
 			}
-			if (other >= 0 && other != static_cast<int>(n)) edges[n].emplace_back(other, weight);
+			uint8_t dirs = GetPowerCableDirs(tile);
+			if (GetPowerCableOwner(tile) != owner) continue;
+			for (Direction dir : EnumRange(Direction::End)) {
+				if (!HasBit(dirs, to_underlying(dir))) continue;
+				TileIndex next = GetPowerSpanEnd(tile, dir, 1);
+				if (next == INVALID_TILE || !HasBit(GetPowerCableDirs(next), to_underlying(ReverseDir(dir)))) continue;
+				uint32_t nd = d + ((to_underlying(dir) % 2 == 0) ? 17 : 12);
+				auto it = dist.find(next);
+				if (it != dist.end() && it->second <= nd) continue;
+				dist[next] = nd;
+				queue.emplace(nd, next);
+			}
 		}
 	}
 

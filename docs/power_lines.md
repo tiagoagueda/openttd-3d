@@ -131,10 +131,10 @@ about 8.7 per month) the networks share out power.
   the line tool). Bits 0..7 of the power layer say in which directions a cable leaves a tile; bits
   16..19 hold its owner. The layer is now 32 bits per tile; chunk `PWRL` stores 32 bits and still loads
   the 16-bit layer of older savegames.
-- A cable only continues or bends (at most two directions on a tile). It joins other cables, and the
-  network, only at an **underground substation** or a **transition pylon**. Two diagonal cables cannot
-  cross between the same four tiles. A cable may end anywhere, but an end that reaches no substation or
-  transition pylon carries nothing.
+- Cables of one company join wherever they meet on a tile, straight or diagonal, and may cross between
+  tiles without joining. They connect to the network at an **underground substation** or a
+  **transition pylon**; a cable under an ordinary pylon, overhead substation or wire does not connect to it.
+  A cable may end anywhere, but an end that reaches no substation or transition pylon carries nothing.
 - **Prices**: cable 1,900 per straight tile (about 8 times overhead wire with its pylons), 1.4 times on
   a diagonal, twice under water; removing 100. An underground substation costs twice an overhead one.
   A transition pylon costs three pylons; a pylon can be turned into one, keeping its wires.

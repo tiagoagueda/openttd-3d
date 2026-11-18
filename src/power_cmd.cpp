@@ -689,23 +689,6 @@ CommandCost CmdRemovePowerLine(DoCommandFlags flags, TileIndex end_tile, TileInd
 }
 
 /**
- * Whether a diagonal step of a cable would cross another cable between the same four tiles.
- * @param from Tile the step starts at.
- * @param dir Direction of the step.
- * @return True if the step crosses a cable.
- */
-static bool DiagonalStepCrossesCable(TileIndex from, Direction dir)
-{
-	if (IsDiagonalDirection(dir)) return false; // Straight steps cross no corners.
-
-	TileIndexDiffC diff = TileIndexDiffCByDir(dir);
-	TileIndex side = TileAddXY(from, diff.x, 0);
-	if (side == INVALID_TILE) return false;
-	Direction cross = GetDirectionOfStep(-diff.x, diff.y);
-	return HasBit(GetPowerCableDirs(side), to_underlying(cross));
-}
-
-/**
  * Price of underground cable for a step.
  * @param from Tile the step starts at.
  * @param to Tile the step ends at.
@@ -721,20 +704,9 @@ static Money GetCableStepPrice(TileIndex from, TileIndex to, Direction dir, bool
 }
 
 /**
- * Number of directions a cable may leave a tile in: any at an own underground substation or transition pylon,
- * else two, as a cable only continues or bends.
- * @param tile The tile.
- * @return Highest number of directions.
- */
-static uint GetMaxCableDirs(TileIndex tile)
-{
-	return (CanAttachPowerCables(tile) && GetTileOwner(tile) == _current_company) ? 8 : 2;
-}
-
-/**
  * Build an underground cable between two tiles, along an axis or a map diagonal.
- * A cable runs under anything. It joins other cables only by continuing or bending them, and connects
- * to the network only at underground substations and transition pylons.
+ * A cable runs under anything. Cables of one company join wherever they meet on a tile, and may cross between
+ * tiles without joining; they connect to the network at underground substations and transition pylons.
  * @param flags Type of operation.
  * @param end_tile End of the cable.
  * @param start_tile Start of the cable.
@@ -767,12 +739,10 @@ CommandCost CmdBuildPowerCable(DoCommandFlags flags, TileIndex end_tile, TileInd
 		dirs[i] = GetPowerCableDirs(t);
 		if (i > 0) SetBit(dirs[i], to_underlying(ReverseDir(dir)));
 		if (i < length) SetBit(dirs[i], to_underlying(dir));
-		if (static_cast<uint>(CountBits(dirs[i])) > GetMaxCableDirs(t)) return CommandCost(STR_ERROR_POWER_CABLE_BRANCH_NEEDS_SUBSTATION);
 	}
 	for (uint i = 0; i < length; i++) {
 		TileIndex a = tile_at(i);
 		if (HasBit(GetPowerCableDirs(a), to_underlying(dir))) continue;
-		if (DiagonalStepCrossesCable(a, dir)) return CommandCost(STR_ERROR_POWER_CABLES_CANNOT_CROSS);
 		cost.AddCost(GetCableStepPrice(a, tile_at(i + 1), dir, true));
 		any = true;
 	}

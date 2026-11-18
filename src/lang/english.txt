@@ -3118,7 +3118,7 @@ STR_POWER_TOOLBAR_TOOLTIP_BUILD_LINE                            :{BLACK}Build an
 STR_POWER_TOOLBAR_TOOLTIP_BUILD_PYLON                           :{BLACK}Build a single pylon. Also press Shift to show cost estimate only
 STR_POWER_TOOLBAR_TOOLTIP_BUILD_SUBSTATION                      :{BLACK}Build an overhead substation, where power lines meet power plants and consumers. Also press Shift to show cost estimate only
 STR_POWER_TOOLBAR_TOOLTIP_BUILD_TRANSITION                      :{BLACK}Build a transition pylon, where an overhead line goes underground, or turn a pylon into one. Also press Shift to show cost estimate only
-STR_POWER_TOOLBAR_TOOLTIP_BUILD_CABLE                           :{BLACK}Build an underground cable. Drag along an axis or a diagonal; it passes under anything. Cables connect at underground substations and transition pylons, and lose half as much power as overhead lines. Also press Shift to show cost estimate only
+STR_POWER_TOOLBAR_TOOLTIP_BUILD_CABLE                           :{BLACK}Build an underground cable. Drag along an axis or a diagonal; it passes under anything. Cables join wherever they meet, connect to the network at underground substations and transition pylons, and lose half as much power as overhead lines. Also press Shift to show cost estimate only
 STR_POWER_TOOLBAR_TOOLTIP_BUILD_UNDERGROUND_SUBSTATION          :{BLACK}Build an underground substation, where cables meet power plants and consumers. Also press Shift to show cost estimate only
 STR_POWER_TOOLBAR_TOOLTIP_NETWORK_VIEW                          :{BLACK}Show or hide underground cables
 STR_POWER_TOOLBAR_TOOLTIP_REMOVE                                :{BLACK}Toggle removal of power lines and cables: dragging the line tool removes wires and the pylons left without wires, dragging the cable tool removes cable
@@ -5477,8 +5477,6 @@ STR_ERROR_CAN_T_REMOVE_POWER_CABLE                              :Can't remove un
 STR_ERROR_THERE_IS_NO_POWER_CABLE                               :there is no underground cable here
 STR_ERROR_POWER_CABLE_TOO_SHORT                                 :drag the cable over at least two tiles
 STR_ERROR_POWER_CABLE_OWNED_BY_OTHER                            :the cable belongs to another company
-STR_ERROR_POWER_CABLE_BRANCH_NEEDS_SUBSTATION                   :cables only branch at an underground substation or a transition pylon
-STR_ERROR_POWER_CABLES_CANNOT_CROSS                             :cables cannot cross each other
 STR_ERROR_COMPANY_HEADQUARTERS_IN                               :company headquarters in the way
 STR_ERROR_CAN_T_PURCHASE_THIS_LAND                              :Can't purchase this land area...
 STR_ERROR_YOU_ALREADY_OWN_IT                                    :you already own it!
