@@ -139,14 +139,37 @@ static constexpr float RIVER_BED = 0.6f;
 static constexpr float RIVER_BANK = 0.4f;
 
 /**
- * Whether a tile is flat river that the 3D view draws with banks and a bed below see-through water.
+ * Whether a tile is river that the 3D view draws with banks and a bed below see-through water:
+ * flat river, or a step of a river down a slope, which becomes rapids.
+ * A river that runs down into the sea is a coast instead, see #IsShoreSlope.
  * @param tile The tile.
  * @return True for such a tile.
  */
 static bool IsRiverBedTile(Tile tile)
 {
 	if (!IsTileType(tile, TileType::Water) || !IsWater(tile) || GetWaterClass(tile) != WaterClass::River) return false;
-	return GetTileSlope(tile) == SLOPE_FLAT && TileHeight(tile) > 0;
+	auto [slope, z] = GetTileSlopeZ(tile);
+	return (slope == SLOPE_FLAT || IsInclinedSlope(slope)) && z > 0;
+}
+
+/**
+ * Which way the water of a river flows down a slope, as rapids.
+ * @param x X coordinate of the tile.
+ * @param y Y coordinate of the tile.
+ * @return 0 to 3 for down along x, along y, up along x and up along y; -1 when the tile is not a river on a slope.
+ */
+static int GetRapidsFlow(uint x, uint y)
+{
+	if (x >= Map::MaxX() || y >= Map::MaxY()) return -1;
+	if (!IsRiverBedTile(Tile(TileXY(x, y)))) return -1;
+	int hn = TileHeight(TileXY(x, y)), hw = TileHeight(TileXY(x + 1, y));
+	int he = TileHeight(TileXY(x, y + 1)), hs = TileHeight(TileXY(x + 1, y + 1));
+	int down_x = (hn + he) - (hw + hs), down_y = (hn + hw) - (he + hs);
+	if (down_x > 0) return 0;
+	if (down_y > 0) return 1;
+	if (down_x < 0) return 2;
+	if (down_y < 0) return 3;
+	return -1;
 }
 
 /**
@@ -165,13 +188,14 @@ static bool IsOpenWaterTile(uint x, uint y)
 }
 
 /**
- * Draw a flat river tile as a bed below the land, with banks along the sides where there is land, and see-through water over it.
+ * Draw a river tile as a bed below the land, with banks along the sides where there is land, and see-through water over it.
+ * On a slope bed and water follow the slope, and the water is marked as rapids, flowing downhill.
  * @param x X coordinate of the tile.
  * @param y Y coordinate of the tile.
- * @param h Height of the tile, in height levels.
+ * @param hn, hw, he, hs Heights of the corners of the tile, in height levels.
  * @param mesh The mesh to add to.
  */
-static void AddRiverBed(uint x, uint y, int h, TerrainChunkMesh &mesh)
+static void AddRiverBed(uint x, uint y, int hn, int hw, int he, int hs, TerrainChunkMesh &mesh)
 {
 	/* Which sides and corners have land next to them: NE, SE, SW, NW sides, then N, E, S, W corners. */
 	bool land_ne = !IsOpenWaterTile(x - 1, y), land_sw = !IsOpenWaterTile(x + 1, y);
@@ -186,6 +210,10 @@ static void AddRiverBed(uint x, uint y, int h, TerrainChunkMesh &mesh)
 	std::span<const float> steps = banks ? std::span<const float>(STEPS) : std::span<const float>(PLAIN);
 	if ((mesh.vertices.size() + mesh.water.size()) / 4 + 2 * (steps.size() - 1) * (steps.size() - 1) >= MAX_CHUNK_QUADS) return;
 
+	/* The height of the landscape across the tile; flat, or a plane down the slope. */
+	auto land = [&](float u, float v) {
+		return hn * (1.0f - u) * (1.0f - v) + hw * u * (1.0f - v) + he * (1.0f - u) * v + hs * u * v;
+	};
 	auto ground = [&](float u, float v) {
 		/* How far the point is from the nearest land, in tiles; the bank goes down from the land to the bed. */
 		float d = 1.0f;
@@ -199,12 +227,30 @@ static void AddRiverBed(uint x, uint y, int h, TerrainChunkMesh &mesh)
 		if (land_s) d = std::min(d, std::max(1.0f - u, 1.0f - v));
 		/* Gentle at the top, steeper towards the water. */
 		float f = std::min(1.0f, d / RIVER_BANK);
-		return h - RIVER_BED * f * (0.5f + 0.5f * f);
+		return land(u, v) - RIVER_BED * f * (0.5f + 0.5f * f);
 	};
 
 	static constexpr float SUN_X = -0.4683f, SUN_Y = 0.5620f, SUN_Z = 0.6817f;
-	const float surface = h - RIVER_SURFACE;
-	const uint8_t lit = static_cast<uint8_t>(std::clamp(255.0f * (0.45f + 0.80f * SUN_Z) * 0.5f, 0.0f, 255.0f));
+	auto surface = [&](float u, float v) { return land(u, v) - RIVER_SURFACE; };
+	/* The water is lit for the slope it is on, like the land; the shader relights it from there. */
+	float wx = -((hw + hs) - (hn + he)) * 0.5f * 1.5f * TILE_HEIGHT / TILE_SIZE;
+	float wy = -((he + hs) - (hn + hw)) * 0.5f * 1.5f * TILE_HEIGHT / TILE_SIZE;
+	float water_light = (wx * SUN_X + wy * SUN_Y + SUN_Z) / std::sqrt(wx * wx + wy * wy + 1.0f);
+	const uint8_t lit = static_cast<uint8_t>(std::clamp(255.0f * (0.45f + 0.80f * std::max(0.0f, water_light)) * 0.5f, 0.0f, 255.0f));
+	/* Water on a slope is rapids, and the marker says which way it flows. Still water at the foot of rapids gets the foam that they wash into it. */
+	float water_texture = static_cast<float>(GROUND_TEXTURE_SHALLOWS);
+	int flow = GetRapidsFlow(x, y);
+	if (flow >= 0) {
+		water_texture = static_cast<float>(GROUND_TEXTURE_RAPIDS + flow);
+	} else if (GetRapidsFlow(x - 1, y) == 0) {
+		water_texture = static_cast<float>(GROUND_TEXTURE_RAPIDS_FOOT);
+	} else if (GetRapidsFlow(x, y - 1) == 1) {
+		water_texture = static_cast<float>(GROUND_TEXTURE_RAPIDS_FOOT + 1);
+	} else if (GetRapidsFlow(x + 1, y) == 2) {
+		water_texture = static_cast<float>(GROUND_TEXTURE_RAPIDS_FOOT + 2);
+	} else if (GetRapidsFlow(x, y + 1) == 3) {
+		water_texture = static_cast<float>(GROUND_TEXTURE_RAPIDS_FOOT + 3);
+	}
 	for (size_t j = 0; j + 1 < steps.size(); j++) {
 		for (size_t i = 0; i + 1 < steps.size(); i++) {
 			float u0 = steps[i], u1 = steps[i + 1], v0 = steps[j], v1 = steps[j + 1];
@@ -216,15 +262,16 @@ static void AddRiverBed(uint x, uint y, int h, TerrainChunkMesh &mesh)
 			light = (0.45f + 0.80f * std::max(0.0f, light)) * 0.5f;
 			uint8_t c = static_cast<uint8_t>(std::clamp(255.0f * light, 0.0f, 255.0f));
 			/* The top of the bank is grassy, the bed bare. */
-			bool bed = std::max({z00, z10, z01, z11}) < h - 0.01f;
+			bool bed = z00 < land(u0, v0) - 0.01f && z10 < land(u1, v0) - 0.01f && z01 < land(u0, v1) - 0.01f && z11 < land(u1, v1) - 0.01f;
 			float texture = static_cast<float>(bed ? GROUND_TEXTURE_GRASS : GROUND_TEXTURE_GRASS + 1);
-			auto land = [&](float u, float v, float z) { return TerrainVertex{x + u, y + v, z, c, c, c, 0, texture, u, v}; };
-			mesh.vertices.insert(mesh.vertices.end(), {land(u0, v0, z00), land(u0, v1, z01), land(u1, v0, z10), land(u1, v1, z11)});
+			auto bank = [&](float u, float v, float z) { return TerrainVertex{x + u, y + v, z, c, c, c, 0, texture, u, v}; };
+			mesh.vertices.insert(mesh.vertices.end(), {bank(u0, v0, z00), bank(u0, v1, z01), bank(u1, v0, z10), bank(u1, v1, z11)});
 
 			/* The water knows how deep the bed is below it at each corner. */
 			auto water = [&](float u, float v, float z) {
-				uint8_t depth = static_cast<uint8_t>(std::clamp((z - surface + 1.0f) * 64.0f, 0.0f, 255.0f));
-				return TerrainVertex{x + u, y + v, surface, lit, lit, lit, depth, static_cast<float>(GROUND_TEXTURE_SHALLOWS), u, v};
+				float top = surface(u, v);
+				uint8_t depth = static_cast<uint8_t>(std::clamp((z - top + 1.0f) * 64.0f, 0.0f, 255.0f));
+				return TerrainVertex{x + u, y + v, top, lit, lit, lit, depth, water_texture, u, v};
 			};
 			mesh.water.insert(mesh.water.end(), {water(u0, v0, z00), water(u0, v1, z01), water(u1, v0, z10), water(u1, v1, z11)});
 		}
@@ -2677,7 +2724,7 @@ void BuildTerrainChunkMesh(uint chunk_x, uint chunk_y, GroundTextures &textures,
 			 * so a single raised or lowered corner gives one flat and one sloped half. */
 			bool split_ns = std::abs(fn - fs) <= std::abs(fw - fe);
 			if (pack_ground && IsRiverBedTile(tile)) {
-				AddRiverBed(x, y, hn, mesh);
+				AddRiverBed(x, y, hn, hw, he, hs, mesh);
 			} else if (split_ns) {
 				mesh.vertices.insert(mesh.vertices.end(), {vw, vn, vs, ve});
 			} else {
