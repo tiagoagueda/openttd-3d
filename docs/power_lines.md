@@ -166,3 +166,38 @@ about 8.7 per month) the networks share out power.
   looks.
 - **Plants**: `GetWeatherSolarFactor`, `GetWeatherWindFactor` and `GetWeatherRiverFlow` give the output
   factors for solar, wind and hydro plants.
+
+## Phase 5: new power plants
+
+| Plant | Type | From | Output (tenths of MW) |
+|---|---|---|---|
+| Oil power station | 37 | 1950 | Burns oil like a coal plant burns coal |
+| Solar plant | 38 | 1995 | 1200 x `GetWeatherSolarFactor` / 255: nothing at night or under snow |
+| Wind farm | 39 | 1985 | 300 per turbine x `GetWeatherWindFactor` / 255 (five turbines) |
+| Hydro power station | 40 | 1920 | 800 per dam tile x river flow (dry summers give less) |
+
+- Industry tiles 175-182 (`GFX_SOLAR_PANELS`, `GFX_WIND_TURBINE`, `GFX_HYDRO_DAM_X/Y`,
+  `GFX_HYDRO_POWERHOUSE`, plus the oil hall and tanks). 2D sprites 32-39 of `power.grf`, 3D models from
+  `models_power_plants.py` in OpenGFX3D; the wind rotors turn as animated parts.
+- `GetPowerPlantSource()` tells fuel, solar, wind and hydro apart; only fuel plants use up fuel.
+  `IsPowerPlantTypeAvailable()` keeps a type out of map generation and random founding before its year,
+  and hydro out of them altogether.
+- **Hydro rules** (`CheckHydroDamTile`, `IsHydroDamOnRiverStep`): the dam stands on river water across
+  the river, at least one dam tile on a river slope (a step), without a lock; both banks must be land or
+  shore, and the powerhouse stands on a bank. Layouts are 1 to 4 tiles wide, along x or y, with the
+  powerhouse on either bank. `power_build riversteps` lists the places where one fits.
+- **Saves**: version `PowerPlants` (370). Older saves have NewGRF industry types from 37 and tiles from
+  175; they move up by 4 types and 8 tiles on load.
+- **Console**: `power_build plant <type> <x> <y> [layout]` builds one (as funding would), and
+  `power_build info` shows the weather factor of each plant.
+
+## Phase 5: street lamps
+
+- At night (`AreStreetLampsOn()`: day and night are on and the sun is less than a little above the
+  horizon) every finished house needs one more tenth of a MW for its street lamps.
+- A town no substation reaches keeps all its lamps lit, from its own small generators. A town on the grid
+  lights as many of every four lamps as it gets quarters of the energy it needs
+  (`Town::street_lamp_share`, worked out after each balancing step and not saved). When that changes, the
+  3D view rebuilds the town; `IsStreetLampPowered()` in `terrain_mesh.cpp` picks which lamps stay dark.
+- `power_build info` shows how many lamps of every four are lit, and "off grid" for towns no substation
+  reaches.

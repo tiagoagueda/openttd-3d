@@ -24,6 +24,8 @@
 #include "weather.h"
 #include "newgrf_industries.h"
 #include "timer/timer_game_calendar.h"
+#include "core/math_func.hpp"
+#include "viewport3d/view3d_gui.h"
 
 #include <map>
 #include <queue>
@@ -470,6 +472,19 @@ struct PowerSubstationState {
 	uint income = 0; ///< Energy that arrived at consumers from the plants of this substation; paid to its owner.
 };
 
+static uint GetHousePopulationPowerDemand(TileIndex tile);
+
+/**
+ * Whether the street lamps of the towns are on: from a little before sunset to a little after sunrise.
+ * Without day and night it is always noon, and they stay off.
+ * @return True when the lamps need energy.
+ */
+static bool AreStreetLampsOn()
+{
+	const GameWeather &weather = GetGameWeather();
+	return weather.has_day && weather.sun < 16;
+}
+
 /**
  * Demand of a building, in tenths of MW: 0.1 MW idle, 1 MW per 100 inhabitants with up to 10% more while the
  * town grows, and 0.5 MW while it is being built.
@@ -479,10 +494,21 @@ struct PowerSubstationState {
 static uint GetHousePowerDemand(TileIndex tile)
 {
 	if (!IsHouseCompleted(tile)) return 5;
+	if (AreStreetLampsOn()) return 2 + GetHousePopulationPowerDemand(tile);
+	return 1 + GetHousePopulationPowerDemand(tile);
+}
+
+/**
+ * Energy the people of a completed house need, without its share of the street lamps.
+ * @param tile The northern tile of the house.
+ * @return Demand in tenths of MW.
+ */
+static uint GetHousePopulationPowerDemand(TileIndex tile)
+{
 	const HouseSpec *hs = HouseSpec::Get(GetHouseType(tile));
 	uint population = hs->population;
 	if (Town::GetByTile(tile)->flags.Test(TownFlag::IsGrowing)) population = population * 11 / 10;
-	return 1 + population / 10;
+	return population / 10;
 }
 
 /**
@@ -522,8 +548,9 @@ static void BalancePower()
 		i->power_supplied = 0;
 	}
 	for (Town *t : Town::Iterate()) {
-		t->power_demand = t->cache.num_houses + t->cache.population / 10;
+		t->power_demand = t->cache.num_houses * (AreStreetLampsOn() ? 2 : 1) + t->cache.population / 10;
 		t->power_supplied = 0;
+		t->power_covered = false;
 	}
 	if (_power_substations.empty()) return;
 
@@ -565,6 +592,7 @@ static void BalancePower()
 		for (TileIndex house : st.houses) {
 			uint part = GetHousePowerDemand(house) / house_count[house];
 			TownID town = GetTownIndex(house);
+			Town::Get(town)->power_covered = true;
 			auto it = std::ranges::find(st.towns, town, &PowerTownPart::town);
 			if (it == st.towns.end()) {
 				st.towns.push_back({town, part});
@@ -630,11 +658,32 @@ static void BalancePower()
 	}
 }
 
+/**
+ * Work out how many street lamps of each town have power, and redraw the towns where that changed.
+ * A town no substation reaches keeps all its lamps lit, from its own small generators; a town on the grid
+ * lights as many of them as it gets of the energy it needs.
+ */
+static void UpdateStreetLamps()
+{
+	for (Town *t : Town::Iterate()) {
+		uint8_t share = 4;
+		if (t->power_covered && t->power_demand != 0) {
+			share = static_cast<uint8_t>(std::min<uint64_t>(4, static_cast<uint64_t>(t->power_supplied) * 4 / t->power_demand));
+		}
+		if (share == t->street_lamp_share) continue;
+		t->street_lamp_share = share;
+		uint radius = IntSqrt(t->cache.squared_town_zone_radius[to_underlying(HouseZone::TownEdge)]) + 2;
+		uint x = TileX(t->xy), y = TileY(t->xy);
+		MarkAreaDirtyForView3D(x > radius ? x - radius : 0, y > radius ? y - radius : 0, std::min(Map::MaxX(), x + radius), std::min(Map::MaxY(), y + radius));
+	}
+}
+
 /** Called every tick; balances the power networks every #POWER_BALANCE_TICKS ticks. */
 void OnTick_Power()
 {
 	if ((TimerGameTick::counter % POWER_BALANCE_TICKS) != 37) return;
 	BalancePower();
+	UpdateStreetLamps();
 	SetWindowClassesDirty(WindowClass::IndustryView);
 	SetWindowClassesDirty(WindowClass::TownView);
 }

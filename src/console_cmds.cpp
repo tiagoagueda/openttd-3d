@@ -578,7 +578,7 @@ static bool ConPowerBuild(std::span<std::string_view> argv)
 			}
 		}
 		for (const Town *t : Town::Iterate()) {
-			IConsolePrint(CC_DEFAULT, "town {} at {},{}: needs {} gets {} bonus {}%", t->index, TileX(t->xy), TileY(t->xy), t->power_demand, t->power_supplied, GetPowerBonusPercent(t->power_demand, t->power_supplied));
+			IConsolePrint(CC_DEFAULT, "town {} at {},{}: needs {} gets {} bonus {}% street lamps lit {}/4{}", t->index, TileX(t->xy), TileY(t->xy), t->power_demand, t->power_supplied, GetPowerBonusPercent(t->power_demand, t->power_supplied), t->street_lamp_share, t->power_covered ? "" : " (off grid)");
 		}
 		for (const Company *c : Company::Iterate()) {
 			IConsolePrint(CC_DEFAULT, "company {}: money {} energy sales this year {}", c->index, c->money, -c->yearly_expenses[0][ExpensesType::EnergySales]);

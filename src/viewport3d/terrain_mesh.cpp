@@ -1159,14 +1159,17 @@ static float Random01(uint32_t n)
 
 /**
  * Whether the street lamps of a town street have power to light up at night.
- * This is where the energy network (a separate branch of the fork) can decide that lamps stay dark where towns get no power;
- * until then all lamps light up.
+ * A town on the energy network lights as many of its lamps as it gets of the energy it needs (see UpdateStreetLamps());
+ * a town no substation reaches lights them all.
  * @param tile The road tile.
  * @return True when the lamps light up at night.
  */
-static bool IsStreetLampPowered([[maybe_unused]] TileIndex tile)
+static bool IsStreetLampPowered(TileIndex tile)
 {
-	return true;
+	const Town *t = Town::GetIfValid(GetTownIndex(tile));
+	if (t == nullptr || t->street_lamp_share >= 4) return true;
+	/* Spread the dark lamps over the town: a fixed pattern that repeats every four tiles. */
+	return ((TileX(tile) * 3 + TileY(tile)) & 3) < t->street_lamp_share;
 }
 
 /**
