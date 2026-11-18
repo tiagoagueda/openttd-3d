@@ -36,6 +36,7 @@
 #include "timer/timer.h"
 #include "timer/timer_game_tick.h"
 #include "timer/timer_game_calendar.h"
+#include "traction.h"
 
 #include "table/strings.h"
 #include "table/engines.h"
@@ -336,7 +337,10 @@ Money Engine::GetRunningCost() const
 		default: NOT_REACHED();
 	}
 
-	return GetPrice(base_price, cost_factor, this->GetGRF(), -8);
+	Money cost = GetPrice(base_price, cost_factor, this->GetGRF(), -8);
+	/* Trams and trolleybuses buy their energy when traction power is built in; the rest is a fixed part. */
+	if (this->type == VehicleType::Road) cost = GetTractionFixedRunningCost(this->VehInfo<RoadVehicleInfo>().roadtype, cost);
+	return cost;
 }
 
 /**

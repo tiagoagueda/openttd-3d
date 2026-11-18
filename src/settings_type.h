@@ -636,6 +636,8 @@ struct VehicleSettings {
 struct EconomySettings {
 	uint8_t electric_stop_rating_bonus; ///< fork: monthly town rating gain for each station served by trams or trolleybuses, up to ten stations
 	uint8_t electric_stop_passenger_bonus; ///< fork: extra passengers, in percent, from houses near a station served by trams or trolleybuses
+	bool electric_vehicles_need_power; ///< fork: trams and trolleybuses slow down when their wire gets too little power (only with the energy transport)
+	uint8_t traction_feed_distance; ///< fork: how far along the wire a substation feeds trams and trolleybuses, in tiles
 	bool inflation; ///< disable inflation
 	bool bribe; ///< enable bribing the local authority
 	EconomyType type; ///< economy type (original/smooth/frozen)

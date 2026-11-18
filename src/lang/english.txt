@@ -952,6 +952,8 @@ STR_NEWS_VEHICLE_IS_GETTING_VERY_OLD_AND                        :{WHITE}{VEHICLE
 STR_NEWS_TRAIN_IS_STUCK                                         :{WHITE}{VEHICLE} can't find a path to continue
 STR_NEWS_VEHICLE_IS_LOST                                        :{WHITE}{VEHICLE} is lost
 STR_NEWS_TROLLEYBUS_TURNED_ON_ROAD                              :{WHITE}{VEHICLE} had to turn around away from a turning place: build a turning loop or junction where its wires end
+STR_NEWS_VEHICLE_SHORT_OF_POWER                                 :{WHITE}{VEHICLE} is short of power: its wire gets {NUM}% of what it needs. Connect more power plants or build another substation
+STR_NEWS_VEHICLE_NOT_FED                                        :{WHITE}{VEHICLE} runs on wire that no power substation feeds, at a quarter of its speed. Build a substation near its route
 STR_NEWS_VEHICLE_UNPROFITABLE_YEAR                              :{WHITE}{VEHICLE}'s profit last year was {CURRENCY_LONG}
 STR_NEWS_VEHICLE_UNPROFITABLE_PERIOD                            :{WHITE}{VEHICLE}'s profit last period was {CURRENCY_LONG}
 STR_NEWS_AIRCRAFT_DEST_TOO_FAR                                  :{WHITE}{VEHICLE} can't get to the next destination because it is out of range
@@ -1583,6 +1585,10 @@ STR_CONFIG_SETTING_ELECTRIC_STOP_RATING_BONUS                   :Town rating gai
 STR_CONFIG_SETTING_ELECTRIC_STOP_RATING_BONUS_HELPTEXT          :Each month, a company gains this much rating with a town for each of its stations near the town that a tram or trolleybus served in the last month, counting up to ten stations
 STR_CONFIG_SETTING_ELECTRIC_STOP_PASSENGER_BONUS                :Extra passengers near stations served by trams or trolleybuses: {STRING2}
 STR_CONFIG_SETTING_ELECTRIC_STOP_PASSENGER_BONUS_HELPTEXT       :Houses that have a station served by a tram or trolleybus in the last month in their catchment produce this many percent more passengers
+STR_CONFIG_SETTING_ELECTRIC_VEHICLES_NEED_POWER                 :Trams and trolleybuses need power from a substation: {STRING2}
+STR_CONFIG_SETTING_ELECTRIC_VEHICLES_NEED_POWER_HELPTEXT        :When enabled, trams and trolleybuses slow down when the substations feeding their wire cannot get enough power, down to a quarter of their speed on wire no substation feeds. Their owners always pay for the energy they use
+STR_CONFIG_SETTING_TRACTION_FEED_DISTANCE                       :Reach of a substation along tram and trolleybus wire: {STRING2}
+STR_CONFIG_SETTING_TRACTION_FEED_DISTANCE_HELPTEXT              :How far along continuous wire a power substation feeds trams and trolleybuses, counted from the wire within its reach
 STR_CONFIG_SETTING_INDUSTRY_CARGO_SCALE                         :Scale industry cargo production: {STRING2}
 STR_CONFIG_SETTING_INDUSTRY_CARGO_SCALE_HELPTEXT                :Scale the cargo production of industries by this percentage
 STR_CONFIG_SETTING_CARGO_SCALE_VALUE                            :{NUM}%

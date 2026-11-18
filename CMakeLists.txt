@@ -240,6 +240,12 @@ if(OPTION_VIEWPORT3D AND NOT OPTION_DEDICATED AND NOT EMSCRIPTEN)
     set(VIEWPORT3D_ENABLED ON)
 endif()
 
+# Traction power (trams and trolleybuses drawing from the energy networks) needs the energy transport.
+set(TRACTION_POWER_ENABLED OFF)
+if(OPTION_TRACTION_POWER AND EXISTS "${CMAKE_SOURCE_DIR}/src/power_economy.cpp")
+    set(TRACTION_POWER_ENABLED ON)
+endif()
+
 include(CTest)
 include(SourceList)
 
@@ -316,6 +322,9 @@ set_target_properties(openttd PROPERTIES VS_DEBUGGER_WORKING_DIRECTORY "${CMAKE_
 include(LinkPackage)
 if(VIEWPORT3D_ENABLED)
     include(Viewport3D)
+endif()
+if(TRACTION_POWER_ENABLED)
+    target_compile_definitions(openttd_lib PUBLIC WITH_TRACTION_POWER)
 endif()
 link_package(PNG TARGET PNG::PNG ENCOURAGED)
 link_package(ZLIB TARGET ZLIB::ZLIB ENCOURAGED)
