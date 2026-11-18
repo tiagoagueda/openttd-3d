@@ -481,11 +481,32 @@ uint Renderer3D::GetMaxGroundTextures() const
  * @param layer Which layer.
  * @param level The pixels; changed while making the smaller versions.
  */
+/** Bytes of texture data sent to the GPU since the last frame of bgfx. */
+static size_t _uploaded_bytes = 0;
+
+/**
+ * Make room for texture data to send to the GPU.
+ * bgfx stages all texture updates of a frame in one buffer of 32 MiB (with Vulkan); what does not fit gets a staging buffer
+ * of its own, whose memory bgfx hands out again before the GPU has copied from it. The AMD Vulkan driver on Windows crashes
+ * on that while loading the textures of the model package. So when a frame has had a fair amount, it is finished first.
+ * @param bytes How much is about to be sent.
+ */
+static void BeforeUpload(size_t bytes)
+{
+	static constexpr size_t BUDGET = 12 << 20;
+	if (_uploaded_bytes != 0 && _uploaded_bytes + bytes > BUDGET) {
+		bgfx::frame();
+		_uploaded_bytes = 0;
+	}
+	_uploaded_bytes += bytes;
+}
+
 static void UploadTextureLayer(bgfx::TextureHandle texture, uint texture_size, uint layer, std::vector<uint32_t> &level)
 {
 	std::vector<uint32_t> smaller;
 	uint8_t mip = 0;
 	for (uint size = texture_size; ; size /= 2, mip++) {
+		BeforeUpload(level.size() * sizeof(uint32_t));
 		bgfx::updateTexture2D(texture, static_cast<uint16_t>(layer), mip, 0, 0, static_cast<uint16_t>(size), static_cast<uint16_t>(size),
 			bgfx::copy(level.data(), static_cast<uint32_t>(level.size() * sizeof(uint32_t))));
 		if (size == 1) break;
@@ -568,9 +589,15 @@ void Renderer3D::UpdateSpriteAtlas(SpriteAtlas &atlas)
 	uint top, bottom;
 	if (!atlas.TakeDirtyRows(top, bottom)) return;
 
-	std::span<const uint32_t> rows = atlas.GetPixels().subspan(static_cast<size_t>(top) * SpriteAtlas::WIDTH, static_cast<size_t>(bottom - top) * SpriteAtlas::WIDTH);
-	bgfx::updateTexture2D(this->impl->sprite_atlas, 0, 0, 0, static_cast<uint16_t>(top), SpriteAtlas::WIDTH, static_cast<uint16_t>(bottom - top),
-		bgfx::copy(rows.data(), static_cast<uint32_t>(rows.size_bytes())));
+	/* In bands of rows, so that no single update is too big for the staging buffer of a frame; see BeforeUpload(). */
+	static constexpr uint BAND = 256;
+	for (uint first = top; first < bottom; first += BAND) {
+		uint last = std::min(bottom, first + BAND);
+		std::span<const uint32_t> rows = atlas.GetPixels().subspan(static_cast<size_t>(first) * SpriteAtlas::WIDTH, static_cast<size_t>(last - first) * SpriteAtlas::WIDTH);
+		BeforeUpload(rows.size_bytes());
+		bgfx::updateTexture2D(this->impl->sprite_atlas, 0, 0, 0, static_cast<uint16_t>(first), SpriteAtlas::WIDTH, static_cast<uint16_t>(last - first),
+			bgfx::copy(rows.data(), static_cast<uint32_t>(rows.size_bytes())));
+	}
 }
 
 /**
@@ -1322,6 +1349,7 @@ bool Renderer3D::Poll(uint *target_id)
 	}
 
 	uint32_t frame = bgfx::frame();
+	_uploaded_bytes = 0;
 	if (frame < this->pending_frame) return false;
 
 	this->pending = false;
