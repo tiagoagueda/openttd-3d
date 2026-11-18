@@ -52,6 +52,8 @@ public:
 	void SetChunk(ChunkID id, const TerrainChunkMesh &mesh);
 	void ClearChunks();
 
+	/** Set the colour around what is drawn in the following images, as 0xRRGGBBAA; 0 for the sky. */
+	void SetBackground(uint32_t rgba) { this->background = rgba; }
 	bool IsBusy() const { return this->pending; }
 	void Render(uint target_id, uint width, uint height, const Camera3D &camera, std::span<const ChunkID> chunks, std::span<const SpriteVertex> sprites, std::span<const ModelInstance> models);
 	bool Poll(uint *target_id = nullptr);
@@ -74,6 +76,7 @@ private:
 	struct Impl;
 	std::unique_ptr<Impl> impl; ///< bgfx state; kept out of the header so only the renderer includes bgfx.
 
+	uint32_t background = 0; ///< Colour around what is drawn, as 0xRRGGBBAA; 0 for the sky.
 	bool pending = false; ///< Whether an image has been requested but not yet received.
 	uint32_t pending_frame = 0; ///< Frame number at which the requested image is complete.
 	uint pending_width = 0; ///< Width of the requested image.

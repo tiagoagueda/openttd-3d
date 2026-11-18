@@ -724,7 +724,7 @@ void Renderer3D::Render(uint target_id, uint width, uint height, const Camera3D 
 
 	bgfx::setViewFrameBuffer(VIEW_SCENE, target.framebuffer);
 	bgfx::setViewRect(VIEW_SCENE, 0, 0, static_cast<uint16_t>(width), static_cast<uint16_t>(height));
-	bgfx::setViewClear(VIEW_SCENE, BGFX_CLEAR_COLOR | BGFX_CLEAR_DEPTH, 0xccdbebff, 1.0f, 0);
+	bgfx::setViewClear(VIEW_SCENE, BGFX_CLEAR_COLOR | BGFX_CLEAR_DEPTH, this->background != 0 ? this->background : 0xccdbebff, 1.0f, 0);
 	bgfx::setViewTransform(VIEW_SCENE, view.m.data(), proj.m.data());
 	bgfx::touch(VIEW_SCENE);
 
@@ -817,11 +817,13 @@ void Renderer3D::Render(uint target_id, uint width, uint height, const Camera3D 
 	Matrix4 view_proj = proj * view;
 	Matrix4 inverse;
 	bx::mtxInverse(inverse.m.data(), view_proj.m.data());
-	bgfx::setUniform(impl.sky_matrix, inverse.m.data());
-	bgfx::setUniform(impl.sky_colour, SKY_COLOUR);
-	bgfx::setVertexBuffer(0, impl.sky_vertices);
-	bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_DEPTH_TEST_LEQUAL);
-	bgfx::submit(VIEW_SCENE, impl.sky_program);
+	if (this->background == 0) {
+		bgfx::setUniform(impl.sky_matrix, inverse.m.data());
+		bgfx::setUniform(impl.sky_colour, SKY_COLOUR);
+		bgfx::setVertexBuffer(0, impl.sky_vertices);
+		bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_DEPTH_TEST_LEQUAL);
+		bgfx::submit(VIEW_SCENE, impl.sky_program);
+	}
 
 	/* The same light as the terrain gets in BuildTerrainChunkMesh(). */
 	static constexpr float MODEL_LIGHT[4] = {0.45f, 0.80f, 0, 0};

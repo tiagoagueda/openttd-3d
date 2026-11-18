@@ -1061,6 +1061,35 @@ static void AddFences(Tile tile, uint x, uint y, SpriteAtlas &atlas, const Model
 static std::vector<AnimatedPart> *_tile_parts = nullptr; ///< Where PlaceModel() puts the moving parts of models, if anywhere.
 
 /**
+ * Place a model at a point, turned to face a direction.
+ * @param entry The model.
+ * @param x X coordinate of the middle of its footprint, in world units.
+ * @param y Y coordinate of the middle of its footprint, in world units.
+ * @param z Height of its base, in world units.
+ * @param front Which way its front faces.
+ * @param tint Colour of the owner.
+ * @param models The models to add to.
+ * @return The placed model.
+ */
+static ModelInstance &PlaceModelAt(const ModelPack::Entry &entry, float x, float y, float z, DiagDirection front, const std::array<float, 4> &tint, std::vector<ModelInstance> &models)
+{
+	/* Which way each direction points on the map. */
+	static constexpr float HEADINGS[4][2] = {{-1, 0}, {0, 1}, {1, 0}, {0, -1}};
+	const float *heading = HEADINGS[to_underlying(front)];
+	ModelInstance &instance = models.emplace_back();
+	instance.model = entry.model;
+	float s = entry.scale;
+	instance.transform.m = {
+		heading[0] * s, heading[1] * s, 0, 0,
+		-heading[1] * s, heading[0] * s, 0, 0,
+		0, 0, s, 0,
+		x, y, z, 1,
+	};
+	instance.tint = tint;
+	return instance;
+}
+
+/**
  * Place a moving part at its place for some moment.
  * @param seconds The moment, in seconds since some start.
  * @return The part.
@@ -1093,10 +1122,6 @@ ModelInstance AnimatedPart::Place(float seconds) const
 
 static void PlaceModel(const ModelPack::Entry &entry, TileIndex tile, uint size_x, uint size_y, DiagDirection front, const std::array<float, 4> &tint, std::vector<ModelInstance> &models)
 {
-	/* Which way each direction points on the map. */
-	static constexpr float HEADINGS[4][2] = {{-1, 0}, {0, 1}, {1, 0}, {0, -1}};
-	const float *heading = HEADINGS[to_underlying(front)];
-
 	/* Buildings on slopes stand on a foundation at the height of the highest corner. */
 	int z = 0;
 	for (uint dy = 0; dy < size_y; dy++) {
@@ -1106,16 +1131,7 @@ static void PlaceModel(const ModelPack::Entry &entry, TileIndex tile, uint size_
 		}
 	}
 
-	ModelInstance &instance = models.emplace_back();
-	instance.model = entry.model;
-	float s = entry.scale;
-	instance.transform.m = {
-		heading[0] * s, heading[1] * s, 0, 0,
-		-heading[1] * s, heading[0] * s, 0, 0,
-		0, 0, s, 0,
-		(TileX(tile) + size_x * 0.5f) * TILE_SIZE, (TileY(tile) + size_y * 0.5f) * TILE_SIZE, z * WORLD_Z_SCALE, 1,
-	};
-	instance.tint = tint;
+	ModelInstance &instance = PlaceModelAt(entry, (TileX(tile) + size_x * 0.5f) * TILE_SIZE, (TileY(tile) + size_y * 0.5f) * TILE_SIZE, z * WORLD_Z_SCALE, front, tint, models);
 
 	if (_tile_parts == nullptr) return;
 	/* Parts of neighbouring buildings move a little out of step, as the 2D game does too. */
@@ -1614,6 +1630,80 @@ void AddPreviewModel(const View3DPreview &preview, TileIndex tile, uint track, c
 	std::array<float, 4> tint = GetOwnerTint(_local_company);
 	tint[3] = 0.55f;
 	PlaceModel(*entry, tile, 1, 1, front, tint, models);
+}
+
+/**
+ * Add the models of a picture of something that can be built, standing on the tile at the origin of the world.
+ * @param picture What to show.
+ * @param pack The package of 3D models.
+ * @param models The models to add to.
+ * @return Whether the package has a model for it.
+ */
+bool AddPictureModels(const View3DPicture &picture, const ModelPack &pack, std::vector<ModelInstance> &models)
+{
+	using Kind = View3DPicture::Kind;
+	const ModelPack::Entry *entry = nullptr;
+	DiagDirection front = picture.direction;
+	DiagDirection along = picture.axis == Axis::X ? DiagDirection::SW : DiagDirection::NW;
+	bool track = false;
+	switch (picture.kind) {
+		case Kind::RailStation:
+			entry = picture.grfid != 0 ? pack.Find(ModelKind::RailStation, picture.grfid, picture.id) : pack.Find(ModelKind::RailStation, 0, picture.id);
+			front = along;
+			track = picture.grfid == 0;
+			break;
+		case Kind::RailWaypoint:
+			entry = picture.grfid != 0 ? nullptr : pack.Find(ModelKind::Waypoint, 0, 0);
+			front = along;
+			track = true;
+			break;
+		case Kind::RailDepot:
+			entry = pack.Find(ModelKind::RailDepot, 0, 0);
+			break;
+		case Kind::RoadStop:
+			entry = picture.grfid != 0 ? pack.Find(ModelKind::RoadStop, picture.grfid, picture.id) : pack.Find(ModelKind::RoadStop, 0, (picture.drive_through ? 2 : 0) + (picture.truck ? 1 : 0));
+			if (picture.drive_through) front = along;
+			break;
+		case Kind::RoadWaypoint:
+			entry = picture.grfid != 0 ? nullptr : pack.Find(ModelKind::Waypoint, 0, 1);
+			front = along;
+			break;
+		case Kind::RoadDepot:
+			entry = pack.Find(ModelKind::RoadDepot, 0, 0);
+			break;
+		case Kind::ShipDepot:
+			entry = pack.Find(ModelKind::ShipDepot, 0, 0);
+			front = picture.axis == Axis::X ? DiagDirection::SW : DiagDirection::SE;
+			break;
+		case Kind::Object: {
+			static constexpr DiagDirection VIEWS[4] = {DiagDirection::SW, DiagDirection::NW, DiagDirection::NE, DiagDirection::SE};
+			entry = pack.Find(ModelKind::Object, picture.grfid, picture.id);
+			front = VIEWS[picture.view & 3];
+			break;
+		}
+		case Kind::House:
+			entry = pack.Find(ModelKind::House, picture.grfid, picture.id);
+			front = DiagDirection::SW;
+			break;
+	}
+	if (entry == nullptr) return false;
+
+	std::array<float, 4> tint = picture.kind == Kind::House ? ModelPack::GetTint(Colours::Cream) : GetOwnerTint(_local_company);
+	PlaceModelAt(*entry, picture.size_x * TILE_SIZE * 0.5f, picture.size_y * TILE_SIZE * 0.5f, 0, front, tint, models);
+
+	if (track && picture.rail != INVALID_RAILTYPE) {
+		const ModelPack::Entry *piece = GetTrackPiece(picture.rail, false, pack);
+		if (piece != nullptr && !GetRailTypeInfo(picture.rail)->UsesOverlay()) {
+			bool along_x = picture.axis == Axis::X;
+			float c = TILE_SIZE * 0.5f;
+			std::array<float, 3> a{along_x ? 0.0f : c, along_x ? c : 0.0f, 0}, b{along_x ? 2 * c : c, along_x ? c : 2 * c, 0};
+			static TerrainChunkMesh scratch;
+			scratch.models.clear();
+			AddEdgeModel(*piece, a, b, scratch);
+			models.insert(models.end(), scratch.models.begin(), scratch.models.end());
+		}
+	}
+	return true;
 }
 
 /**

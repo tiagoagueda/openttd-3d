@@ -49,6 +49,10 @@
 
 #include "table/strings.h"
 
+#ifdef WITH_VIEWPORT3D
+#	include "viewport3d/view3d_gui.h"
+#endif
+
 #include "safeguards.h"
 
 static void ShowRVStationPicker(Window *parent, RoadStopType rs);
@@ -1222,7 +1226,11 @@ struct BuildRoadDepotWindow : public PickerWindowBase {
 			AutoRestoreBackup dpi_backup(_cur_dpi, &tmp_dpi);
 			int x = (ir.Width()  - ScaleSpriteTrad(64)) / 2 + ScaleSpriteTrad(31);
 			int y = (ir.Height() + ScaleSpriteTrad(48)) / 2 - ScaleSpriteTrad(31);
-			DrawRoadDepotSprite(x, y, static_cast<DiagDirection>(widget - WID_BROD_DEPOT_NE + to_underlying(DiagDirection::NE)), _cur_roadtype);
+			DiagDirection dir = static_cast<DiagDirection>(widget - WID_BROD_DEPOT_NE + to_underlying(DiagDirection::NE));
+#ifdef WITH_VIEWPORT3D
+			if (RoadTypeIsRoad(_cur_roadtype) && DrawView3DPicture(View3DPicture{.kind = View3DPicture::Kind::RoadDepot, .direction = dir}, ir.Width(), ir.Height())) return;
+#endif
+			DrawRoadDepotSprite(x, y, dir, _cur_roadtype);
 		}
 	}
 
@@ -1346,6 +1354,26 @@ public:
 		const auto *spec = this->GetSpec(cls_id, id);
 		return IsRoadStopAvailable(spec, roadstoptype == RoadStopType::Bus ? StationType::Bus : StationType::Truck);
 	}
+
+#ifdef WITH_VIEWPORT3D
+	bool GetView3DPicture(int cls_id, int id, View3DPicture &picture) const override
+	{
+		if (!RoadTypeIsRoad(_cur_roadtype)) return false;
+		DiagDirection orientation = _roadstop_gui.orientation;
+		const auto *spec = this->GetSpec(cls_id, id);
+		if (spec != nullptr && orientation < DiagDirection::End && spec->flags.Test(RoadStopSpecFlag::DriveThroughOnly)) orientation = DiagDirection::End;
+		picture.kind = View3DPicture::Kind::RoadStop;
+		picture.truck = roadstoptype == RoadStopType::Truck;
+		picture.drive_through = orientation >= DiagDirection::End;
+		if (picture.drive_through) {
+			picture.axis = to_underlying(orientation) == to_underlying(DiagDirection::End) ? Axis::X : Axis::Y;
+		} else {
+			picture.direction = orientation;
+		}
+		if (spec != nullptr) picture.SetSource(spec->grf_prop, 0);
+		return true;
+	}
+#endif
 
 	void DrawType(int x, int y, int cls_id, int id) const override
 	{
@@ -1543,6 +1571,15 @@ public:
 					AutoRestoreBackup dpi_backup(_cur_dpi, &tmp_dpi);
 					int x = (ir.Width()  - ScaleSpriteTrad(PREVIEW_WIDTH)) / 2 + ScaleSpriteTrad(PREVIEW_LEFT);
 					int y = (ir.Height() + ScaleSpriteTrad(PREVIEW_HEIGHT)) / 2 - ScaleSpriteTrad(PREVIEW_BOTTOM);
+#ifdef WITH_VIEWPORT3D
+					if (RoadTypeIsRoad(_cur_roadtype) && st != StationType::RoadWaypoint) {
+						uint view = widget - WID_BROS_STATION_NE;
+						View3DPicture picture{.kind = View3DPicture::Kind::RoadStop, .direction = view < 4 ? static_cast<DiagDirection>(view) : DiagDirection::SW,
+							.axis = view == 5 ? Axis::Y : Axis::X, .truck = st == StationType::Truck, .drive_through = view >= 4};
+						if (spec != nullptr) picture.SetSource(spec->grf_prop, 0);
+						if (DrawView3DPicture(picture, ir.Width(), ir.Height())) break;
+					}
+#endif
 					if (spec == nullptr) {
 						StationPickerDrawSprite(x, y, st, INVALID_RAILTYPE, _cur_roadtype, widget - WID_BROS_STATION_NE);
 					} else {
@@ -1775,6 +1812,15 @@ public:
 	{
 		return IsRoadStopAvailable(this->GetSpec(cls_id, id), StationType::RoadWaypoint);
 	}
+
+#ifdef WITH_VIEWPORT3D
+	bool GetView3DPicture(int cls_id, int id, View3DPicture &picture) const override
+	{
+		if (!RoadTypeIsRoad(_cur_roadtype) || this->GetSpec(cls_id, id) != nullptr) return false;
+		picture.kind = View3DPicture::Kind::RoadWaypoint;
+		return true;
+	}
+#endif
 
 	void DrawType(int x, int y, int cls_id, int id) const override
 	{

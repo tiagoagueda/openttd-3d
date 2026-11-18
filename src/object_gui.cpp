@@ -32,6 +32,10 @@
 
 #include "table/strings.h"
 
+#ifdef WITH_VIEWPORT3D
+#	include "viewport3d/view3d_gui.h"
+#endif
+
 #include "safeguards.h"
 
 struct ObjectPickerSelection {
@@ -92,6 +96,17 @@ public:
 		const auto *spec = this->GetSpec(cls_id, id);
 		return spec->IsAvailable();
 	}
+
+#ifdef WITH_VIEWPORT3D
+	bool GetView3DPicture(int cls_id, int id, View3DPicture &picture) const override
+	{
+		const auto *spec = this->GetSpec(cls_id, id);
+		picture.kind = View3DPicture::Kind::Object;
+		picture.SetSource(spec->grf_prop, spec->Index());
+		picture.view = std::min<int>(_object_gui.sel_view, spec->views - 1);
+		return true;
+	}
+#endif
 
 	void DrawType(int x, int y, int cls_id, int id) const override
 	{
@@ -215,6 +230,11 @@ public:
 					int x = (ir.Width()  - ScaleSpriteTrad(PREVIEW_WIDTH)) / 2 + ScaleSpriteTrad(PREVIEW_LEFT);
 					int y = (ir.Height() + ScaleSpriteTrad(PREVIEW_HEIGHT)) / 2 - ScaleSpriteTrad(PREVIEW_BOTTOM);
 
+#ifdef WITH_VIEWPORT3D
+					View3DPicture picture{.kind = View3DPicture::Kind::Object, .view = static_cast<uint8_t>(matrix->GetCurrentElement())};
+					picture.SetSource(spec->grf_prop, spec->Index());
+					if (DrawView3DPicture(picture, ir.Width(), ir.Height())) break;
+#endif
 					if (!spec->grf_prop.HasGrfFile()) {
 						extern const DrawTileSpriteSpan _objects[];
 						const DrawTileSprites *dts = &_objects[spec->grf_prop.local_id];

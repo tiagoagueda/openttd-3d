@@ -13,6 +13,7 @@
 #include "../core/geometry_type.hpp"
 #include "../tile_type.h"
 #include "../direction_type.h"
+#include "../rail_type.h"
 
 /** What a build tool is about to build, so the 3D view can show it before it is built. */
 struct View3DPreview {
@@ -29,6 +30,37 @@ struct View3DPreview {
 	bool truck = false; ///< For road stops: a lorry stop rather than a bus stop.
 	bool drive_through = false; ///< For road stops: a drive-through stop rather than a bay.
 };
+
+/** A picture of something that can be built, for the buttons of construction windows. */
+struct View3DPicture {
+	enum class Kind : uint8_t {
+		RailStation, ///< A rail station tile along #axis.
+		RailWaypoint, ///< A rail waypoint along #axis.
+		RailDepot, ///< A train depot facing #direction.
+		RoadStop, ///< A road stop; a bay facing #direction, or a drive-through stop along #axis.
+		RoadWaypoint, ///< A road waypoint along #axis.
+		RoadDepot, ///< A road vehicle depot facing #direction.
+		ShipDepot, ///< A ship depot along #axis.
+		Object, ///< An object in view #view.
+		House, ///< A town building.
+	};
+	Kind kind = Kind::RailStation; ///< What it is.
+	uint32_t grfid = 0; ///< For things a NewGRF may define: the NewGRF, or 0 for the base game.
+	uint16_t id = 0; ///< For things a NewGRF may define: its number in the NewGRF, or in the base game.
+	DiagDirection direction = DiagDirection::SW; ///< Which way it faces.
+	Axis axis = Axis::X; ///< Along which axis it lies.
+	uint8_t view = 0; ///< For objects: which of its views.
+	uint8_t size_x = 1; ///< Size along x in tiles.
+	uint8_t size_y = 1; ///< Size along y in tiles.
+	bool truck = false; ///< For road stops: a lorry stop rather than a bus stop.
+	bool drive_through = false; ///< For road stops: a drive-through stop rather than a bay.
+	RailType rail = INVALID_RAILTYPE; ///< For rail stations and waypoints: the track type.
+
+	void SetSource(const struct GRFFilePropsBase &props, uint16_t base_game_id);
+	bool operator==(const View3DPicture &other) const = default;
+};
+
+bool DrawView3DPicture(const View3DPicture &picture, int width, int height);
 
 bool GetRailToolPreview(View3DPreview &preview);
 bool GetRoadToolPreview(View3DPreview &preview);

@@ -53,6 +53,10 @@
 
 #include "table/strings.h"
 
+#ifdef WITH_VIEWPORT3D
+#	include "viewport3d/view3d_gui.h"
+#endif
+
 #include "safeguards.h"
 
 TownKdtree _town_local_authority_kdtree{};
@@ -1567,6 +1571,17 @@ public:
 		const HouseSpec *hs = HouseSpec::Get(id);
 		return hs->enabled;
 	}
+
+#ifdef WITH_VIEWPORT3D
+	bool GetView3DPicture(int, int id, View3DPicture &picture) const override
+	{
+		/* Buildings of several tiles show all of them at once. */
+		const HouseSpec *hs = HouseSpec::Get(id);
+		picture.kind = View3DPicture::Kind::House;
+		picture.SetSource(hs->grf_prop, id);
+		return true;
+	}
+#endif
 
 	void DrawType(int x, int y, int, int id) const override
 	{

@@ -38,6 +38,10 @@
 #include "table/sprites.h"
 #include "table/strings.h"
 
+#ifdef WITH_VIEWPORT3D
+#	include "viewport3d/view3d_gui.h"
+#endif
+
 #include "safeguards.h"
 
 static void ShowBuildDockStationPicker(Window *parent);
@@ -560,6 +564,9 @@ public:
 					AutoRestoreBackup dpi_backup(_cur_dpi, &tmp_dpi);
 					int x = (ir.Width()  - ScaleSpriteTrad(96)) / 2;
 					int y = (ir.Height() - ScaleSpriteTrad(64)) / 2;
+#ifdef WITH_VIEWPORT3D
+					if (DrawView3DPicture(View3DPicture{.kind = View3DPicture::Kind::ShipDepot, .axis = axis}, ir.Width(), ir.Height())) break;
+#endif
 					int x1 = ScaleSpriteTrad(63);
 					int x2 = ScaleSpriteTrad(31);
 					DrawShipDepotSprite(x + (axis == Axis::X ? x1 : x2), y + ScaleSpriteTrad(17), axis, DepotPart::North);

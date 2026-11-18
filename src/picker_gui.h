@@ -160,6 +160,15 @@ public:
 	 */
 	virtual void DrawType(int x, int y, int cls_id, int id) const = 0;
 
+	/**
+	 * Say what the 3D picture of a type shows, for when the map is shown in 3D.
+	 * @param cls_id The class of the type.
+	 * @param id The type within the class.
+	 * @param[out] picture What the picture shows.
+	 * @return Whether there is a 3D picture for the type.
+	 */
+	virtual bool GetView3DPicture([[maybe_unused]] int cls_id, [[maybe_unused]] int id, [[maybe_unused]] struct View3DPicture &picture) const { return false; }
+
 	/* Collection Callbacks */
 	/**
 	 * Get the tooltip string for the collection list.

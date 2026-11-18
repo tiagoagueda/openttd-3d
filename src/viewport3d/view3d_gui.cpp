@@ -14,6 +14,8 @@
 #include "vehicle_sprites.h"
 #include "terrain_mesh.h"
 #include "tile_sprites.h"
+#include "model_pack.h"
+#include "../newgrf_commons.h"
 #include "../blitter/factory.hpp"
 #include "../gfx_func.h"
 #include "../landscape.h"
@@ -36,6 +38,7 @@
 
 #include "table/strings.h"
 
+#include <cfloat>
 #include <map>
 
 #include "../safeguards.h"
@@ -165,6 +168,20 @@ class View3DWindow : public Window {
 	std::vector<SpriteVertex> small_sprites; ///< Vehicles in a small view; reused.
 	std::vector<VehicleSpritePlace> small_places; ///< Places of the vehicles in a small view; not used, but needed to find them.
 	std::vector<ModelInstance> small_models; ///< Models in a small view; reused.
+
+	/** A picture for a button of a construction window. */
+	struct Picture {
+		View3DPicture what; ///< What it shows.
+		uint width; ///< Width in pixels.
+		uint height; ///< Height in pixels.
+		uint32_t background; ///< Colour of the button around it, as 0xRRGGBBAA.
+		uint target; ///< Id of its image in the renderer.
+		bool requested = false; ///< Whether its image was asked for.
+		Rect screen{}; ///< Where on the screen it was drawn last, to draw it again once the image is there.
+	};
+	std::vector<Picture> pictures; ///< Pictures for construction windows.
+	uint next_picture_target = 0x40000000; ///< Id for the image of the next new picture.
+	std::vector<ModelInstance> picture_models; ///< Models of a picture; reused.
 
 public:
 	View3DWindow(WindowDesc &desc, WindowNumber window_number) : Window(desc), main_view(desc.cls == WindowClass::View3DMain)
@@ -943,6 +960,9 @@ public:
 		this->PollRenderer();
 		if (this->renderer->IsBusy()) return;
 
+		/* Pictures for construction windows are made once, and come first. */
+		if (this->RenderPicture()) return;
+
 		/* Our own view and the viewports of other windows take turns. */
 		auto now = std::chrono::steady_clock::now();
 		if (this->main_view) {
@@ -989,6 +1009,63 @@ public:
 		this->view_changed = false;
 		this->vehicle_hash = hash;
 		this->PollRenderer();
+	}
+
+	/**
+	 * Draw a picture of something that can be built in the current drawing area, from its 3D image, and ask for that image when there is none yet.
+	 * @param what What to show.
+	 * @param width Width of the whole picture in pixels; the drawing area may be only part of it.
+	 * @param height Height of the whole picture in pixels.
+	 * @return Whether it was drawn; if not, the 2D sprites have to do.
+	 */
+	bool DrawPicture(const View3DPicture &what, int width, int height)
+	{
+		if (this->renderer == nullptr || this->model_pack == nullptr || this->model_pack->IsEmpty() || width <= 0 || height <= 0) return false;
+		Blitter *blitter = BlitterFactory::GetCurrentBlitter();
+		if (blitter->GetScreenDepth() != 32) return false;
+		const DrawPixelInfo *dpi = _cur_dpi;
+		if (dpi->width <= 0 || dpi->height <= 0) return true;
+
+		/* The image is made on the colour of the button, so its edges blend into it. */
+		uint32_t pixel = *static_cast<const uint32_t *>(dpi->dst_ptr);
+		uint32_t background = ((pixel >> 16) & 0xFF) << 24 | ((pixel >> 8) & 0xFF) << 16 | (pixel & 0xFF) << 8 | 0xFF;
+
+		auto it = std::ranges::find_if(this->pictures, [&](const Picture &p) {
+			return p.what == what && p.width == static_cast<uint>(width) && p.height == static_cast<uint>(height) && p.background == background;
+		});
+		if (it == this->pictures.end()) {
+			this->picture_models.clear();
+			if (!AddPictureModels(what, *this->model_pack, this->picture_models)) return false;
+			/* Keep the number of images in bounds. */
+			static constexpr size_t MAX_PICTURES = 128;
+			if (this->pictures.size() >= MAX_PICTURES) {
+				for (const Picture &old : this->pictures) this->renderer->ReleaseTarget(old.target);
+				this->pictures.clear();
+			}
+			it = this->pictures.insert(this->pictures.end(), Picture{what, static_cast<uint>(width), static_cast<uint>(height), background, this->next_picture_target++});
+		}
+
+		/* Where the whole picture is on the screen. */
+		const uint32_t *screen = static_cast<const uint32_t *>(_screen.dst_ptr);
+		ptrdiff_t offset = static_cast<const uint32_t *>(dpi->dst_ptr) - screen;
+		if (offset >= 0 && offset < static_cast<ptrdiff_t>(_screen.pitch) * _screen.height) {
+			int x = static_cast<int>(offset % _screen.pitch) - dpi->left;
+			int y = static_cast<int>(offset / _screen.pitch) - dpi->top;
+			it->screen = {x, y, x + width - 1, y + height - 1};
+		}
+
+		std::span<const uint32_t> image = this->renderer->GetImage(it->target);
+		if (image.empty() || this->renderer->GetImageWidth(it->target) != static_cast<uint>(width) || this->renderer->GetImageHeight(it->target) != static_cast<uint>(height)) return false;
+		int right = std::min(width, dpi->left + dpi->width);
+		int bottom = std::min(height, dpi->top + dpi->height);
+		int left = std::max(0, dpi->left);
+		for (int y = std::max(0, dpi->top); y < bottom; y++) {
+			if (left >= right) break;
+			const uint32_t *src = image.data() + static_cast<size_t>(y) * width + left;
+			uint32_t *dst = static_cast<uint32_t *>(blitter->MoveTo(dpi->dst_ptr, left - dpi->left, y - dpi->top));
+			std::copy_n(src, right - left, dst);
+		}
+		return true;
 	}
 
 	/** Whether this is the 3D view in place of the main view. */
@@ -1092,6 +1169,11 @@ private:
 			this->SetWidgetDirty(WID_V3D_VIEW);
 			return;
 		}
+		for (const Picture &picture : this->pictures) {
+			if (picture.target != target) continue;
+			AddDirtyBlock(picture.screen.left, picture.screen.top, picture.screen.right + 1, picture.screen.bottom + 1);
+			return;
+		}
 		for (const SmallView &view : this->small_views) {
 			if (view.target != target) continue;
 			const Window *w = FindWindowById(view.window_class, view.window_number);
@@ -1112,6 +1194,57 @@ private:
 			this->renderer->ReleaseTarget(it->target);
 			it = this->small_views.erase(it);
 		}
+	}
+
+	/**
+	 * Make the image of a picture for a construction window that has none yet.
+	 * @return Whether an image was asked for.
+	 */
+	bool RenderPicture()
+	{
+		for (Picture &picture : this->pictures) {
+			if (picture.requested) continue;
+			picture.requested = true;
+			this->picture_models.clear();
+			if (!AddPictureModels(picture.what, *this->model_pack, this->picture_models)) continue;
+
+			/* Look at it from the same angle as the main view starts with, which is like the 2D game, from as close as fits all of it. */
+			Camera3D camera;
+			std::array<float, 3> low{FLT_MAX, FLT_MAX, FLT_MAX}, high{-FLT_MAX, -FLT_MAX, -FLT_MAX};
+			std::vector<Vec3> corners;
+			for (const ModelInstance &instance : this->picture_models) {
+				const std::array<float, 6> &b = this->model_pack->GetBounds(instance.model);
+				const auto &m = instance.transform.m;
+				for (int c = 0; c < 8; c++) {
+					float x = b[(c & 1) ? 3 : 0], y = b[(c & 2) ? 4 : 1], z = b[(c & 4) ? 5 : 2];
+					Vec3 w{m[0] * x + m[4] * y + m[8] * z + m[12], m[1] * x + m[5] * y + m[9] * z + m[13], m[2] * x + m[6] * y + m[10] * z + m[14]};
+					corners.push_back(w);
+					low = {std::min(low[0], w.x), std::min(low[1], w.y), std::min(low[2], w.z)};
+					high = {std::max(high[0], w.x), std::max(high[1], w.y), std::max(high[2], w.z)};
+				}
+			}
+			camera.target = {(low[0] + high[0]) * 0.5f, (low[1] + high[1]) * 0.5f, (low[2] + high[2]) * 0.5f};
+			float cp = std::cos(camera.pitch);
+			Vec3 back{cp * std::cos(camera.yaw), cp * std::sin(camera.yaw), std::sin(camera.pitch)};
+			Vec3 right = camera.GetRight();
+			Vec3 up = Cross(back, right);
+			float half_x = 0, half_y = 0, depth = 0;
+			for (const Vec3 &c : corners) {
+				Vec3 d = c - camera.target;
+				half_x = std::max(half_x, std::abs(Dot(d, right)));
+				half_y = std::max(half_y, std::abs(Dot(d, up)));
+				depth = std::max(depth, Dot(d, back));
+			}
+			float t = std::tan(Camera3D::FOV_Y / 2);
+			float aspect = static_cast<float>(picture.width) / picture.height;
+			camera.distance = std::max(half_y / t, half_x / (t * aspect)) * 1.08f + depth;
+
+			this->renderer->SetBackground(picture.background);
+			this->renderer->Render(picture.target, picture.width, picture.height, camera, {}, {}, this->picture_models);
+			this->renderer->SetBackground(0);
+			return true;
+		}
+		return false;
 	}
 
 	/**
@@ -1559,6 +1692,35 @@ void MarkAreaDirtyForView3D(uint x_start, uint y_start, uint x_end, uint y_end)
 bool DrawViewportIn3D(const Window &w, int left, int top, int right, int bottom)
 {
 	return _view3d_window != nullptr && _view3d_window->DrawSmallView(w, left, top, right, bottom);
+}
+
+/**
+ * Draw a picture of something that can be built in 3D, when the map is shown in 3D and the model package has a model for it.
+ * The picture fills the current drawing area, which is part of a button of a construction window.
+ * @param picture What to show.
+ * @param width Width of the whole picture in pixels.
+ * @param height Height of the whole picture in pixels.
+ * @return Whether it was drawn; if not, draw the 2D sprites.
+ */
+bool DrawView3DPicture(const View3DPicture &picture, int width, int height)
+{
+	return _view3d_window != nullptr && _view3d_window->DrawPicture(picture, width, height);
+}
+
+/**
+ * Say which NewGRF, if any, defines what the picture shows.
+ * @param props Where it comes from.
+ * @param base_game_id Its number in the base game, used when no NewGRF defines it.
+ */
+void View3DPicture::SetSource(const GRFFilePropsBase &props, uint16_t base_game_id)
+{
+	if (props.HasGrfFile()) {
+		this->grfid = ModelPack::GetGrfIDNumber(props.grfid);
+		this->id = props.local_id;
+	} else {
+		this->grfid = 0;
+		this->id = base_game_id;
+	}
 }
 
 /**

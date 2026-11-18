@@ -51,6 +51,10 @@
 
 #include "table/strings.h"
 
+#ifdef WITH_VIEWPORT3D
+#	include "viewport3d/view3d_gui.h"
+#endif
+
 #include "safeguards.h"
 
 
@@ -1085,6 +1089,22 @@ public:
 		return IsStationAvailable(this->GetSpec(cls_id, id));
 	}
 
+#ifdef WITH_VIEWPORT3D
+	bool GetView3DPicture(int cls_id, int id, View3DPicture &picture) const override
+	{
+		picture.kind = View3DPicture::Kind::RailStation;
+		picture.axis = _station_gui.axis;
+		picture.rail = _cur_railtype;
+		const auto *spec = this->GetSpec(cls_id, id);
+		if (spec != nullptr) {
+			picture.SetSource(spec->grf_prop, 1);
+		} else {
+			picture.id = 1;
+		}
+		return true;
+	}
+#endif
+
 	void DrawType(int x, int y, int cls_id, int id) const override
 	{
 		if (!DrawStationTile(x, y, _cur_railtype, _station_gui.axis, this->GetClassIndex(cls_id), id)) {
@@ -1267,6 +1287,12 @@ public:
 					AutoRestoreBackup dpi_backup(_cur_dpi, &tmp_dpi);
 					int x = (ir.Width()  - ScaleSpriteTrad(PREVIEW_WIDTH)) / 2 + ScaleSpriteTrad(PREVIEW_LEFT);
 					int y = (ir.Height() + ScaleSpriteTrad(PREVIEW_HEIGHT)) / 2 - ScaleSpriteTrad(PREVIEW_BOTTOM);
+#ifdef WITH_VIEWPORT3D
+					View3DPicture picture{.kind = View3DPicture::Kind::RailStation, .id = 1, .axis = Axis::X, .rail = _cur_railtype};
+					const StationSpec *spec = StationClass::Get(_station_gui.sel_class)->GetSpec(_station_gui.sel_type);
+					if (spec != nullptr) picture.SetSource(spec->grf_prop, 1);
+					if (DrawView3DPicture(picture, ir.Width(), ir.Height())) break;
+#endif
 					if (!DrawStationTile(x, y, _cur_railtype, Axis::X, _station_gui.sel_class, _station_gui.sel_type)) {
 						StationPickerDrawSprite(x, y, StationType::Rail, _cur_railtype, INVALID_ROADTYPE, 2);
 					}
@@ -1281,6 +1307,12 @@ public:
 					AutoRestoreBackup dpi_backup(_cur_dpi, &tmp_dpi);
 					int x = (ir.Width()  - ScaleSpriteTrad(PREVIEW_WIDTH)) / 2 + ScaleSpriteTrad(PREVIEW_LEFT);
 					int y = (ir.Height() + ScaleSpriteTrad(PREVIEW_HEIGHT)) / 2 - ScaleSpriteTrad(PREVIEW_BOTTOM);
+#ifdef WITH_VIEWPORT3D
+					View3DPicture picture{.kind = View3DPicture::Kind::RailStation, .id = 1, .axis = Axis::Y, .rail = _cur_railtype};
+					const StationSpec *spec = StationClass::Get(_station_gui.sel_class)->GetSpec(_station_gui.sel_type);
+					if (spec != nullptr) picture.SetSource(spec->grf_prop, 1);
+					if (DrawView3DPicture(picture, ir.Width(), ir.Height())) break;
+#endif
 					if (!DrawStationTile(x, y, _cur_railtype, Axis::Y, _station_gui.sel_class, _station_gui.sel_type)) {
 						StationPickerDrawSprite(x, y, StationType::Rail, _cur_railtype, INVALID_ROADTYPE, 3);
 					}
@@ -1798,7 +1830,11 @@ struct BuildRailDepotWindow : public PickerWindowBase {
 			AutoRestoreBackup dpi_backup(_cur_dpi, &tmp_dpi);
 			int x = (ir.Width()  - ScaleSpriteTrad(64)) / 2 + ScaleSpriteTrad(31);
 			int y = (ir.Height() + ScaleSpriteTrad(48)) / 2 - ScaleSpriteTrad(31);
-			DrawTrainDepotSprite(x, y, static_cast<DiagDirection>(widget - WID_BRAD_DEPOT_NE + to_underlying(DiagDirection::NE)), _cur_railtype);
+			DiagDirection dir = static_cast<DiagDirection>(widget - WID_BRAD_DEPOT_NE + to_underlying(DiagDirection::NE));
+#ifdef WITH_VIEWPORT3D
+			if (DrawView3DPicture(View3DPicture{.kind = View3DPicture::Kind::RailDepot, .direction = dir}, ir.Width(), ir.Height())) return;
+#endif
+			DrawTrainDepotSprite(x, y, dir, _cur_railtype);
 		}
 	}
 
@@ -1909,6 +1945,16 @@ public:
 	{
 		return IsStationAvailable(this->GetSpec(cls_id, id));
 	}
+
+#ifdef WITH_VIEWPORT3D
+	bool GetView3DPicture(int cls_id, int id, View3DPicture &picture) const override
+	{
+		if (this->GetSpec(cls_id, id) != nullptr) return false;
+		picture.kind = View3DPicture::Kind::RailWaypoint;
+		picture.rail = _cur_railtype;
+		return true;
+	}
+#endif
 
 	void DrawType(int x, int y, int cls_id, int id) const override
 	{

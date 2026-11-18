@@ -16,6 +16,9 @@
 #include "ini_type.h"
 #include "newgrf_badge.h"
 #include "newgrf_badge_gui.h"
+#ifdef WITH_VIEWPORT3D
+#	include "viewport3d/view3d_gui.h"
+#endif
 #include "picker_gui.h"
 #include "querystring_gui.h"
 #include "sortlist_type.h"
@@ -389,7 +392,14 @@ void PickerWindow::DrawWidget(const Rect &r, WidgetID widget) const
 				int x = (ir.Width()  - ScaleSpriteTrad(PREVIEW_WIDTH)) / 2 + ScaleSpriteTrad(PREVIEW_LEFT);
 				int y = (ir.Height() + ScaleSpriteTrad(this->preview_height)) / 2 - ScaleSpriteTrad(PREVIEW_BOTTOM);
 
+#ifdef WITH_VIEWPORT3D
+				View3DPicture picture;
+				if (!this->callbacks.GetView3DPicture(item.class_index, item.index, picture) || !DrawView3DPicture(picture, ir.Width(), ir.Height())) {
+					this->callbacks.DrawType(x, y, item.class_index, item.index);
+				}
+#else
 				this->callbacks.DrawType(x, y, item.class_index, item.index);
+#endif
 
 				int by = ir.Height() - ScaleGUITrad(12);
 
