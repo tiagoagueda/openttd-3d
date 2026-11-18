@@ -94,6 +94,9 @@ public:
 		Rail, ///< Gravel beside tracks; the bits are the track bits.
 		Road, ///< A road with grass or bare land beside it; the bits are the road bits.
 		PavedRoad, ///< A road with pavements; the bits are the road bits.
+		Crossing, ///< A level crossing: a road across gravel along a track; the bits are the road bits.
+		Gravel, ///< Gravel all over, as at mines; no bits.
+		Paving, ///< Paving all over, as at factories; no bits.
 	};
 	uint GetPattern(PatternKind kind, uint8_t bits, uint8_t reserved = 0);
 

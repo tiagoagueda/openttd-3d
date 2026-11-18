@@ -377,7 +377,7 @@ uint GroundTextures::GetPattern(PatternKind kind, uint8_t bits, uint8_t reserved
 	/* How far a point is from the nearest piece of track or road, in tiles. */
 	auto distance = [&](float u, float v, uint8_t bits) {
 		float nearest = 2.0f;
-		if (kind == PatternKind::Rail) {
+		if (kind == PatternKind::Rail || kind == PatternKind::Gravel || kind == PatternKind::Paving) {
 			/* The middle lines of the six tracks, from edge to edge; the same as the pieces of 3D track. */
 			static constexpr float TRACKS[6][4] = {
 				{0, 0.5f, 1, 0.5f}, {0.5f, 0, 0.5f, 1}, {0, 0.5f, 0.5f, 0}, {0.5f, 1, 1, 0.5f}, {0.5f, 0, 1, 0.5f}, {0, 0.5f, 0.5f, 1},
@@ -422,12 +422,26 @@ uint GroundTextures::GetPattern(PatternKind kind, uint8_t bits, uint8_t reserved
 				asphalt = d < 0.42f ? 1.0f : 0.0f;
 				paving = 1 - asphalt;
 				break;
+			case PatternKind::Crossing: {
+				/* The road goes across the crossing as wide as a plain road; the track bed runs across the other way. */
+				asphalt = d < 0.29f ? 1.0f : 0.0f;
+				float across = (bits & 0b1010) != 0 ? std::abs(u - 0.5f) : std::abs(v - 0.5f);
+				gravel = asphalt == 0 && across < 0.27f ? 1.0f : 0.0f;
+				land = 1 - asphalt - gravel;
+				break;
+			}
+			case PatternKind::Gravel:
+				gravel = 1;
+				break;
+			case PatternKind::Paving:
+				paving = 1;
+				break;
 		}
 	};
 
 	/* Straight roads have a dashed line down the middle, two dashes per tile so they line up with the next tile. */
 	static constexpr uint8_t ROAD_X = 0b1010, ROAD_Y = 0b0101; // NE and SW, NW and SE
-	const bool lined = kind != PatternKind::Rail && (bits == ROAD_X || bits == ROAD_Y);
+	const bool lined = (kind == PatternKind::Road || kind == PatternKind::PavedRoad) && (bits == ROAD_X || bits == ROAD_Y);
 	auto marking = [&](float u, float v) {
 		/* Reserved tracks: a pale edge either side of the 3D track bed, like the 2D game lights up the ballast. */
 		if (reserved != 0) {

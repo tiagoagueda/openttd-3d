@@ -480,6 +480,20 @@ static bool IsBaseRoadStop(TileIndex tile)
 }
 
 /**
+ * Whether a tile is a bus or lorry stop of a NewGRF, on plain road, that the model package has a model for.
+ * @param tile The tile.
+ * @param pack The package of 3D models.
+ * @return True for such a stop.
+ */
+static bool IsModelledNewGRFRoadStop(TileIndex tile, const ModelPack &pack)
+{
+	if (!IsTileType(tile, TileType::Station) || !IsAnyRoadStop(tile) || IsRoadWaypoint(tile)) return false;
+	const RoadStopSpec *spec = GetRoadStopSpec(tile);
+	if (spec == nullptr || pack.Find(ModelKind::RoadStop, spec->grf_prop, 0) == nullptr) return false;
+	return !HasRoadTypeTram(tile) && HasRoadTypeRoad(tile) && GetRoadTypeRoad(tile) == ROADTYPE_ROAD;
+}
+
+/**
  * Get the 3D model of a piece of track.
  * @param rt The rail type.
  * @param diagonal Whether to get the diagonal piece, rather than the straight one.
@@ -1515,8 +1529,8 @@ static bool AddTileModel(TileIndex tile, const ModelPack &pack, std::vector<Mode
 			}
 			if (entry == nullptr) return false;
 			PlaceModel(*entry, tile, 1, 1, front, GetOwnerTint(IsBuoy(tile) ? OWNER_NONE : GetTileOwner(tile)), models);
-			/* The track through stations and waypoints of the base game is the same as on plain rail; GetGroundPattern() gives them its ballast. */
-			if (HasStationRail(tile) && GetStationSpec(tile) == nullptr) AddStationTrack(tile, pack, models);
+			/* The track through stations and waypoints with a model is the same as on plain rail; GetGroundPattern() gives them its ballast. */
+			if (HasStationRail(tile)) AddStationTrack(tile, pack, models);
 			return true;
 		}
 
@@ -1528,7 +1542,20 @@ static bool AddTileModel(TileIndex tile, const ModelPack &pack, std::vector<Mode
 			if (!IsRailDepot(tile)) return false;
 			const ModelPack::Entry *entry = pack.Find(ModelKind::RailDepot, 0, 0);
 			if (entry == nullptr) return false;
-			PlaceModel(*entry, tile, 1, 1, GetRailDepotDirection(tile), GetOwnerTint(GetTileOwner(tile)), models);
+			DiagDirection dir = GetRailDepotDirection(tile);
+			PlaceModel(*entry, tile, 1, 1, dir, GetOwnerTint(GetTileOwner(tile)), models);
+			/* The track runs from inside out of the door, over the ballast that GetGroundPattern() gives it. */
+			const ModelPack::Entry *track = GetTrackPiece(GetRailType(tile), false, pack);
+			if (track != nullptr && !GetRailTypeInfo(GetRailType(tile))->UsesOverlay()) {
+				static constexpr float OUT[4][2] = {{-1, 0}, {0, 1}, {1, 0}, {0, -1}};
+				float cx = TileX(tile) * TILE_SIZE + TILE_SIZE * 0.5f, cy = TileY(tile) * TILE_SIZE + TILE_SIZE * 0.5f;
+				float z = GetTileMaxPixelZ(tile) * WORLD_Z_SCALE;
+				const float *out = OUT[to_underlying(dir)];
+				static TerrainChunkMesh scratch;
+				scratch.models.clear();
+				AddEdgeModel(*track, {cx - out[0] * TILE_SIZE * 0.25f, cy - out[1] * TILE_SIZE * 0.25f, z}, {cx + out[0] * TILE_SIZE * 0.5f, cy + out[1] * TILE_SIZE * 0.5f, z}, scratch);
+				models.insert(models.end(), scratch.models.begin(), scratch.models.end());
+			}
 			return true;
 		}
 
@@ -1901,14 +1928,48 @@ static bool GetGroundPattern(TileIndex tile, Slope slope, const ModelPack *pack,
 			under = GROUND_TEXTURE_GRASS;
 		}
 		bits = static_cast<uint8_t>(road.base());
-	} else if (IsTileType(tile, TileType::Station) && HasStationRail(tile) && GetStationSpec(tile) == nullptr) {
-		/* Stations and waypoints of the base game: ballast along the track, the platforms are models. */
+	} else if (IsTileType(tile, TileType::Road) && IsLevelCrossing(tile)) {
+		/* Level crossings: the road across the track bed; the track and the crossing are models. */
+		RailType rt = GetRailType(tile);
+		if (pack->Find(ModelKind::Crossing, 0, 0) == nullptr || GetTrackPiece(rt, false, *pack) == nullptr || GetRailTypeInfo(rt)->UsesOverlay()) return false;
+		if (HasRoadTypeTram(tile) || !HasRoadTypeRoad(tile) || GetRoadTypeRoad(tile) != ROADTYPE_ROAD) return false;
+		kind = GroundTextures::PatternKind::Crossing;
+		bits = static_cast<uint8_t>((GetCrossingRoadAxis(tile) == Axis::X ? ROAD_X : ROAD_Y).base());
+		if (IsOnSnowOrDesert(tile)) under = GROUND_TEXTURE_SNOW_DESERT + 3;
+	} else if (IsTileType(tile, TileType::Railway) && IsRailDepot(tile)) {
+		/* Train depots: the track bed out of the door; the depot is a model. */
+		RailType rt = GetRailType(tile);
+		if (pack->Find(ModelKind::RailDepot, 0, 0) == nullptr || GetTrackPiece(rt, false, *pack) == nullptr || GetRailTypeInfo(rt)->UsesOverlay()) return false;
+		if (GetRailGroundType(tile) == RailGroundType::SnowOrDesert) under = GROUND_TEXTURE_SNOW_DESERT + 3;
+		kind = GroundTextures::PatternKind::Rail;
+		bits = static_cast<uint8_t>((DiagDirToAxis(GetRailDepotDirection(tile)) == Axis::X ? TrackBits{Track::X} : TrackBits{Track::Y}).base());
+	} else if (IsTileType(tile, TileType::Road) && IsRoadDepot(tile)) {
+		/* Road vehicle depots: the road out of the door; the depot is a model. */
+		if (pack->Find(ModelKind::RoadDepot, 0, 0) == nullptr || HasRoadTypeTram(tile) || GetRoadTypeRoad(tile) != ROADTYPE_ROAD) return false;
+		kind = GroundTextures::PatternKind::Road;
+		bits = static_cast<uint8_t>(DiagDirToRoadBits(GetRoadDepotDirection(tile)).base());
+	} else if (IsTileType(tile, TileType::Industry) && IsIndustryCompleted(tile) && !IsTileOnWater(tile)) {
+		/* Industries with a model stand on gravel where they dig or pump, on paving where they make things, and on grass where they grow things. */
+		IndustryGfx gfx = GetIndustryGfx(tile);
+		if (pack->Find(ModelKind::IndustryTile, GetIndustryTileSpec(gfx)->grf_prop, gfx) == nullptr) return false;
+		IndustryLifeTypes life = GetIndustrySpec(Industry::GetByTile(tile)->type)->life_type;
+		if (life.Test(IndustryLifeType::Extractive)) {
+			kind = GroundTextures::PatternKind::Gravel;
+		} else if (life.Test(IndustryLifeType::Organic)) {
+			kind = GroundTextures::PatternKind::Rail;
+		} else {
+			kind = GroundTextures::PatternKind::Paving;
+		}
+		bits = 0;
+		if (_settings_game.game_creation.landscape == LandscapeType::Arctic && GetTileZ(tile) > GetSnowLine()) under = GROUND_TEXTURE_SNOW_DESERT + 3;
+	} else if (IsTileType(tile, TileType::Station) && HasStationRail(tile) && (GetStationSpec(tile) == nullptr || pack->Find(ModelKind::RailStation, GetStationSpec(tile)->grf_prop, 0) != nullptr)) {
+		/* Stations and waypoints of the base game, and of NewGRFs with a model: ballast along the track, the platforms are models. */
 		RailType rt = GetRailType(tile);
 		if (GetTrackPiece(rt, false, *pack) == nullptr || GetRailTypeInfo(rt)->UsesOverlay()) return false;
 		kind = GroundTextures::PatternKind::Rail;
 		bits = static_cast<uint8_t>(TrackBits{GetRailStationTrack(tile)}.base());
 		if (_settings_client.gui.show_track_reservation && HasStationReservation(tile)) reserved = bits;
-	} else if (IsBaseRoadStop(tile)) {
+	} else if (IsBaseRoadStop(tile) || IsModelledNewGRFRoadStop(tile, *pack)) {
 		/* Road stops of the base game: paved road along the stop, the shelters and canopies are models. */
 		kind = GroundTextures::PatternKind::PavedRoad;
 		Axis axis = IsDriveThroughStopTile(tile) ? GetDriveThroughStopAxis(tile) : DiagDirToAxis(GetBayRoadStopDir(tile));
@@ -2318,7 +2379,7 @@ void BuildTerrainChunkMesh(uint chunk_x, uint chunk_y, GroundTextures &textures,
 				AddRailFenceModels(tile, x, y, {hn, hw, he, hs}, *pack, mesh);
 				AddWireModels(tile, x, y, {hn, hw, he, hs}, *pack, mesh);
 			}
-			if (collect && models && IsBaseRoadStop(tile)) {
+			if (collect && models && (IsBaseRoadStop(tile) || IsModelledNewGRFRoadStop(tile, *pack))) {
 				/* Stops of the base game have pavements along both sides, like town streets. */
 				Axis axis = IsDriveThroughStopTile(tile) ? GetDriveThroughStopAxis(tile) : DiagDirToAxis(GetBayRoadStopDir(tile));
 				AddPavementModels(axis == Axis::X ? ROAD_X : ROAD_Y, x, y, {hn, hw, he, hs}, *pack, mesh);
