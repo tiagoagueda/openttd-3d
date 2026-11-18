@@ -8,9 +8,7 @@
 /**
  * @file weather3d.cpp Weather and seasons of the 3D viewport.
  *
- * The season follows the date of the game. The weather is made up from the time the game has run and the seed of the map,
- * so it is the same whenever it is asked for and for every view, without the game having to keep or save anything.
- * Neither changes anything in the game itself.
+ * The game keeps the season, the weather and the hour (weather.cpp); this turns them into what the 3D view draws.
  */
 
 #include "../stdafx.h"
@@ -21,15 +19,12 @@
 #include "../settings_type.h"
 #include "../timer/timer_game_calendar.h"
 #include "../timer/timer_game_tick.h"
+#include "../weather.h"
 
 #include <chrono>
 
 #include "../safeguards.h"
 
-/** How many days one spell of weather lasts. */
-static constexpr uint WEATHER_SPELL_DAYS = 24;
-/** The part of a spell over which the weather of the spell before turns into its own. */
-static constexpr float WEATHER_CHANGE = 0.25f;
 
 static Weather3DKind _weather_override = Weather3DKind::Auto; ///< The weather asked for with the console, or Auto.
 static float _cover_override = -1; ///< The snow on the ground asked for with the console, or negative for none.
@@ -138,43 +133,6 @@ static Seasons GetSeasons(float year)
 	return s;
 }
 
-/** How likely each kind of weather is; clear weather takes what is left. */
-using WeatherChances = std::array<float, to_underlying(Weather3DKind::End)>;
-
-/**
- * How likely each kind of weather is in a season.
- * @param s The seasons.
- * @return The chance of each kind, clear weather left at 0.
- */
-static WeatherChances GetWeatherChances(const Seasons &s)
-{
-	/*                                          Clear Cloudy Rain   Storm  Snow   Fog */
-	static constexpr WeatherChances TEMPERATE_WINTER{0, 0.18f, 0.04f, 0.00f, 0.32f, 0.10f};
-	static constexpr WeatherChances TEMPERATE_RAINY{0, 0.20f, 0.24f, 0.03f, 0.00f, 0.09f};
-	static constexpr WeatherChances TEMPERATE_SUMMER{0, 0.12f, 0.08f, 0.07f, 0.00f, 0.01f};
-	static constexpr WeatherChances ARCTIC_WINTER{0, 0.16f, 0.00f, 0.00f, 0.44f, 0.08f};
-	static constexpr WeatherChances ARCTIC_RAINY{0, 0.20f, 0.16f, 0.00f, 0.10f, 0.09f};
-	static constexpr WeatherChances ARCTIC_SUMMER{0, 0.15f, 0.15f, 0.04f, 0.00f, 0.03f};
-	static constexpr WeatherChances TROPIC_RAINY{0, 0.15f, 0.28f, 0.15f, 0.00f, 0.02f};
-	static constexpr WeatherChances TROPIC_DRY{0, 0.08f, 0.01f, 0.00f, 0.00f, 0.00f};
-
-	const WeatherChances *winter, *rainy, *other;
-	switch (_settings_game.game_creation.landscape) {
-		case LandscapeType::Temperate: winter = &TEMPERATE_WINTER; rainy = &TEMPERATE_RAINY; other = &TEMPERATE_SUMMER; break;
-		case LandscapeType::Arctic: winter = &ARCTIC_WINTER; rainy = &ARCTIC_RAINY; other = &ARCTIC_SUMMER; break;
-		case LandscapeType::Tropic: winter = &TROPIC_DRY; rainy = &TROPIC_RAINY; other = &TROPIC_DRY; break;
-		default: return {};
-	}
-
-	float w = s.winter;
-	float r = std::min(s.rainy, 1 - w);
-	float o = std::max(0.0f, 1 - w - r);
-	float often = _settings_client.gui.view3d_weather >= to_underlying(View3DWeatherSetting::Frequent) ? 1.0f : 0.55f;
-	WeatherChances chances{};
-	for (size_t i = 0; i < chances.size(); i++) chances[i] = ((*winter)[i] * w + (*rainy)[i] * r + (*other)[i] * o) * often;
-	return chances;
-}
-
 /** The weather of one spell. */
 struct Spell {
 	Weather3DKind kind = Weather3DKind::Clear; ///< What kind of weather.
@@ -206,33 +164,6 @@ static void FillSpell(Spell &spell)
 }
 
 /**
- * Make up the weather of a spell.
- * @param number Which spell, counted from the start of the game.
- * @param chances How likely each kind of weather is.
- * @return The weather.
- */
-static Spell GetSpell(uint64_t number, const WeatherChances &chances)
-{
-	Spell spell;
-	float pick = SpellRandom(number, 0);
-	for (size_t i = 1; i < chances.size(); i++) {
-		if (pick < chances[i]) {
-			spell.kind = static_cast<Weather3DKind>(i);
-			break;
-		}
-		pick -= chances[i];
-	}
-	spell.strength = 0.5f + 0.5f * SpellRandom(number, 1);
-	FillSpell(spell);
-
-	float direction = SpellRandom(number, 2) * 6.2831853f;
-	float speed = (0.10f + 0.25f * SpellRandom(number, 3)) * (spell.kind == Weather3DKind::Storm ? 2.0f : 1.0f);
-	spell.wind_x = std::cos(direction) * speed;
-	spell.wind_y = std::sin(direction) * speed;
-	return spell;
-}
-
-/**
  * The light of lightning at this moment: now and then a flash that flickers and is gone.
  * @return From 0 for none to 1.
  */
@@ -253,6 +184,8 @@ static float GetLightning()
 
 /**
  * The weather and the season at this moment of the game.
+ * The game keeps the weather (weather.cpp), the same for every player; the 3D view draws it, and adds only what moves
+ * by itself. The console can ask for other weather or another month, for pictures; that changes only the looks.
  * @return What they do to an image of the 3D view.
  */
 Weather3D GetWeather3D()
@@ -263,24 +196,27 @@ Weather3D GetWeather3D()
 	if (setting == to_underlying(View3DWeatherSetting::Off) && !forced) return weather;
 	if (_game_mode == GameMode::Bootstrap) return weather;
 
-	/* How far the year has gone. */
-	float year;
-	if (_month_override >= 0) {
-		year = (_month_override + 0.5f) / 12.0f;
-	} else {
-		TimerGameCalendar::YearMonthDay ymd = TimerGameCalendar::ConvertDateToYMD(TimerGameCalendar::date);
-		int day = (TimerGameCalendar::date - TimerGameCalendar::ConvertYMDToDate(ymd.year, 0, 1)).base();
-		year = (day + static_cast<float>(TimerGameCalendar::date_fract) / Ticks::DAY_TICKS) / (TimerGameCalendar::IsLeapYear(ymd.year) ? 366.0f : 365.0f);
-	}
-	Seasons seasons = GetSeasons(year);
-	weather.autumn = seasons.autumn;
-	weather.bare = seasons.bare;
-	weather.spring = seasons.spring;
-	weather.dry = seasons.dry;
+	const GameWeather &game = GetGameWeather();
+	auto f = [](uint8_t v) { return v / 255.0f; };
 
-	/* Without weather, snow lies in the middle of the winter. */
+	/* The season, and the snow that lies in the middle of the winter even without weather. */
+	float winter;
+	if (_month_override >= 0) {
+		Seasons seasons = GetSeasons((_month_override + 0.5f) / 12.0f);
+		weather.autumn = seasons.autumn;
+		weather.bare = seasons.bare;
+		weather.spring = seasons.spring;
+		weather.dry = seasons.dry;
+		winter = seasons.winter;
+	} else {
+		weather.autumn = f(game.autumn);
+		weather.bare = f(game.bare);
+		weather.spring = f(game.spring);
+		weather.dry = f(game.dry);
+		winter = f(game.winter);
+	}
 	float winter_snow = _settings_game.game_creation.landscape == LandscapeType::Arctic ? 1.0f : 0.8f;
-	weather.cover = winter_snow * std::clamp(seasons.winter * 2 - 1, 0.0f, 1.0f);
+	weather.cover = winter_snow * std::clamp(winter * 2 - 1, 0.0f, 1.0f);
 
 	if (_weather_override != Weather3DKind::Auto) {
 		Spell spell;
@@ -296,50 +232,19 @@ Weather3D GetWeather3D()
 		weather.wind_y = 0.12f;
 		if (spell.rain > 0) weather.wet = 1;
 		if (spell.snow > 0) weather.cover = 1;
-	} else if (setting >= to_underlying(View3DWeatherSetting::Occasional)) {
-		WeatherChances chances = GetWeatherChances(seasons);
-		double spells = static_cast<double>(TimerGameTick::counter) / (static_cast<double>(Ticks::DAY_TICKS) * WEATHER_SPELL_DAYS);
-		uint64_t number = static_cast<uint64_t>(spells);
-		float part = static_cast<float>(spells - number);
-
-		/* The weather of the spell before turns into that of this spell. */
-		Spell now = GetSpell(number, chances);
-		Spell before = number == 0 ? Spell{} : GetSpell(number - 1, chances);
-		float t = std::clamp(part / WEATHER_CHANGE, 0.0f, 1.0f);
-		t = t * t * (3 - 2 * t);
-		auto mix = [t](float a, float b) { return a + (b - a) * t; };
-		weather.overcast = mix(before.overcast, now.overcast);
-		weather.rain = mix(before.rain, now.rain);
-		weather.snow = mix(before.snow, now.snow);
-		weather.fog = mix(before.fog, now.fog);
-		weather.wind_x = mix(before.wind_x, now.wind_x);
-		weather.wind_y = mix(before.wind_y, now.wind_y);
-		float storm = mix(before.storm, now.storm);
-		if (storm > 0.3f) weather.flash = storm * GetLightning();
-
-		/* Snow on the ground and wet ground come from the weather of the spells before: snow piles up while it snows
-		 * and melts slowly in winter, faster outside it and in the rain; the ground gets wet in the rain and dries after it. */
-		static constexpr uint LOOK_BACK = 10;
-		float cover = 0;
-		float wet = 0;
-		for (uint i = LOOK_BACK + 1; i-- > 0;) {
-			if (number < i) continue;
-			Spell spell = i == 0 ? now : GetSpell(number - i, chances);
-			float duration = i == 0 ? part : 1.0f;
-			if (spell.snow > 0) {
-				cover += 0.9f * spell.snow * duration;
-			} else if (spell.rain > 0) {
-				cover -= 0.9f * duration;
-			} else {
-				cover -= (0.12f + 1.3f * (1 - seasons.winter)) * duration;
-			}
-			cover = std::clamp(cover, 0.0f, 1.0f);
-			wet += (spell.rain > 0 ? 3.0f * spell.rain : -1.5f) * duration;
-			wet = std::clamp(wet, 0.0f, 1.0f);
-		}
-		/* In the middle of winter there is always a little snow left. */
-		weather.cover = std::max(cover, 0.4f * weather.cover);
-		weather.wet = wet;
+	} else if (setting >= to_underlying(View3DWeatherSetting::Weather) && _month_override < 0) {
+		weather.overcast = f(game.overcast);
+		weather.rain = f(game.rain);
+		weather.snow = f(game.snow);
+		weather.fog = f(game.fog);
+		weather.wet = f(game.wet);
+		weather.cover = f(game.cover);
+		if (game.storm > 77) weather.flash = f(game.storm) * GetLightning();
+		/* Rain and snow drift with the wind. */
+		float direction = game.wind_direction * (6.2831853f / 256.0f);
+		float speed = 0.05f + 0.65f * f(game.wind);
+		weather.wind_x = std::cos(direction) * speed;
+		weather.wind_y = std::sin(direction) * speed;
 	}
 
 	if (_cover_override >= 0) weather.cover = std::min(_cover_override, 1.0f);

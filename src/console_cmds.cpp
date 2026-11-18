@@ -304,7 +304,7 @@ static bool ConView3DTime(std::span<std::string_view> argv)
 {
 	if (argv.empty()) {
 		IConsolePrint(CC_HELP, "Show or hold the hour of the day in the 3D view. Usage: 'view3d_time [<hour>|auto]'.");
-		IConsolePrint(CC_HELP, "An hour from 0 to 24, such as 21.5, holds the view at that hour; 'auto' lets it follow the 'view3d_day_length' setting again.");
+		IConsolePrint(CC_HELP, "An hour from 0 to 24, such as 21.5, holds the view at that hour; 'auto' lets it follow the clock of the game again.");
 		return true;
 	}
 
@@ -324,7 +324,7 @@ static bool ConView3DTime(std::span<std::string_view> argv)
 	}
 	float hour = GetView3DHour();
 	if (hour < 0) {
-		IConsolePrint(CC_INFO, "The 3D view has no day and night (setting 'view3d_day_length' is 0).");
+		IConsolePrint(CC_INFO, "The 3D view has no day and night (game setting 'day_length' is 0, or 'view3d_night' is off).");
 	} else {
 		IConsolePrint(CC_INFO, "The hour in the 3D view is {:02d}:{:02d}.", static_cast<int>(hour), static_cast<int>(hour * 60) % 60);
 	}

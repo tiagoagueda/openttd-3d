@@ -613,6 +613,8 @@ add_files(
     waypoint_cmd.h
     waypoint_func.h
     waypoint_gui.cpp
+    weather.cpp
+    weather.h
     widget.cpp
     widget_type.h
     window.cpp

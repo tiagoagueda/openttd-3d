@@ -63,6 +63,8 @@
 #include "timer/timer_game_economy.h"
 #include "timer/timer_game_tick.h"
 
+#include "weather.h"
+
 #include "table/strings.h"
 
 #include "safeguards.h"
@@ -1330,7 +1332,10 @@ void CheckVehicleBreakdown(Vehicle *v)
 
 	/* Decrease reliability. */
 	int rel_old = v->reliability;
-	v->reliability = Clamp(rel_old - v->reliability_spd_dec, 0, Engine::Get(v->engine_type)->reliability);
+	int rel_dec = v->reliability_spd_dec;
+	/* Running in heavy rain, thunderstorms and snowstorms wears vehicles faster. */
+	if (!v->vehstatus.Test(VehState::Stopped) && !v->IsInDepot()) rel_dec = rel_dec * static_cast<int>(GetWeatherBreakdownFactor()) / 256;
+	v->reliability = Clamp(rel_old - rel_dec, 0, Engine::Get(v->engine_type)->reliability);
 	if ((rel_old >> 8) != (v->reliability >> 8)) SetWindowDirty(WindowClass::VehicleDetails, v->index);
 
 	/* Some vehicles lose reliability but won't break down. */

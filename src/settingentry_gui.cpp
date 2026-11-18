@@ -630,7 +630,7 @@ SettingsContainer &GetSettingsTree()
 				viewports->Add(new SettingEntry("gui.view3d_main"));
 				viewports->Add(new SettingEntry("gui.view3d_interface"));
 				viewports->Add(new SettingEntry("gui.view3d_weather"));
-				viewports->Add(new SettingEntry("gui.view3d_day_length"));
+				viewports->Add(new SettingEntry("gui.view3d_night"));
 #endif
 				/* While the horizontal scrollwheel scrolling is written as general code, only
 				 *  the cocoa (OSX) driver generates input for it.
@@ -843,6 +843,13 @@ SettingsContainer &GetSettingsTree()
 				towns->Add(new SettingEntry("economy.initial_city_size"));
 				towns->Add(new SettingEntry("economy.town_min_distance"));
 				towns->Add(new SettingEntry("economy.town_cargogen_mode"));
+			}
+
+			SettingsPage *weather = environment->Add(new SettingsPage(STR_CONFIG_SETTING_ENVIRONMENT_WEATHER));
+			{
+				weather->Add(new SettingEntry("economy.weather"));
+				weather->Add(new SettingEntry("economy.day_length"));
+				weather->Add(new SettingEntry("economy.weather_slows_vehicles"));
 			}
 
 			SettingsPage *energy = environment->Add(new SettingsPage(STR_CONFIG_SETTING_ENVIRONMENT_ENERGY));

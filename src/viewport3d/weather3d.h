@@ -5,7 +5,7 @@
  * See the GNU General Public License for more details. You should have received a copy of the GNU General Public License along with OpenTTD. If not, see <https://www.gnu.org/licenses/old-licenses/gpl-2.0>.
  */
 
-/** @file weather3d.h Weather and seasons of the 3D viewport. They are only looks: the game itself knows nothing of them. */
+/** @file weather3d.h Weather and seasons of the 3D viewport, drawn from the weather of the game. */
 
 #ifndef VIEWPORT3D_WEATHER3D_H
 #define VIEWPORT3D_WEATHER3D_H
@@ -14,8 +14,7 @@
 enum class View3DWeatherSetting : uint8_t {
 	Off, ///< Always a clear summer day.
 	Seasons, ///< The seasons change the colours of the land; no weather.
-	Occasional, ///< Seasons, and now and then some weather.
-	Frequent, ///< Seasons, and weather much of the time.
+	Weather, ///< Seasons, and the weather of the game.
 };
 
 /** The kinds of weather. */

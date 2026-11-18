@@ -11,12 +11,9 @@
 #include "lighting3d.h"
 #include "../gfx_type.h"
 #include "../settings_type.h"
-#include "../timer/timer_game_tick.h"
+#include "../weather.h"
 
 #include "../safeguards.h"
-
-/** The hour of the day a new game starts at. */
-static constexpr float START_HOUR = 9.0f;
 
 /** The hour the view is held at, or negative to follow the clock. */
 static float _view3d_fixed_hour = -1.0f;
@@ -50,20 +47,17 @@ void SetView3DHour(float hour)
 }
 
 /**
- * The hour of the day in the 3D view.
- * The game has no clock, and its days last a few seconds, so the 3D view keeps its own: a day of
- * a number of minutes of play (the setting gui.view3d_day_length), which stands still while the game is paused.
- * @return The hour, from 0 to 24; negative when there is no day and night.
+ * The hour of the day in the 3D view: the hour of the game (setting economy.day_length), unless the player chose
+ * not to see the night (setting gui.view3d_night) or holds the view at an hour.
+ * @return The hour, from 0 to 24; negative when there is no day and night to draw.
  */
 float GetView3DHour()
 {
 	if (_view3d_fixed_hour >= 0) return _view3d_fixed_hour;
-	uint minutes = _settings_client.gui.view3d_day_length;
-	if (minutes == 0) return -1.0f;
-
-	uint64_t ticks_per_day = static_cast<uint64_t>(minutes) * 60 * 1000 / MILLISECONDS_PER_TICK;
-	double day = static_cast<double>(TimerGameTick::counter % ticks_per_day) / static_cast<double>(ticks_per_day);
-	return static_cast<float>(std::fmod(START_HOUR + day * 24.0, 24.0));
+	if (!_settings_client.gui.view3d_night) return -1.0f;
+	const GameWeather &weather = GetGameWeather();
+	if (!weather.has_day) return -1.0f;
+	return weather.hour / 256.0f;
 }
 
 /**

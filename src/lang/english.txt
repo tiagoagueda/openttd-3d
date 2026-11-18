@@ -866,6 +866,20 @@ STR_STATUSBAR_SAVING_GAME                                       :{RED}*  *  SAVI
 
 STR_STATUSBAR_SPECTATOR                                         :{WHITE}(spectator)
 STR_STATUSBAR_INFINITE_MONEY                                    :{WHITE}(infinite money)
+STR_STATUSBAR_TIME_WEATHER                                      :{RAW_STRING} {STRING}
+STR_STATUSBAR_TOOLTIP_WEATHER                                   :{BLACK}The hour of the day and the weather. Heavy rain, thunderstorms and snowstorms slow vehicles down and wear them faster (shown in orange); clouds, fog, snow and the night lower the output of solar plants, and wind farms need wind
+
+STR_WEATHER_CLEAR                                               :Clear
+STR_WEATHER_SUNNY                                               :Sunny
+STR_WEATHER_CLOUDY                                              :Cloudy
+STR_WEATHER_LIGHT_RAIN                                          :Light rain
+STR_WEATHER_RAIN                                                :Rain
+STR_WEATHER_HEAVY_RAIN                                          :Heavy rain
+STR_WEATHER_THUNDERSTORM                                        :Thunderstorm
+STR_WEATHER_LIGHT_SNOW                                          :Light snow
+STR_WEATHER_SNOW                                                :Snow
+STR_WEATHER_HEAVY_SNOW                                          :Snowstorm
+STR_WEATHER_FOG                                                 :Fog
 
 # News message history
 STR_MESSAGE_HISTORY                                             :{WHITE}Message History
@@ -1731,18 +1745,14 @@ STR_CONFIG_SETTING_VIEW3D_MAIN                                  :Show the map in
 STR_CONFIG_SETTING_VIEW3D_INTERFACE                             :3D-styled windows and buttons: {STRING2}
 STR_CONFIG_SETTING_VIEW3D_INTERFACE_HELPTEXT                    :While the map is shown in 3D, draw windows, buttons and the toolbar shaded like real raised and pressed buttons. Needs a 32bpp blitter
 STR_CONFIG_SETTING_VIEW3D_WEATHER                               :Seasons and weather in the 3D view: {STRING2}
-STR_CONFIG_SETTING_VIEW3D_WEATHER_HELPTEXT                      :Let the 3D view follow the time of the year: fresh green in spring, autumn colours, bare trees and snow in winter, and a dry season in the tropics. With weather there are also clouds, rain, thunderstorms, snowfall and fog. It only changes how the map looks, not the game
-###length 4
+STR_CONFIG_SETTING_VIEW3D_WEATHER_HELPTEXT                      :Let the 3D view show the time of the year: fresh green in spring, autumn colours, bare trees and snow in winter, and a dry season in the tropics; and the weather of the game: clouds, rain, thunderstorms, snowfall and fog. How much weather there is, is a game setting. This changes only what you see
+###length 3
 STR_CONFIG_SETTING_VIEW3D_WEATHER_OFF                           :Off
 STR_CONFIG_SETTING_VIEW3D_WEATHER_SEASONS                       :Seasons only
-STR_CONFIG_SETTING_VIEW3D_WEATHER_OCCASIONAL                    :Seasons and some weather
-STR_CONFIG_SETTING_VIEW3D_WEATHER_FREQUENT                      :Seasons and a lot of weather
+STR_CONFIG_SETTING_VIEW3D_WEATHER_WEATHER                       :Seasons and weather
 
-STR_CONFIG_SETTING_VIEW3D_DAY_LENGTH                            :Day and night in the 3D view: {STRING2}
-STR_CONFIG_SETTING_VIEW3D_DAY_LENGTH_HELPTEXT                   :How many minutes of play a day and a night last in the 3D view. The sun moves across the sky, and at night the moon, street lamps, headlights and lit windows give light. This is only for looks and has nothing to do with the date of the game
-STR_CONFIG_SETTING_VIEW3D_DAY_LENGTH_VALUE                      :{COMMA} minute{P 0 "" s}
-###setting-zero-is-special
-STR_CONFIG_SETTING_VIEW3D_DAY_LENGTH_OFF                        :Off (always day)
+STR_CONFIG_SETTING_VIEW3D_NIGHT                                 :Show the night in the 3D view: {STRING2}
+STR_CONFIG_SETTING_VIEW3D_NIGHT_HELPTEXT                        :Draw the time of day of the game in the 3D view: the sun moves across the sky, and at night the moon, street lamps, headlights and lit windows give light. Off keeps the view in daylight; the clock of the game goes on. How long a day lasts is a game setting
 STR_CONFIG_SETTING_VIEW3D_MAIN_HELPTEXT                         :Draw the main view of the map in 3D. Drag with the right mouse button to move, hold Ctrl while dragging to rotate and tilt, and use the mouse wheel to zoom. Extra viewports stay in 2D
 
 STR_CONFIG_SETTING_SMOOTH_SCROLLING                             :Smooth viewport scrolling: {STRING2}
@@ -2148,6 +2158,22 @@ STR_CONFIG_SETTING_TOWN_GROWTH_NORMAL                           :Normal
 STR_CONFIG_SETTING_TOWN_GROWTH_FAST                             :Fast
 STR_CONFIG_SETTING_TOWN_GROWTH_VERY_FAST                        :Very fast
 
+STR_CONFIG_SETTING_WEATHER                                      :Weather: {STRING2}
+STR_CONFIG_SETTING_WEATHER_HELPTEXT                             :How often there are clouds, rain, thunderstorms, snowfall and fog. The weather is the same for every player: solar and wind power depend on it, and so may vehicles. The seasons change in any case
+###length 3
+STR_CONFIG_SETTING_WEATHER_OFF                                  :Always clear
+STR_CONFIG_SETTING_WEATHER_SOME                                 :Some weather
+STR_CONFIG_SETTING_WEATHER_MUCH                                 :A lot of weather
+
+STR_CONFIG_SETTING_DAY_LENGTH                                   :Length of a day and a night: {STRING2}
+STR_CONFIG_SETTING_DAY_LENGTH_HELPTEXT                          :How many minutes of play a day and a night last. Solar power plants give nothing at night. The time of day has nothing to do with the date of the game
+STR_CONFIG_SETTING_DAY_LENGTH_VALUE                             :{COMMA} minute{P 0 "" s}
+###setting-zero-is-special
+STR_CONFIG_SETTING_DAY_LENGTH_OFF                               :Off (always day)
+
+STR_CONFIG_SETTING_WEATHER_SLOWS_VEHICLES                       :Bad weather slows vehicles down: {STRING2}
+STR_CONFIG_SETTING_WEATHER_SLOWS_VEHICLES_HELPTEXT              :In heavy rain, thunderstorms and snowstorms vehicles go up to 15%, 25% and 30% slower, and they wear out up to twice as fast, so they break down more often
+
 STR_CONFIG_SETTING_POWER_BONUS                                  :Extra output with full power: {STRING2}
 STR_CONFIG_SETTING_POWER_BONUS_HELPTEXT                         :How much more industries produce, and how much faster towns grow and make passengers and mail, when power lines give them all the power they need. Partial power gives part of it
 STR_CONFIG_SETTING_POWER_CATCHMENT                              :Reach of a power substation: {STRING2}
@@ -2260,6 +2286,7 @@ STR_CONFIG_SETTING_ENVIRONMENT_AUTHORITIES                      :Authorities
 STR_CONFIG_SETTING_ENVIRONMENT_TOWNS                            :Towns
 STR_CONFIG_SETTING_ENVIRONMENT_INDUSTRIES                       :Industries
 STR_CONFIG_SETTING_ENVIRONMENT_ENERGY                           :Energy
+STR_CONFIG_SETTING_ENVIRONMENT_WEATHER                          :Weather and time of day
 STR_CONFIG_SETTING_ENVIRONMENT_CARGODIST                        :Cargo distribution
 STR_CONFIG_SETTING_ENVIRONMENT_TREES                            :Trees
 STR_CONFIG_SETTING_AI                                           :Competitors

@@ -146,3 +146,23 @@ about 8.7 per month) the networks share out power.
 - **Company gone**: its cables go to the buyer or are removed with its other property
   (`ChangePowerCableOwner`).
 - **Tests**: `power_build transition|usubstation <x> <y>`, `power_build cable|removecable <x1> <y1> <x2> <y2>`.
+
+## Phase 5: weather and time in the game
+
+- **Game state**: `src/weather.cpp` works out the season, the weather and the hour of the day with
+  integers, from the date, `TimerGameTick::counter`, the map seed and game settings only. Nothing is
+  saved and every computer in a game gets the same answer. `GetGameWeather()` caches it per tick.
+- **Settings** (Environment > Weather and time): `economy.weather` (off, some, much),
+  `economy.day_length` (minutes of play for a day and a night; 0 for none) and
+  `economy.weather_slows_vehicles`.
+- **Vehicles**: in heavy rain trains, road vehicles and ships run up to 15% slower, in a thunderstorm 25%
+  and in a snowstorm 30% (`GetWeatherVehicleSpeedFactor`, applied in `DoUpdateSpeed` and
+  `ShipAccelerate`); running vehicles lose reliability up to 1.5 times as fast in heavy rain and twice as
+  fast in a storm (`GetWeatherBreakdownFactor`, in `CheckVehicleBreakdown`). Aircraft are not affected.
+- **Status bar**: a panel next to the date shows the hour and the weather, in orange while the weather
+  slows vehicles down.
+- **3D view**: draws the game's weather and hour; `gui.view3d_weather` and `gui.view3d_night` only choose
+  what to draw. The console overrides (`view3d_weather`, `view3d_season`, `view3d_time`) change only the
+  looks.
+- **Plants**: `GetWeatherSolarFactor`, `GetWeatherWindFactor` and `GetWeatherRiverFlow` give the output
+  factors for solar, wind and hydro plants.
