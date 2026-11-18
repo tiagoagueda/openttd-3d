@@ -52,10 +52,10 @@ struct Weather3D {
 	/** Whether an image made with other weather would look the same; what moves by itself is not looked at. */
 	bool LooksLike(const Weather3D &other) const
 	{
-		auto near = [](float a, float b) { return std::abs(a - b) < 0.004f; };
-		return near(this->overcast, other.overcast) && near(this->fog, other.fog) && near(this->wet, other.wet) && near(this->cover, other.cover) &&
-				near(this->autumn, other.autumn) && near(this->bare, other.bare) && near(this->spring, other.spring) && near(this->dry, other.dry) &&
-				near(this->rain, other.rain) && near(this->snow, other.snow);
+		auto is_near = [](float a, float b) { return std::abs(a - b) < 0.004f; };
+		return is_near(this->overcast, other.overcast) && is_near(this->fog, other.fog) && is_near(this->wet, other.wet) && is_near(this->cover, other.cover) &&
+				is_near(this->autumn, other.autumn) && is_near(this->bare, other.bare) && is_near(this->spring, other.spring) && is_near(this->dry, other.dry) &&
+				is_near(this->rain, other.rain) && is_near(this->snow, other.snow);
 	}
 };
 
