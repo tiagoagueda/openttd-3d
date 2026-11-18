@@ -40,6 +40,8 @@ enum GroundTexture : uint8_t {
 	GROUND_TEXTURE_PAVING, ///< Pavements and paved squares.
 	GROUND_TEXTURE_TERRAIN_END, ///< Number of ground textures that come from the model package.
 	GROUND_TEXTURE_SHALLOWS = GROUND_TEXTURE_TERRAIN_END, ///< Not a texture: marks the water over the land of a coast; see-through where it is shallow.
+	GROUND_TEXTURE_RAPIDS, ///< Not a texture: marks the water of a river down a slope; 4 directions of flow, see AddRiverBed().
+	GROUND_TEXTURE_RAPIDS_FOOT = GROUND_TEXTURE_RAPIDS + 4, ///< Not a texture: marks the still water of a river at the foot of rapids; 4 directions they come from.
 };
 
 /**

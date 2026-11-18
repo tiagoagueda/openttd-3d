@@ -10,6 +10,7 @@ $input v_color0, v_texcoord0, v_texcoord1, v_haze, v_tile
  * landscape, asphalt, gravel and paving to add to the colour of the sprites, which is multiplied by how much it covers.
  * The alpha of the vertex colour then names the landscape.
  * Water moves with small waves, and foam washes along the edge of the water on coasts.
+ * Rivers that step down a slope are rapids: the water rushes downhill, streaked with foam.
  */
 
 #include <bgfx_shader.sh>
@@ -53,6 +54,40 @@ vec3 TerrainAverage(float layer)
 
 #include "weather_terrain.sh"
 
+/**
+ * Rapids: water that rushes down a step of a river, streaked white with foam that races downstream,
+ * and churning most at the foot of the step.
+ * @param water The colour of the water.
+ * @param at The place on the map, in tiles.
+ * @param along How far down the step, 0 at the top to 1 at the foot.
+ * @param flow Which way the water flows, in tiles.
+ * @param t Seconds, for the movement.
+ * @param foam How much foam there is.
+ * @return The colour of the rapids.
+ */
+vec3 Rapids(vec3 water, vec2 at, float along, vec2 flow, float t, out float foam)
+{
+	float a = dot(at, flow);
+	float c = dot(at, vec2(-flow.y, flow.x));
+	/* Fine detail fades out where it would be smaller than the pixels. */
+	float fine = 1.0 - clamp((max(fwidth(a), fwidth(c)) - 0.02) * 25.0, 0.0, 1.0);
+	/* Long streaks that race downstream, a coarse and a fine layer, bubbles, and lumps that churn in place. */
+	float coarse = GroundNoise(vec2(c * 16.0, (a - t * 1.8) * 1.6));
+	float streaks = mix(0.5, GroundNoise(vec2(c * 34.0 + 5.0, (a - t * 2.6) * 3.0 + 1.3)), fine);
+	float bubbles = mix(0.5, GroundNoise(vec2(c, a - t * 1.4) * 34.0 + 0.6 * vec2(sin(t * 3.1), cos(t * 2.7))), fine);
+	float churn = GroundNoise(vec2(c * 6.0 + 0.7 * sin(t * 1.7), a * 6.0 - t * 3.2 + 0.7 * cos(t * 1.3)));
+	float white = 0.45 * coarse + 0.3 * streaks + 0.1 * bubbles + 0.15 * churn;
+	/* Smooth at the lip, more foam further down, and a band of churning white where the water crashes into the river at the foot. */
+	float drop = smoothstep(0.05, 0.9, along);
+	float foot = smoothstep(0.72, 0.97, along);
+	float from = 0.62 - 0.12 * drop - 0.22 * foot;
+	foam = smoothstep(from, from + 0.14, white) * smoothstep(0.0, 0.15, along);
+	/* The water itself is streaked lighter and darker, with small ripples rushing down with it. */
+	float ripple = 0.5 + 0.5 * sin(a * 38.0 - t * 14.0 + 6.0 * coarse);
+	vec3 rushing = water * (0.82 + 0.3 * streaks + 0.08 * fine * ripple) + vec3(0.04, 0.06, 0.06) * drop;
+	return mix(rushing, vec3(0.93, 0.96, 0.98) * (0.9 + 0.1 * bubbles), foam);
+}
+
 /* Water of the model package: two copies of the texture drift across each other. */
 vec3 Water(vec2 at, float t)
 {
@@ -87,7 +122,11 @@ void main()
 	float margin = min(max(0.008, 1.5 * max(fwidth(at.x), fwidth(at.y))), 0.5);
 	vec2 inside = at - v_tile.xy + clamp(v_tile.xy, vec2_splat(margin), vec2_splat(1.0 - margin));
 
-	bool shallows = u_terrain.x > 0.5 && abs(layer - u_terrain.w) < 0.5;
+	/* The markers after the one of the water over coasts are rapids, one for each way the water can flow,
+	 * and then the still water at the foot of rapids, one for each way they come from. */
+	bool rapids = u_terrain.x > 0.5 && layer > u_terrain.w + 0.5 && layer < u_terrain.w + 4.5;
+	bool foot = u_terrain.x > 0.5 && layer > u_terrain.w + 4.5 && layer < u_terrain.w + 8.5;
+	bool shallows = u_terrain.x > 0.5 && (abs(layer - u_terrain.w) < 0.5 || rapids || foot);
 	if (layer > u_layers.x - 0.5) {
 		vec4 sprites = texture2DArray(s_ground, vec3(inside, layer));
 		vec4 share = texture2DArray(s_mix, vec3(inside, layer));
@@ -126,6 +165,25 @@ void main()
 			float foam = (1.0 - smoothstep(0.0, 0.10 + 0.04 * surge, depth)) * smoothstep(0.75, 1.1, bits + 0.35 * (1.0 - smoothstep(0.0, 0.05, depth)));
 			ground = mix(ground, vec3(0.95, 0.97, 0.98), foam);
 			alpha = max(alpha, foam);
+			if (rapids || foot) {
+				/* Down along x, along y, up along x or up along y. */
+				float k = (layer - u_terrain.w - (rapids ? 1.0 : 5.0)) * 1.5707963;
+				vec2 flow = vec2(cos(k), sin(k));
+				float along = dot(v_tile.xy - 0.5, flow) + 0.5;
+				float white;
+				vec3 water = Water(at - flow * t * 0.7, t);
+				vec3 white_water = Rapids(water, at, rapids ? along : 0.9, flow, t, white);
+				if (rapids) {
+					ground = mix(ground, white_water, smoothstep(0.0, 0.12, depth));
+					/* Water full of air is hard to see through. */
+					alpha = max(alpha, mix(0.8, 1.0, white));
+				} else {
+					/* The foam is carried on into the still water and falls apart. */
+					float spill = (1.0 - smoothstep(0.0, 0.55, along)) * white * smoothstep(0.0, 0.12, depth);
+					ground = mix(ground, white_water, spill);
+					alpha = max(alpha, spill);
+				}
+			}
 			if (!shallows) {
 				/* Open water has no ground below it to show through; make do with the colour of sand. */
 				ground = mix(TerrainAverage(u_terrain.z) * 0.8, ground, alpha);
@@ -156,6 +214,18 @@ void main()
 				+ 0.2 * sin(dot(at, vec2(17.3, -11.1)) + t * 2.3) * sin(dot(at, vec2(9.1, 14.7)) - t * 1.9);
 			vec3 moving = ground * (1.0 + 0.12 * waves);
 			ground = mix(ground, moving, wet);
+			if (water) {
+				/* Water on a slope is a river stepping down: rapids. Which way is downhill follows from how the height changes across the screen. */
+				vec2 ax = dFdx(at), ay = dFdy(at);
+				float zx = dFdx(v_tile.z), zy = dFdy(v_tile.z);
+				float det = ax.x * ay.y - ax.y * ay.x;
+				vec2 slope = abs(det) > 1e-8 ? vec2(zx * ay.y - zy * ax.y, ax.x * zy - ay.x * zx) / det : vec2_splat(0.0);
+				if (dot(slope, slope) > 0.25) {
+					vec2 flow = -normalize(slope);
+					float white;
+					ground = Rapids(ground, at, dot(v_tile.xy - 0.5, flow) + 0.5, flow, t, white);
+				}
+			}
 			if (coast && wet > 0.5) {
 				/* Foam where the water meets the land, coming and going. */
 				/* Look a little to each side, but not past the edge of the tile, where the texture starts over. */
