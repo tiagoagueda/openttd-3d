@@ -4,6 +4,8 @@ add_files(
     ground_textures.h
     lighting3d.cpp
     lighting3d.h
+    lock3d.cpp
+    lock3d.h
     model3d.cpp
     model3d.h
     model_pack.cpp

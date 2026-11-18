@@ -874,7 +874,7 @@ static ShadowView GetShadowView(const Camera3D &camera, Vec3 sun, bool homogeneo
  * @param sprites Sprites to draw that are in no chunk, such as vehicles; four vertices per sprite.
  * @param models 3D models to draw.
  */
-void Renderer3D::Render(uint target_id, uint width, uint height, const Camera3D &camera, std::span<const ChunkID> chunks, std::span<const SpriteVertex> sprites, std::span<const ModelInstance> models)
+void Renderer3D::Render(uint target_id, uint width, uint height, const Camera3D &camera, std::span<const ChunkID> chunks, std::span<const SpriteVertex> sprites, std::span<const ModelInstance> models, std::span<const TerrainVertex> moving_water)
 {
 	assert(!this->pending);
 	Impl &impl = *this->impl;
@@ -1207,6 +1207,23 @@ void Renderer3D::Render(uint target_id, uint width, uint height, const Camera3D 
 		bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A | BGFX_STATE_WRITE_Z | BGFX_STATE_DEPTH_TEST_LESS);
 		bgfx::submit(VIEW_SCENE, impl.sprite_program);
 		cast_sprites([&]() { bgfx::setVertexBuffer(0, &buffer); }, num_sprites);
+	}
+
+	uint32_t num_water = static_cast<uint32_t>(std::min<size_t>(moving_water.size() / 4, MAX_CHUNK_QUADS));
+	if (num_water != 0 && bgfx::getAvailTransientVertexBuffer(num_water * 4, impl.layout) >= num_water * 4) {
+		/* Water that moves, such as in the chambers of locks; see-through like the water over coasts. */
+		bgfx::TransientVertexBuffer buffer;
+		bgfx::allocTransientVertexBuffer(&buffer, num_water * 4, impl.layout);
+		std::copy_n(reinterpret_cast<const uint8_t *>(moving_water.data()), num_water * 4 * sizeof(TerrainVertex), buffer.data);
+		bgfx::setTransform(model.m.data());
+		bgfx::setVertexBuffer(0, &buffer);
+		bgfx::setTexture(0, impl.ground_sampler, impl.ground_textures);
+		bgfx::setTexture(2, impl.terrain_sampler, terrain_textures ? impl.terrain_textures : impl.ground_textures);
+		bgfx::setTexture(3, impl.mix_sampler, bgfx::isValid(impl.ground_mix) ? impl.ground_mix : impl.ground_textures);
+		bgfx::setIndexBuffer(impl.quad_indices, 0, num_water * 6);
+		set_scene();
+		bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_DEPTH_TEST_LESS | BGFX_STATE_BLEND_FUNC_SEPARATE(BGFX_STATE_BLEND_SRC_ALPHA, BGFX_STATE_BLEND_INV_SRC_ALPHA, BGFX_STATE_BLEND_ZERO, BGFX_STATE_BLEND_ONE));
+		bgfx::submit(VIEW_SCENE, impl.program);
 	}
 
 	for (const ModelInstance &instance : models) draw_model(instance);

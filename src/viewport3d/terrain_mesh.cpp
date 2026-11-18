@@ -28,6 +28,7 @@
 #include "../table/tree_land.h"
 
 #include "model_pack.h"
+#include "lock3d.h"
 #include "../debug.h"
 #include "../company_func.h"
 #include "../house.h"
@@ -94,6 +95,8 @@ static bool IsShoreSlope(Tile tile, uint x, uint y)
 {
 	if (IsTileType(tile, TileType::Water)) {
 		if (!IsCoast(tile) && !IsWater(tile)) return false;
+		/* A river that runs down into the sea is rapids, see #IsRiverBedTile. */
+		if (IsWater(tile) && GetWaterClass(tile) == WaterClass::River) return false;
 	} else if (IsTileType(tile, TileType::Trees)) {
 		if (GetTreeGround(tile) != TreeGround::Shore) return false;
 	} else {
@@ -138,8 +141,7 @@ static constexpr float RIVER_BANK = 0.4f;
 
 /**
  * Whether a tile is river that the 3D view draws with banks and a bed below see-through water:
- * flat river, or a step of a river down a slope, which becomes rapids.
- * A river that runs down into the sea is a coast instead, see #IsShoreSlope.
+ * flat river, or a step of a river down a slope, which becomes rapids; also where it runs down into the sea.
  * @param tile The tile.
  * @return True for such a tile.
  */
@@ -147,7 +149,7 @@ static bool IsRiverBedTile(Tile tile)
 {
 	if (!IsTileType(tile, TileType::Water) || !IsWater(tile) || GetWaterClass(tile) != WaterClass::River) return false;
 	auto [slope, z] = GetTileSlopeZ(tile);
-	return (slope == SLOPE_FLAT || IsInclinedSlope(slope)) && z > 0;
+	return (slope == SLOPE_FLAT && z > 0) || IsInclinedSlope(slope);
 }
 
 /**
@@ -167,6 +169,21 @@ static int GetRapidsFlow(uint x, uint y)
 	if (down_y > 0) return 1;
 	if (down_x < 0) return 2;
 	if (down_y < 0) return 3;
+	return -1;
+}
+
+/**
+ * Whether rapids end on a tile, and from which side they come.
+ * @param x X coordinate of the tile.
+ * @param y Y coordinate of the tile.
+ * @return 0 to 3 for rapids that flow in down along x, along y, up along x and up along y; -1 when no rapids end here.
+ */
+static int GetRapidsFootFlow(uint x, uint y)
+{
+	if (GetRapidsFlow(x - 1, y) == 0) return 0;
+	if (GetRapidsFlow(x, y - 1) == 1) return 1;
+	if (GetRapidsFlow(x + 1, y) == 2) return 2;
+	if (GetRapidsFlow(x, y + 1) == 3) return 3;
 	return -1;
 }
 
@@ -200,6 +217,16 @@ static void AddRiverBed(uint x, uint y, int hn, int hw, int he, int hs, TerrainC
 	bool land_nw = !IsOpenWaterTile(x, y - 1), land_se = !IsOpenWaterTile(x, y + 1);
 	bool land_n = !IsOpenWaterTile(x - 1, y - 1), land_w = !IsOpenWaterTile(x + 1, y - 1);
 	bool land_e = !IsOpenWaterTile(x - 1, y + 1), land_s = !IsOpenWaterTile(x + 1, y + 1);
+	/* Where a river runs down into the sea, the coasts beside the sea below are not banks of the river. */
+	if (std::min({hn, hw, he, hs}) == 0) {
+		switch (GetRapidsFlow(x, y)) {
+			case 0: land_w = land_s = false; break;
+			case 1: land_e = land_s = false; break;
+			case 2: land_n = land_e = false; break;
+			case 3: land_n = land_w = false; break;
+			default: break;
+		}
+	}
 	bool banks = land_ne || land_sw || land_nw || land_se || land_n || land_w || land_e || land_s;
 
 	/* Without banks the tile is one quad; with them, a grid with a ring of bank around the bed. */
@@ -229,7 +256,13 @@ static void AddRiverBed(uint x, uint y, int hn, int hw, int he, int hs, TerrainC
 	};
 
 	static constexpr float SUN_X = -0.4683f, SUN_Y = 0.5620f, SUN_Z = 0.6817f;
-	auto surface = [&](float u, float v) { return land(u, v) - RIVER_SURFACE; };
+	/* Rapids that run down into the sea end at sea level, where the river meets it. */
+	int flow = GetRapidsFlow(x, y);
+	bool mouth = std::min({hn, hw, he, hs}) == 0 && flow >= 0;
+	auto surface = [&](float u, float v) {
+		float z = land(u, v);
+		return mouth ? z - RIVER_SURFACE * std::min(1.0f, z) : z - RIVER_SURFACE;
+	};
 	/* The water is lit for the slope it is on, like the land; the shader relights it from there. */
 	float wx = -((hw + hs) - (hn + he)) * 0.5f * 1.5f * TILE_HEIGHT / TILE_SIZE;
 	float wy = -((he + hs) - (hn + hw)) * 0.5f * 1.5f * TILE_HEIGHT / TILE_SIZE;
@@ -237,18 +270,13 @@ static void AddRiverBed(uint x, uint y, int hn, int hw, int he, int hs, TerrainC
 	const uint8_t lit = static_cast<uint8_t>(std::clamp(255.0f * (0.45f + 0.80f * std::max(0.0f, water_light)) * 0.5f, 0.0f, 255.0f));
 	/* Water on a slope is rapids, and the marker says which way it flows. Still water at the foot of rapids gets the foam that they wash into it. */
 	float water_texture = static_cast<float>(GROUND_TEXTURE_SHALLOWS);
-	int flow = GetRapidsFlow(x, y);
+	int foot = GetRapidsFootFlow(x, y);
 	if (flow >= 0) {
 		water_texture = static_cast<float>(GROUND_TEXTURE_RAPIDS + flow);
-	} else if (GetRapidsFlow(x - 1, y) == 0) {
-		water_texture = static_cast<float>(GROUND_TEXTURE_RAPIDS_FOOT);
-	} else if (GetRapidsFlow(x, y - 1) == 1) {
-		water_texture = static_cast<float>(GROUND_TEXTURE_RAPIDS_FOOT + 1);
-	} else if (GetRapidsFlow(x + 1, y) == 2) {
-		water_texture = static_cast<float>(GROUND_TEXTURE_RAPIDS_FOOT + 2);
-	} else if (GetRapidsFlow(x, y + 1) == 3) {
-		water_texture = static_cast<float>(GROUND_TEXTURE_RAPIDS_FOOT + 3);
+	} else if (foot >= 0) {
+		water_texture = static_cast<float>(GROUND_TEXTURE_RAPIDS_FOOT + foot);
 	}
+
 	for (size_t j = 0; j + 1 < steps.size(); j++) {
 		for (size_t i = 0; i + 1 < steps.size(); i++) {
 			float u0 = steps[i], u1 = steps[i + 1], v0 = steps[j], v1 = steps[j + 1];
@@ -273,6 +301,238 @@ static void AddRiverBed(uint x, uint y, int hn, int hw, int he, int hs, TerrainC
 			};
 			mesh.water.insert(mesh.water.end(), {water(u0, v0, z00), water(u0, v1, z01), water(u1, v0, z10), water(u1, v1, z11)});
 		}
+	}
+
+	if (mouth && mesh.water.size() / 4 < MAX_CHUNK_QUADS) {
+		/* Where the rapids meet the sea, close the bed off below the water, so one cannot look under the sea. */
+		static constexpr float EDGES[4][4] = {{1, 0, 1, 1}, {0, 1, 1, 1}, {0, 0, 0, 1}, {0, 0, 1, 0}};
+		const float *e = EDGES[flow];
+		auto curtain = [&](float u, float v, float z) { return TerrainVertex{x + u, y + v, z, lit, lit, lit, 0, water_texture, u, v}; };
+		mesh.water.insert(mesh.water.end(), {curtain(e[0], e[1], 0.0f), curtain(e[0], e[1], -RIVER_BED), curtain(e[2], e[3], 0.0f), curtain(e[2], e[3], -RIVER_BED)});
+	}
+}
+
+/** How far the water of a canal is below the land around it, in height levels: none, the walls stand up a little instead. */
+static constexpr float CANAL_SURFACE = 0.0f;
+/** How deep a canal is below its water, in height levels. */
+static constexpr float CANAL_DEPTH = 0.5f;
+/** How far the walls of a canal stand up above the land, in height levels. */
+static constexpr float CANAL_COPING = 0.1f;
+/** How wide the top of the wall of a canal is, in tiles. */
+static constexpr float CANAL_WALL = 0.1f;
+/** Colour of the masonry of canal walls. */
+static constexpr TerrainColour CANAL_STONE{0xa4, 0x98, 0x86};
+/** Colour of the stones on top of canal walls. */
+static constexpr TerrainColour CANAL_COPING_STONE{0xc4, 0xbc, 0xac};
+
+/**
+ * Add a quad of a single colour, lit for the way it faces, to the terrain.
+ * @param a, b, c, d Corners, in tiles and height levels; a and d are opposite, as for every quad of the terrain.
+ * @param colour The colour.
+ * @param mesh The mesh to add to.
+ */
+static void AddPlainQuad(const std::array<float, 3> &a, const std::array<float, 3> &b, const std::array<float, 3> &c, const std::array<float, 3> &d, const TerrainColour &colour, TerrainChunkMesh &mesh)
+{
+	if ((mesh.vertices.size() + mesh.water.size()) / 4 >= MAX_CHUNK_QUADS) return;
+	static constexpr float SUN_X = -0.4683f, SUN_Y = 0.5620f, SUN_Z = 0.6817f;
+	static constexpr float Z = HEIGHT_LEVEL_SIZE / TILE_SIZE;
+	/* The normal, from the two diagonals, in tiles; pointing up or towards the sun side does not matter for walls that are lit from both. */
+	float ux = d[0] - a[0], uy = d[1] - a[1], uz = (d[2] - a[2]) * Z;
+	float vx = c[0] - b[0], vy = c[1] - b[1], vz = (c[2] - b[2]) * Z;
+	float nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
+	float len = std::sqrt(nx * nx + ny * ny + nz * nz);
+	if (len <= 0) return;
+	if (nz < 0) { nx = -nx; ny = -ny; nz = -nz; }
+	float light = (0.45f + 0.80f * std::max(0.0f, (nx * SUN_X + ny * SUN_Y + nz * SUN_Z) / len)) * 0.5f;
+	uint8_t r = static_cast<uint8_t>(std::clamp(colour.r * light, 0.0f, 255.0f));
+	uint8_t g = static_cast<uint8_t>(std::clamp(colour.g * light, 0.0f, 255.0f));
+	uint8_t bl = static_cast<uint8_t>(std::clamp(colour.b * light, 0.0f, 255.0f));
+	auto vertex = [&](const std::array<float, 3> &p) {
+		return TerrainVertex{p[0], p[1], p[2], r, g, bl, 0, static_cast<float>(GROUND_TEXTURE_NONE), p[0] - std::floor(p[0]), p[1] - std::floor(p[1])};
+	};
+	mesh.vertices.insert(mesh.vertices.end(), {vertex(a), vertex(b), vertex(c), vertex(d)});
+}
+
+/**
+ * Add an upright wall of a single colour between two points on the map.
+ * @param ax, ay One end, in tiles.
+ * @param bx, by The other end.
+ * @param bottom, top Heights of its foot and top, in height levels.
+ * @param side Which side faces the light more: the wall is lit as if it faced that way, (x, y).
+ * @param colour The colour.
+ * @param mesh The mesh to add to.
+ */
+static void AddWall(float ax, float ay, float bx, float by, float bottom, float top, std::array<float, 2> side, const TerrainColour &colour, TerrainChunkMesh &mesh)
+{
+	if (top <= bottom || (mesh.vertices.size() + mesh.water.size()) / 4 >= MAX_CHUNK_QUADS) return;
+	static constexpr float SUN_X = -0.4683f, SUN_Y = 0.5620f;
+	float light = (0.45f + 0.80f * std::max(0.0f, side[0] * SUN_X + side[1] * SUN_Y)) * 0.5f;
+	uint8_t r = static_cast<uint8_t>(std::clamp(colour.r * light, 0.0f, 255.0f));
+	uint8_t g = static_cast<uint8_t>(std::clamp(colour.g * light, 0.0f, 255.0f));
+	uint8_t b = static_cast<uint8_t>(std::clamp(colour.b * light, 0.0f, 255.0f));
+	auto vertex = [&](float x, float y, float z) { return TerrainVertex{x, y, z, r, g, b, 0, static_cast<float>(GROUND_TEXTURE_NONE), 0.0f, 0.0f}; };
+	mesh.vertices.insert(mesh.vertices.end(), {vertex(ax, ay, top), vertex(bx, by, top), vertex(ax, ay, bottom), vertex(bx, by, bottom)});
+}
+
+/**
+ * Whether a tile is a canal that the 3D view draws between walls.
+ * @param tile The tile.
+ * @return True for flat canal tiles.
+ */
+static bool IsCanalBedTile(Tile tile)
+{
+	if (GetTileSlope(tile) != SLOPE_FLAT) return false;
+	if (IsTileType(tile, TileType::Water)) return IsWater(tile) && GetWaterClass(tile) == WaterClass::Canal;
+	/* Buoys in a canal stand in its water. */
+	return IsBuoyTile(tile) && GetWaterClass(tile) == WaterClass::Canal;
+}
+
+/**
+ * Whether the water of a canal runs on into a tile at the same height, so that there is no wall on that side.
+ * @param x X coordinate of the tile.
+ * @param y Y coordinate of the tile.
+ * @param z Height of the canal, in height levels.
+ * @return True when there is water at that height up to the edges of the tile.
+ */
+static bool IsOpenCanalWater(uint x, uint y, int z)
+{
+	if (!IsOpenWaterTile(x, y)) return false;
+	TileIndex t = TileXY(x, y);
+	if (IsTileType(t, TileType::Water) && IsLock(t)) {
+		/* Only along the lock, where its walls go on from those of the canal. */
+		return GetTileMaxZ(t) == z && GetLockPart(t) != LockPart::Middle;
+	}
+	auto [slope, h] = GetTileSlopeZ(t);
+	return slope == SLOPE_FLAT && h == z;
+}
+
+/**
+ * Draw a canal: water between walls of masonry, with a bed below the water, as the 2D game draws its edges.
+ * @param x X coordinate of the tile.
+ * @param y Y coordinate of the tile.
+ * @param z Height of the tile, in height levels.
+ * @param mesh The mesh to add to.
+ */
+static void AddCanalBed(uint x, uint y, int z, TerrainChunkMesh &mesh)
+{
+	/* Which sides and corners have no water next to them: NE, SW, NW, SE sides, then N, W, E, S corners. */
+	bool land_ne = !IsOpenCanalWater(x - 1, y, z), land_sw = !IsOpenCanalWater(x + 1, y, z);
+	bool land_nw = !IsOpenCanalWater(x, y - 1, z), land_se = !IsOpenCanalWater(x, y + 1, z);
+	bool land_n = !IsOpenCanalWater(x - 1, y - 1, z), land_w = !IsOpenCanalWater(x + 1, y - 1, z);
+	bool land_e = !IsOpenCanalWater(x - 1, y + 1, z), land_s = !IsOpenCanalWater(x + 1, y + 1, z);
+
+	const float x0 = static_cast<float>(x), y0 = static_cast<float>(y), x1 = x0 + 1, y1 = y0 + 1;
+	const float w = CANAL_WALL;
+	const float top = z + CANAL_COPING, bed = z - CANAL_SURFACE - CANAL_DEPTH, water = z - CANAL_SURFACE;
+	/* The water and the bed reach as far as the walls. */
+	float wx0 = land_ne ? x0 + w : x0, wx1 = land_sw ? x1 - w : x1;
+	float wy0 = land_nw ? y0 + w : y0, wy1 = land_se ? y1 - w : y1;
+
+	/* The bed, a little darker than bare land. */
+	if ((mesh.vertices.size() + mesh.water.size()) / 4 + 24 >= MAX_CHUNK_QUADS) return;
+	static constexpr float SUN_Z = 0.6817f;
+	uint8_t c = static_cast<uint8_t>(std::clamp(255.0f * (0.45f + 0.80f * SUN_Z) * 0.5f * 0.8f, 0.0f, 255.0f));
+	float soil = static_cast<float>(GROUND_TEXTURE_GRASS);
+	auto ground = [&](float vx, float vy) { return TerrainVertex{vx, vy, bed, c, c, c, 0, soil, vx - x0, vy - y0}; };
+	mesh.vertices.insert(mesh.vertices.end(), {ground(wx0, wy0), ground(wx0, wy1), ground(wx1, wy0), ground(wx1, wy1)});
+
+	/* The water, see-through enough to make out the bed. */
+	uint8_t lit = static_cast<uint8_t>(std::clamp(255.0f * (0.45f + 0.80f * SUN_Z) * 0.5f, 0.0f, 255.0f));
+	uint8_t depth = static_cast<uint8_t>(std::clamp((1.0f - CANAL_DEPTH) * 64.0f, 0.0f, 255.0f));
+	auto surface = [&](float vx, float vy) { return TerrainVertex{vx, vy, water, lit, lit, lit, depth, static_cast<float>(GROUND_TEXTURE_SHALLOWS), vx - x0, vy - y0}; };
+	mesh.water.insert(mesh.water.end(), {surface(wx0, wy0), surface(wx0, wy1), surface(wx1, wy0), surface(wx1, wy1)});
+
+	/* A wall along each side with land: the top of it, its face into the canal, and a little step up from the land. */
+	auto coping = [&](float ax, float ay, float bx, float by) {
+		AddPlainQuad({ax, ay, top}, {ax, by, top}, {bx, ay, top}, {bx, by, top}, CANAL_COPING_STONE, mesh);
+	};
+	if (land_ne) {
+		coping(x0, wy0 - (land_nw ? w : 0), x0 + w, wy1 + (land_se ? w : 0));
+		AddWall(x0 + w, wy0, x0 + w, wy1, bed, top, {1, 0}, CANAL_STONE, mesh);
+		AddWall(x0, y0, x0, y1, z, top, {-1, 0}, CANAL_STONE, mesh);
+	}
+	if (land_sw) {
+		coping(x1 - w, wy0 - (land_nw ? w : 0), x1, wy1 + (land_se ? w : 0));
+		AddWall(x1 - w, wy0, x1 - w, wy1, bed, top, {-1, 0}, CANAL_STONE, mesh);
+		AddWall(x1, y0, x1, y1, z, top, {1, 0}, CANAL_STONE, mesh);
+	}
+	if (land_nw) {
+		coping(wx0, y0, wx1, y0 + w);
+		AddWall(wx0, y0 + w, wx1, y0 + w, bed, top, {0, 1}, CANAL_STONE, mesh);
+		AddWall(x0, y0, x1, y0, z, top, {0, -1}, CANAL_STONE, mesh);
+	}
+	if (land_se) {
+		coping(wx0, y1 - w, wx1, y1);
+		AddWall(wx0, y1 - w, wx1, y1 - w, bed, top, {0, -1}, CANAL_STONE, mesh);
+		AddWall(x0, y1, x1, y1, z, top, {0, 1}, CANAL_STONE, mesh);
+	}
+	/* Where only a corner has land, a short pillar of wall fills it. */
+	auto pillar = [&](float px, float py, float sx, float sy) {
+		/* px, py: the corner of the tile; sx, sy: which way the tile lies from it. */
+		float qx = px + sx * w, qy = py + sy * w;
+		coping(std::min(px, qx), std::min(py, qy), std::max(px, qx), std::max(py, qy));
+		AddWall(qx, py, qx, qy, bed, top, {sx, 0}, CANAL_STONE, mesh);
+		AddWall(px, qy, qx, qy, bed, top, {0, sy}, CANAL_STONE, mesh);
+	};
+	if (land_n && !land_ne && !land_nw) pillar(x0, y0, 1, 1);
+	if (land_w && !land_sw && !land_nw) pillar(x1, y0, -1, 1);
+	if (land_e && !land_ne && !land_se) pillar(x0, y1, 1, -1);
+	if (land_s && !land_sw && !land_se) pillar(x1, y1, -1, -1);
+}
+
+/**
+ * Draw the bed of one part of a lock that moves its gates and water, and the water outside its gates; see lock3d.h.
+ * The walls are in the models of the parts, the gates and the water of the chamber are drawn anew for every image.
+ * @param tile The part of the lock.
+ * @param mesh The mesh to add to.
+ */
+static void AddLockBed(TileIndex tile, TerrainChunkMesh &mesh)
+{
+	if ((mesh.vertices.size() + mesh.water.size()) / 4 + 4 >= MAX_CHUNK_QUADS) return;
+	TileIndex middle = GetLockMiddleTile(tile);
+	const int high = GetTileMaxZ(middle), low = high - 1;
+	const LockPart part = GetLockPart(tile);
+	/* Where along the lock this part is. */
+	const float a0 = part == LockPart::Lower ? -1.5f : (part == LockPart::Middle ? -0.5f : 0.5f), a1 = a0 + 1;
+	const float bed = low - LOCK_DEPTH;
+
+	static constexpr float SUN_Z = 0.6817f;
+	const uint8_t c = static_cast<uint8_t>(std::clamp(255.0f * (0.45f + 0.80f * SUN_Z) * 0.5f * 0.8f, 0.0f, 255.0f));
+	const uint8_t lit = static_cast<uint8_t>(std::clamp(255.0f * (0.45f + 0.80f * SUN_Z) * 0.5f, 0.0f, 255.0f));
+	auto vertex = [&](float along, float across, float z, uint8_t colour, uint8_t depth, float texture) {
+		std::array<float, 2> p = GetLockPoint(middle, along, across);
+		return TerrainVertex{p[0], p[1], z, colour, colour, colour, depth, texture, p[0] - std::floor(p[0]), p[1] - std::floor(p[1])};
+	};
+	auto bed_quad = [&](float b0, float b1, float z) {
+		float soil = static_cast<float>(GROUND_TEXTURE_GRASS);
+		mesh.vertices.insert(mesh.vertices.end(), {vertex(b0, -0.5f, z, c, 0, soil), vertex(b0, 0.5f, z, c, 0, soil), vertex(b1, -0.5f, z, c, 0, soil), vertex(b1, 0.5f, z, c, 0, soil)});
+	};
+	auto water_quad = [&](float b0, float b1, float z, float below) {
+		uint8_t depth = static_cast<uint8_t>(std::clamp((1.0f - below) * 64.0f, 0.0f, 255.0f));
+		float shallows = static_cast<float>(GROUND_TEXTURE_SHALLOWS);
+		mesh.water.insert(mesh.water.end(), {vertex(b0, -0.5f, z, lit, depth, shallows), vertex(b0, 0.5f, z, lit, depth, shallows), vertex(b1, -0.5f, z, lit, depth, shallows), vertex(b1, 0.5f, z, lit, depth, shallows)});
+	};
+
+	switch (part) {
+		case LockPart::Lower:
+			/* Outside the lower gates the water is that of the canal below. */
+			bed_quad(a0, a1, bed);
+			water_quad(a0, -LOCK_GATE, low, LOCK_DEPTH);
+			break;
+		case LockPart::Middle:
+			bed_quad(a0, a1, bed);
+			break;
+		case LockPart::Upper: {
+			/* The upper gates stand on a sill, the bed of the canal above; outside them the water is that of the canal. */
+			bed_quad(a0, LOCK_GATE, bed);
+			bed_quad(LOCK_GATE, a1, high - LOCK_DEPTH);
+			water_quad(LOCK_GATE, a1, high, LOCK_DEPTH);
+			std::array<float, 2> p = GetLockPoint(middle, LOCK_GATE, -0.5f), q = GetLockPoint(middle, LOCK_GATE, 0.5f);
+			std::array<float, 2> centre = GetLockPoint(middle, 0, 0), ahead = GetLockPoint(middle, 1, 0);
+			AddWall(p[0], p[1], q[0], q[1], bed, high - LOCK_DEPTH, {centre[0] - ahead[0], centre[1] - ahead[1]}, CANAL_STONE, mesh);
+			break;
+		}
+		default: break;
 	}
 }
 
@@ -2261,9 +2521,11 @@ void BuildTerrainChunkMesh(uint chunk_x, uint chunk_y, GroundTextures &textures,
 
 	/* With ground textures in the model package, coasts are land that goes down into the water. */
 	const bool pack_ground = textures.IsMixing();
+	const bool models_ok = pack != nullptr && !pack->IsEmpty();
 	mesh.models.clear();
 	mesh.parts.clear();
 	mesh.live.clear();
+	mesh.locks.clear();
 	mesh.vertices.reserve(TERRAIN_CHUNK_SIZE * TERRAIN_CHUNK_SIZE * 4);
 	mesh.min_height = UINT_MAX;
 	mesh.max_height = 0;
@@ -2394,12 +2656,31 @@ void BuildTerrainChunkMesh(uint chunk_x, uint chunk_y, GroundTextures &textures,
 			/* Split the tile along the diagonal with the smallest height difference,
 			 * so a single raised or lowered corner gives one flat and one sloped half. */
 			bool split_ns = std::abs(fn - fs) <= std::abs(fw - fe);
+			bool lock = pack_ground && models_ok && IsTileType(tile, TileType::Water) && IsLock(tile) && HasLockAnimation(*pack)
+					&& pack->Find(ModelKind::Lock, 0, to_underlying(GetLockPart(tile))) != nullptr;
 			if (pack_ground && IsRiverBedTile(tile)) {
 				AddRiverBed(x, y, hn, hw, he, hs, mesh);
+			} else if (pack_ground && IsCanalBedTile(tile)) {
+				AddCanalBed(x, y, hn, mesh);
+			} else if (lock) {
+				AddLockBed(tile, mesh);
+				if (GetLockPart(tile) == LockPart::Middle) mesh.locks.push_back(tile);
 			} else if (split_ns) {
 				mesh.vertices.insert(mesh.vertices.end(), {vw, vn, vs, ve});
 			} else {
 				mesh.vertices.insert(mesh.vertices.end(), {vn, ve, vw, vs});
+			}
+
+			if (pack_ground && !collect && IsTileType(tile, TileType::Water) && IsWater(tile) && !IsRiverBedTile(tile) && !IsCanalBedTile(tile)
+					&& hn == hw && hn == he && hn == hs && (mesh.vertices.size() + mesh.water.size()) / 4 < MAX_CHUNK_QUADS) {
+				/* Still water where rapids end, such as the sea at the mouth of a river, gets the foam they wash into it. */
+				int foot = GetRapidsFootFlow(x, y);
+				if (foot >= 0) {
+					uint8_t lit = static_cast<uint8_t>(std::clamp(255.0f * (AMBIENT + DIFFUSE * SUN_Z) * 0.5f, 0.0f, 255.0f));
+					float marker = static_cast<float>(GROUND_TEXTURE_RAPIDS_FOOT + foot);
+					auto foam = [&](uint vx, uint vy) { return TerrainVertex{static_cast<float>(vx), static_cast<float>(vy), hn + 0.002f, lit, lit, lit, 0, marker, static_cast<float>(vx - x), static_cast<float>(vy - y)}; };
+					mesh.water.insert(mesh.water.end(), {foam(x, y), foam(x, y + 1), foam(x + 1, y), foam(x + 1, y + 1)});
+				}
 			}
 
 			if (mark != TileMark::None) AddTileMark(mark, x, y, {static_cast<float>(fn), static_cast<float>(fw), static_cast<float>(fe), static_cast<float>(fs)}, split_ns, pack, mesh);

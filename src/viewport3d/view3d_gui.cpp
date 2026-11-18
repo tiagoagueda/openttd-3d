@@ -16,6 +16,7 @@
 #include "terrain_mesh.h"
 #include "tile_sprites.h"
 #include "model_pack.h"
+#include "lock3d.h"
 #include "../newgrf_commons.h"
 #include "../blitter/factory.hpp"
 #include "../gfx_func.h"
@@ -68,6 +69,7 @@ class View3DWindow : public Window {
 		uint max_height = 0; ///< Highest height level in the chunk; only valid when built.
 		std::vector<AnimatedPart> parts; ///< Parts of models in the chunk that move.
 		std::map<TileIndex, std::vector<ModelInstance>> live; ///< Models in the chunk that change often, by tile.
+		std::vector<TileIndex> locks; ///< Locks in the chunk whose gates and water move.
 	};
 	std::map<TileIndex, uint64_t> tile_keys; ///< Rail tiles and level crossings in built chunks, by GetTileChangeKey().
 	std::vector<uint16_t> built_tiles; ///< Type and height of every tile when its chunk was last built, by tile index.
@@ -134,6 +136,8 @@ class View3DWindow : public Window {
 	std::unique_ptr<SpriteAtlas> atlas; ///< The sprites of the 2D game that the chunks use.
 	std::unique_ptr<ModelPack> model_pack; ///< The package of 3D models, if there is one.
 	std::vector<ModelInstance> vehicle_models; ///< The vehicles in view that are drawn with a 3D model.
+	std::vector<ModelInstance> lock_models; ///< The gates of locks in view; reused.
+	std::vector<TerrainVertex> moving_water; ///< The water in the chambers of locks in view.
 	std::vector<SpriteVertex> vehicle_sprites; ///< The vehicles in view.
 	std::vector<VehicleSpritePlace> vehicle_places; ///< Where the vehicles in view are, to find the one below the cursor.
 	uint64_t vehicle_hash = 0; ///< Hash of the vehicles in the last image, to see whether any moved.
@@ -173,6 +177,7 @@ class View3DWindow : public Window {
 	std::vector<SpriteVertex> small_sprites; ///< Vehicles in a small view; reused.
 	std::vector<VehicleSpritePlace> small_places; ///< Places of the vehicles in a small view; not used, but needed to find them.
 	std::vector<ModelInstance> small_models; ///< Models in a small view; reused.
+	std::vector<TerrainVertex> small_water; ///< The water in the chambers of locks in a small view; reused.
 
 	/** A picture for a button of a construction window. */
 	struct Picture {
@@ -1001,9 +1006,12 @@ public:
 
 		bool geometry_changed = (this->view_changed || this->terrain_changed) && this->UpdateChunks(this->camera, view->current_x, view->current_y, this->visible_chunks, true);
 
+		/* Locks move their gates and water for the ships in them, and the ships float on that water. */
+		this->AddLocks(this->visible_chunks, this->lock_models, this->moving_water);
 		/* Vehicles move all the time, so they are looked up for every image. */
 		Matrix4 view_proj = this->camera.GetProjectionMatrix(static_cast<float>(view->current_x) / view->current_y, this->renderer->HomogeneousDepth()) * this->camera.GetViewMatrix();
 		BuildVehicleSprites(this->camera, Frustum3D(view_proj), *this->atlas, this->model_pack.get(), this->vehicle_sprites, this->vehicle_places, this->vehicle_models);
+		this->vehicle_models.insert(this->vehicle_models.end(), this->lock_models.begin(), this->lock_models.end());
 		/* Moving parts of buildings are drawn anew for every image, like vehicles. */
 		float seconds = std::chrono::duration<float>(now - this->opened).count();
 		for (Renderer3D::ChunkID id : this->visible_chunks) {
@@ -1013,7 +1021,7 @@ public:
 		this->AddPreviewModels();
 		this->AddLabels(view_proj, view->current_x, view->current_y);
 		this->AddCursorModels(seconds);
-		uint64_t hash = HashMoving(this->vehicle_sprites, this->vehicle_models);
+		uint64_t hash = HashMoving(this->vehicle_sprites, this->vehicle_models, this->moving_water);
 		bool vehicles_changed = hash != this->vehicle_hash;
 
 		this->renderer->UpdateGroundTextures(*this->ground_textures);
@@ -1028,7 +1036,7 @@ public:
 		this->weather = weather;
 		this->weather_drawn = now;
 		this->renderer->SetWeather(weather);
-		this->renderer->Render(0, view->current_x, view->current_y, this->camera, this->visible_chunks, this->vehicle_sprites, this->vehicle_models);
+		this->renderer->Render(0, view->current_x, view->current_y, this->camera, this->visible_chunks, this->vehicle_sprites, this->vehicle_models, this->moving_water);
 		this->view_changed = false;
 		this->vehicle_hash = hash;
 		this->PollRenderer();
@@ -1169,18 +1177,36 @@ private:
 	 * @param models Everything drawn with models that is looked up anew for every image.
 	 * @return The hash.
 	 */
-	static uint64_t HashMoving(std::span<const SpriteVertex> sprites, std::span<const ModelInstance> models)
+	static uint64_t HashMoving(std::span<const SpriteVertex> sprites, std::span<const ModelInstance> models, std::span<const TerrainVertex> water)
 	{
 		uint64_t hash = 0xcbf29ce484222325ULL;
 		const uint8_t *data = reinterpret_cast<const uint8_t *>(sprites.data());
 		for (size_t i = 0; i < sprites.size() * sizeof(SpriteVertex); i++) {
 			hash = (hash ^ data[i]) * 0x100000001b3ULL;
 		}
+		for (const TerrainVertex &vertex : water) hash = (hash ^ std::bit_cast<uint32_t>(vertex.z)) * 0x100000001b3ULL;
 		for (const ModelInstance &instance : models) {
 			hash = (hash ^ instance.model) * 0x100000001b3ULL;
 			for (float f : instance.transform.m) hash = (hash ^ std::bit_cast<uint32_t>(f)) * 0x100000001b3ULL;
 		}
 		return hash;
+	}
+
+	/**
+	 * Get the gates and the water of the locks in some chunks as they are now.
+	 * @param chunks The chunks.
+	 * @param[out] models The gates.
+	 * @param[out] water The water in the chambers.
+	 */
+	void AddLocks(std::span<const Renderer3D::ChunkID> chunks, std::vector<ModelInstance> &models, std::vector<TerrainVertex> &water)
+	{
+		models.clear();
+		water.clear();
+		if (this->model_pack == nullptr || this->model_pack->IsEmpty()) return;
+		BeginLocks3D();
+		for (Renderer3D::ChunkID id : chunks) {
+			for (TileIndex tile : this->chunks[id].locks) AddLockMovingParts(tile, *this->model_pack, models, water);
+		}
 	}
 
 	/** Take a finished image, and have whichever view it is for drawn again. */
@@ -1289,14 +1315,16 @@ private:
 			/* Chunks only seen here are built here; then our own view may have to be drawn again too. */
 			if (this->UpdateChunks(view.camera, view.width, view.height, this->small_chunks, false)) this->view_changed = true;
 
+			this->AddLocks(this->small_chunks, this->lock_models, this->small_water);
 			Matrix4 view_proj = view.camera.GetProjectionMatrix(static_cast<float>(view.width) / view.height, this->renderer->HomogeneousDepth()) * view.camera.GetViewMatrix();
 			BuildVehicleSprites(view.camera, Frustum3D(view_proj), *this->atlas, this->model_pack.get(), this->small_sprites, this->small_places, this->small_models);
+			this->small_models.insert(this->small_models.end(), this->lock_models.begin(), this->lock_models.end());
 			float seconds = std::chrono::duration<float>(now - this->opened).count();
 			for (Renderer3D::ChunkID id : this->small_chunks) {
 				for (const AnimatedPart &part : this->chunks[id].parts) this->small_models.push_back(part.Place(seconds));
 				for (const auto &[tile, models] : this->chunks[id].live) this->small_models.insert(this->small_models.end(), models.begin(), models.end());
 			}
-			uint64_t hash = HashMoving(this->small_sprites, this->small_models);
+			uint64_t hash = HashMoving(this->small_sprites, this->small_models, this->small_water);
 			/* Rain, snow and a change of the weather need a new image as well. */
 			Weather3D weather = GetWeather3D();
 			if (!view.changed && hash == view.hash && !weather.IsMoving() && weather.LooksLike(view.weather)) continue;
@@ -1305,7 +1333,7 @@ private:
 
 			this->renderer->UpdateGroundTextures(*this->ground_textures);
 			this->renderer->UpdateSpriteAtlas(*this->atlas);
-			this->renderer->Render(view.target, view.width, view.height, view.camera, this->small_chunks, this->small_sprites, this->small_models);
+			this->renderer->Render(view.target, view.width, view.height, view.camera, this->small_chunks, this->small_sprites, this->small_models, this->small_water);
 			view.changed = false;
 			view.hash = hash;
 			this->next_small_view = index + 1;
@@ -1550,6 +1578,7 @@ private:
 					chunk.max_height = this->scratch_mesh.max_height;
 					chunk.parts = this->scratch_mesh.parts;
 					chunk.live = this->scratch_mesh.live;
+					chunk.locks = this->scratch_mesh.locks;
 					this->RememberTileKeys(cx, cy);
 
 					if (std::chrono::steady_clock::now() - start > BUILD_BUDGET) out_of_time = true;

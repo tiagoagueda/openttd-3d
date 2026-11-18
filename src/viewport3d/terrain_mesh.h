@@ -82,6 +82,7 @@ struct TerrainChunkMesh {
 	uint max_height = 0; ///< Highest height level in the chunk.
 	std::vector<ModelInstance> models; ///< 3D models standing on the terrain, in place of sprites.
 	std::vector<AnimatedPart> parts; ///< Parts of those models that move.
+	std::vector<TileIndex> locks; ///< Middle parts of locks whose gates and water move, see AddLockMovingParts().
 	std::map<TileIndex, std::vector<ModelInstance>> live; ///< Models that change often, like signals, by tile; drawn anew for every image, so a change does not rebuild the chunk.
 	uint64_t hash = 0; ///< Hash over the vertices, to detect whether a rebuild changed anything.
 };
