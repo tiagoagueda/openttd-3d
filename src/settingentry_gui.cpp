@@ -746,6 +746,7 @@ SettingsContainer &GetSettingsTree()
 			SettingsPage *routing = vehicles->Add(new SettingsPage(STR_CONFIG_SETTING_VEHICLES_ROUTING));
 			{
 				routing->Add(new SettingEntry("vehicle.road_side"));
+				routing->Add(new SettingEntry("vehicle.trolleybus_turn_on_road"));
 				routing->Add(new SettingEntry("difficulty.train_flip_reverse_allowed"));
 				routing->Add(new SettingEntry("pf.reverse_at_signals"));
 				routing->Add(new SettingEntry("pf.forbid_90_deg"));
@@ -833,6 +834,8 @@ SettingsContainer &GetSettingsTree()
 			SettingsPage *towns = environment->Add(new SettingsPage(STR_CONFIG_SETTING_ENVIRONMENT_TOWNS));
 			{
 				towns->Add(new SettingEntry("economy.town_cargo_scale"));
+				towns->Add(new SettingEntry("economy.electric_stop_rating_bonus"));
+				towns->Add(new SettingEntry("economy.electric_stop_passenger_bonus"));
 				towns->Add(new SettingEntry("economy.town_growth_rate"));
 				towns->Add(new SettingEntry("economy.allow_town_roads"));
 				towns->Add(new SettingEntry("economy.allow_town_level_crossings"));

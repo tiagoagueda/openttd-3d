@@ -458,6 +458,11 @@ protected:
 	inline bool TryReverse()
 	{
 		if (IsRoadTT() && !this->IsTram()) {
+			/* Fork: trolleybuses may be kept from turning around on a plain road (setting). */
+			if (this->veh != nullptr && !RoadVehicleMayTurnAround(RoadVehicle::From(this->veh), this->old_tile, this->exitdir)) {
+				this->err = ErrorCode::NoWay;
+				return false;
+			}
 			/* if we reached the end of road, we can reverse the RV and continue moving */
 			this->exitdir = ReverseDiagDir(this->exitdir);
 			/* new tile will be the same as old one */

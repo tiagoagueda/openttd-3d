@@ -64,6 +64,7 @@ static constexpr StationFacility STATION_FACILITY_GHOST{6};
 
 /** The vehicles that may have visited a station */
 enum class StationVehicleType : uint8_t {
+	ElectricLastMonth = 0, ///< Fork: a tram or trolleybus served the station last month (town bonuses); hidden from NewGRF
 	Train = 1, ///< Station has seen a train
 	Bus = 2, ///< Station has seen a bus
 	Truck = 3, ///< Station has seen a truck
@@ -71,6 +72,7 @@ enum class StationVehicleType : uint8_t {
 	Ship = 5, ///< Station has seen a ship
 
 	Waypoint = 6, ///< Station is a waypoint (Save load conversion and NewGRF only!)
+	ElectricThisMonth = 7, ///< Fork: a tram or trolleybus served the station this month; hidden from NewGRF
 };
 
 /** Bitset of \c StationVehicleType elements. */

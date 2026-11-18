@@ -522,6 +522,17 @@ static void TownGenerateCargo(Town *t, CargoType cargo, uint amount, StationFind
 		amount = (amount + 1) >> 1;
 	}
 
+	/* Fork: houses near a station served by trams or trolleybuses make more passengers; fractions by chance. */
+	uint8_t bonus = _settings_game.economy.electric_stop_passenger_bonus;
+	if (bonus != 0 && IsCargoInClass(cargo, CargoClass::Passengers)) {
+		for (const Station *st : stations.GetStations()) {
+			if (!st->had_vehicle_of_type.Any({StationVehicleType::ElectricLastMonth, StationVehicleType::ElectricThisMonth})) continue;
+			uint extra = amount * bonus;
+			amount += extra / 100 + (RandomRange(100) < extra % 100 ? 1 : 0);
+			break;
+		}
+	}
+
 	/* Scale by cargo scale setting. */
 	amount = ScaleByCargoScale(amount, true);
 	if (amount == 0) return;
@@ -3841,6 +3852,20 @@ static void UpdateTownRating(Town *t)
 		}
 	});
 
+	/* Fork: clean transport. Each station of a company near the town that a tram or trolleybus served last month
+	 * raises the company's rating, for up to ten stations. */
+	if (_settings_game.economy.electric_stop_rating_bonus != 0) {
+		TypedIndexContainer<std::array<uint8_t, MAX_COMPANIES>, CompanyID> served{};
+		ForAllStationsNearTown(t, [&](const Station *st) {
+			if (Company::IsValidID(st->owner) && st->had_vehicle_of_type.Test(StationVehicleType::ElectricLastMonth)) served[st->owner]++;
+		});
+		for (const Company *c : Company::Iterate()) {
+			if (served[c->index] == 0) continue;
+			int new_rating = t->ratings[c->index] + std::min<int>(served[c->index], 10) * _settings_game.economy.electric_stop_rating_bonus;
+			t->ratings[c->index] = std::min<int>(new_rating, INT16_MAX);
+		}
+	}
+
 	/* clamp all ratings to valid values */
 	for (auto it = t->ratings.begin(); it != t->ratings.end(); ++it) {
 		*it = Clamp(*it, RATING_MINIMUM, RATING_MAXIMUM);
@@ -4214,6 +4239,12 @@ static const IntervalTimer<TimerGameEconomy> _economy_towns_monthly({TimerGameEc
 		UpdateTownRating(t);
 
 		SetWindowDirty(WindowClass::TownView, t->index);
+	}
+
+	/* Fork: this month's service by trams and trolleybuses becomes last month's, for the town bonuses. */
+	for (Station *st : Station::Iterate()) {
+		st->had_vehicle_of_type.Set(StationVehicleType::ElectricLastMonth, st->had_vehicle_of_type.Test(StationVehicleType::ElectricThisMonth));
+		st->had_vehicle_of_type.Reset(StationVehicleType::ElectricThisMonth);
 	}
 });
 

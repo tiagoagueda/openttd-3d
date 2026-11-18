@@ -951,6 +951,7 @@ STR_NEWS_VEHICLE_IS_GETTING_VERY_OLD                            :{WHITE}{VEHICLE
 STR_NEWS_VEHICLE_IS_GETTING_VERY_OLD_AND                        :{WHITE}{VEHICLE} is getting very old and urgently needs replacing
 STR_NEWS_TRAIN_IS_STUCK                                         :{WHITE}{VEHICLE} can't find a path to continue
 STR_NEWS_VEHICLE_IS_LOST                                        :{WHITE}{VEHICLE} is lost
+STR_NEWS_TROLLEYBUS_TURNED_ON_ROAD                              :{WHITE}{VEHICLE} had to turn around away from a turning place: build a turning loop or junction where its wires end
 STR_NEWS_VEHICLE_UNPROFITABLE_YEAR                              :{WHITE}{VEHICLE}'s profit last year was {CURRENCY_LONG}
 STR_NEWS_VEHICLE_UNPROFITABLE_PERIOD                            :{WHITE}{VEHICLE}'s profit last period was {CURRENCY_LONG}
 STR_NEWS_AIRCRAFT_DEST_TOO_FAR                                  :{WHITE}{VEHICLE} can't get to the next destination because it is out of range
@@ -1421,6 +1422,8 @@ STR_CONFIG_SETTING_PERCENTAGE                                   :{COMMA}%
 
 STR_CONFIG_SETTING_ROAD_VEHICLE_SLOPE_STEEPNESS                 :Slope steepness for road vehicles: {STRING2}
 STR_CONFIG_SETTING_ROAD_VEHICLE_SLOPE_STEEPNESS_HELPTEXT        :Steepness of a sloped tile for a road vehicle. Higher values make it more difficult to climb a hill
+STR_CONFIG_SETTING_TROLLEYBUS_TURN_ON_ROAD                      :Trolleybuses may turn around on a plain road: {STRING2}
+STR_CONFIG_SETTING_TROLLEYBUS_TURN_ON_ROAD_HELPTEXT             :When off, trolleybuses turn around only at the end of a road, at a junction or at a drive-through stop, the way real trolleybus lines need turning loops. A trolleybus that has no other way to turn still turns, and you get a message about it
 
 STR_CONFIG_SETTING_FORBID_90_DEG                                :Forbid trains from making 90° turns: {STRING2}
 STR_CONFIG_SETTING_FORBID_90_DEG_HELPTEXT                       :90 degree turns occur when a horizontal track is directly followed by a vertical track piece on the adjacent tile, thus making the train turn by 90 degree when traversing the tile edge instead of the usual 45 degrees for other track combinations
@@ -1576,6 +1579,10 @@ STR_CONFIG_SETTING_MINUTES_PER_YEAR_FROZEN                      :0 (calendar tim
 
 STR_CONFIG_SETTING_TOWN_CARGO_SCALE                             :Scale town cargo production: {STRING2}
 STR_CONFIG_SETTING_TOWN_CARGO_SCALE_HELPTEXT                    :Scale the cargo production of towns by this percentage
+STR_CONFIG_SETTING_ELECTRIC_STOP_RATING_BONUS                   :Town rating gain for stations served by trams or trolleybuses: {STRING2}
+STR_CONFIG_SETTING_ELECTRIC_STOP_RATING_BONUS_HELPTEXT          :Each month, a company gains this much rating with a town for each of its stations near the town that a tram or trolleybus served in the last month, counting up to ten stations
+STR_CONFIG_SETTING_ELECTRIC_STOP_PASSENGER_BONUS                :Extra passengers near stations served by trams or trolleybuses: {STRING2}
+STR_CONFIG_SETTING_ELECTRIC_STOP_PASSENGER_BONUS_HELPTEXT       :Houses that have a station served by a tram or trolleybus in the last month in their catchment produce this many percent more passengers
 STR_CONFIG_SETTING_INDUSTRY_CARGO_SCALE                         :Scale industry cargo production: {STRING2}
 STR_CONFIG_SETTING_INDUSTRY_CARGO_SCALE_HELPTEXT                :Scale the cargo production of industries by this percentage
 STR_CONFIG_SETTING_CARGO_SCALE_VALUE                            :{NUM}%

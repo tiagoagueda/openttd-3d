@@ -629,10 +629,13 @@ struct VehicleSettings {
 	RoadVehicleDrivingSide road_side; ///< the side of the road vehicles drive on
 	uint8_t plane_crashes; ///< number of plane crashes, 0 = none, 1 = reduced, 2 = normal
 	bool aircraft_range; ///< enable range limits for aircraft
+	bool trolleybus_turn_on_road; ///< fork: trolleybuses may turn around on a plain road, not only at road ends, junctions and drive-through stops
 };
 
 /** Settings related to the economy. */
 struct EconomySettings {
+	uint8_t electric_stop_rating_bonus; ///< fork: monthly town rating gain for each station served by trams or trolleybuses, up to ten stations
+	uint8_t electric_stop_passenger_bonus; ///< fork: extra passengers, in percent, from houses near a station served by trams or trolleybuses
 	bool inflation; ///< disable inflation
 	bool bribe; ///< enable bribing the local authority
 	EconomyType type; ///< economy type (original/smooth/frozen)

@@ -704,12 +704,55 @@ static RoadVehicle *RoadVehFindCloseTo(RoadVehicle *v, int x, int y, Direction d
 }
 
 /**
+ * Fork: whether a road vehicle may turn around on a tile. Everything may, except trolleybuses when the setting
+ * "trolleybuses may turn around on a plain road" is off: they turn only at a road end, at a junction, at a
+ * drive-through stop or in a depot, the places where a real trolleybus line has wire to turn on.
+ * @param v The vehicle (the front of it).
+ * @param tile The tile it would turn on.
+ * @param exitdir The direction it would leave the tile by if it did not turn.
+ * @return \c true if it may turn there.
+ */
+bool RoadVehicleMayTurnAround(const RoadVehicle *v, TileIndex tile, DiagDirection exitdir)
+{
+	if (_settings_game.vehicle.trolleybus_turn_on_road || !IsTrolleyRoadType(v->roadtype)) return true;
+	if (IsTileType(tile, TileType::Station) && IsDriveThroughStopTile(tile)) return true;
+	if (IsRoadDepotTile(tile)) return true;
+
+	RoadBits here = GetAnyRoadBits(tile, RoadTramType::Road, true);
+	if (here.Count() >= 3) return true; // a junction
+
+	/* A road end: the road does not go on into the next tile. */
+	if (!here.Any(DiagDirToRoadBits(exitdir))) return true;
+	TileIndex next = TileAddByDiagDir(tile, exitdir);
+	if (!IsValidTile(next)) return true;
+	return !GetAnyRoadBits(next, RoadTramType::Road, true).Any(DiagDirToRoadBits(ReverseDiagDir(exitdir)));
+}
+
+/**
+ * Fork: tell the owner when a trolleybus turns around where the setting says it should not, because it had no
+ * other way to go: the wire ends on a road that goes on. It turns anyway, so a line never gets stuck.
+ * @param v The vehicle.
+ * @param exitdir The direction it would have left its tile by.
+ */
+static void CheckTrolleybusTurn(const RoadVehicle *v, DiagDirection exitdir)
+{
+	if (!v->IsFrontEngine() || RoadVehicleMayTurnAround(v, v->tile, exitdir)) return;
+	/* Only a message, so this may differ between clients: tell each vehicle's owner once per game session. */
+	static std::set<VehicleID> warned;
+	if (v->owner != _local_company || !warned.insert(v->index).second) return;
+	AddVehicleAdviceNewsItem(AdviceType::VehicleLost, GetEncodedString(STR_NEWS_TROLLEYBUS_TURNED_ON_ROAD, v->index), v->index);
+}
+
+/**
  * A road vehicle arrives at a station. If it is the first time, create a news item.
  * @param v  Road vehicle that arrived.
  * @param st Station where the road vehicle arrived.
  */
 static void RoadVehArrivesAt(const RoadVehicle *v, Station *st)
 {
+	/* Fork: trams and trolleybuses give the town bonuses of stations served by electric vehicles. */
+	if (HasRoadCatenary(v->roadtype)) st->had_vehicle_of_type.Set(StationVehicleType::ElectricThisMonth);
+
 	if (v->IsBus()) {
 		/* Check if station was ever visited before */
 		if (!st->had_vehicle_of_type.Test(StationVehicleType::Bus)) {
@@ -825,6 +868,9 @@ static void RoadVehCheckOvertake(RoadVehicle *v, RoadVehicle *u)
 	/* Trams can't overtake other trams */
 	if (RoadTypeIsTram(v->roadtype)) return;
 
+	/* Trolleybuses can't leave their wire to overtake: their poles would have to pass the other's. */
+	if (IsTrolleyRoadType(v->roadtype)) return;
+
 	/* Don't overtake in stations */
 	if (IsTileType(v->tile, TileType::Station) || IsTileType(u->tile, TileType::Station)) return;
 
@@ -938,6 +984,7 @@ static Trackdir RoadFindPathToDest(RoadVehicle *v, TileIndex tile, DiagDirection
 		/* If vehicle expected a path, it no longer exists, so invalidate it. */
 		if (!v->path.empty()) v->path.clear();
 		/* No reachable tracks, so we'll reverse */
+		CheckTrolleybusTurn(v, enterdir);
 		return FilterRedSignal(_road_reverse_table[enterdir]);
 	}
 
@@ -1211,6 +1258,7 @@ bool IndividualRoadVehicleController(RoadVehicle *v, const RoadVehicle *prev)
 			if (HasTileAnyRoadType(tile, v->compatible_roadtypes)) {
 				dir = RoadFindPathToDest(v, tile, diagdir);
 			} else {
+				CheckTrolleybusTurn(v, diagdir);
 				dir = _road_reverse_table[diagdir];
 			}
 		} else {

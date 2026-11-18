@@ -425,7 +425,7 @@ uint32_t Station::GetNewGRFVariable(const ResolverObject &object, uint8_t variab
 			return value;
 		}
 
-		case 0x8A: return this->had_vehicle_of_type.base();
+		case 0x8A: return StationVehicleTypes{this->had_vehicle_of_type}.Reset({StationVehicleType::ElectricLastMonth, StationVehicleType::ElectricThisMonth}).base();
 		case 0xF1: return !this->airport.IsEmpty() ? this->airport.GetSpec()->ttd_airport_type : ATP_TTDP_LARGE;
 		case 0xF2: return (this->truck_stops != nullptr) ? this->truck_stops->status.base() : 0;
 		case 0xF3: return (this->bus_stops != nullptr)   ? this->bus_stops->status.base()   : 0;
