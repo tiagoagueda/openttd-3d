@@ -860,9 +860,13 @@ public:
 	void AddPreviewModels()
 	{
 		if (this->model_pack == nullptr || this->model_pack->IsEmpty()) return;
-		if ((_thd.drawstyle & HT_DRAG_MASK) != HT_RECT || _thd.pos.x < 0 || _thd.pos.y < 0) return;
 		View3DPreview preview;
-		if (!GetRailToolPreview(preview) && !GetRoadToolPreview(preview)) return;
+		if (GetPowerToolPreview(preview) && preview.kind == View3DPreview::Kind::PowerLine) {
+			AddPowerLinePreview(preview.start, preview.end, *this->model_pack, this->vehicle_models);
+			return;
+		}
+		if ((_thd.drawstyle & HT_DRAG_MASK) != HT_RECT || _thd.pos.x < 0 || _thd.pos.y < 0) return;
+		if (preview.kind == View3DPreview::Kind::None && !GetRailToolPreview(preview) && !GetRoadToolPreview(preview)) return;
 
 		uint x0 = _thd.pos.x / TILE_SIZE, y0 = _thd.pos.y / TILE_SIZE;
 		uint w = std::max(1, _thd.size.x / static_cast<int>(TILE_SIZE)), h = std::max(1, _thd.size.y / static_cast<int>(TILE_SIZE));

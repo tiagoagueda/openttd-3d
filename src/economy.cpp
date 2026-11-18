@@ -63,6 +63,8 @@
 #include "table/strings.h"
 #include "table/pricebase.h"
 
+#include "power_func.h"
+
 #include "safeguards.h"
 
 
@@ -482,6 +484,7 @@ void ChangeOwnershipOfCompanyItems(Owner old_owner, Owner new_owner)
 		for (const auto tile : Map::Iterate()) {
 			ChangeTileOwner(tile, old_owner, new_owner);
 		}
+		ChangePowerCableOwner(old_owner, new_owner);
 
 		if (new_owner != INVALID_OWNER) {
 			/* Update all signals because there can be new segment that was owned by two companies
@@ -1157,9 +1160,11 @@ static void TriggerIndustryProduction(Industry *i)
 
 			for (auto itp = std::begin(i->produced); itp != std::end(i->produced); ++itp) {
 				if (!IsValidCargoType(itp->cargo)) continue;
-				itp->waiting = ClampTo<uint16_t>(itp->waiting + (ita->waiting * indspec->input_cargo_multiplier[ita - std::begin(i->accepted)][itp - std::begin(i->produced)] / 256));
+				uint made = ita->waiting * indspec->input_cargo_multiplier[ita - std::begin(i->accepted)][itp - std::begin(i->produced)] / 256;
+				itp->waiting = ClampTo<uint16_t>(itp->waiting + ApplyIndustryPowerBonus(i, made));
 			}
 
+			AddPowerPlantFuel(i, ita->cargo, ita->waiting);
 			ita->waiting = 0;
 		}
 	}

@@ -25,6 +25,9 @@
 
 #include "table/strings.h"
 
+#include "power_func.h"
+#include "power_map.h"
+
 #include "safeguards.h"
 
 /** Set of tiles. */
@@ -232,6 +235,11 @@ std::tuple<CommandCost, Money, TileIndex> CmdTerraformLand(DoCommandFlags flags,
 			if (z_N > z_min) tileh |= SLOPE_N;
 
 			if (pass == 0) {
+				/* Land may not rise into a power line. */
+				if (direction == 1 && HasPowerWire(t) && z_max + 1 > GetPowerWireHeight(t)) {
+					return { CommandCost(STR_ERROR_POWER_LINE_TOO_LOW), 0, t };
+				}
+
 				/* Check if bridge would take damage */
 				if (IsBridgeAbove(t)) {
 					int bridge_height = GetBridgeHeight(GetSouthernBridgeEnd(t));

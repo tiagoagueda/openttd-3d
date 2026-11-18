@@ -23,12 +23,17 @@ struct View3DPreview {
 		RoadDepot, ///< A road vehicle depot facing #direction.
 		RailStation, ///< Rail station tiles along #axis.
 		RoadStop, ///< Road stops; a bay facing #direction, or a drive-through stop along the axis of #direction.
+		PowerPylon, ///< A power line pylon.
+		PowerSubstation, ///< An overhead power substation.
+		PowerLine, ///< An overhead power line from #start to #end.
 	};
 	Kind kind = Kind::None; ///< What is about to be built.
 	DiagDirection direction = DiagDirection::NE; ///< Which way it faces.
 	Axis axis = Axis::X; ///< Along which axis it lies.
 	bool truck = false; ///< For road stops: a lorry stop rather than a bus stop.
 	bool drive_through = false; ///< For road stops: a drive-through stop rather than a bay.
+	TileIndex start = INVALID_TILE; ///< For power lines: where the line starts.
+	TileIndex end = INVALID_TILE; ///< For power lines: where the line ends.
 };
 
 /** A picture of something that can be built, for the buttons of construction windows. */
@@ -64,6 +69,7 @@ bool DrawView3DPicture(const View3DPicture &picture, int width, int height);
 
 bool GetRailToolPreview(View3DPreview &preview);
 bool GetRoadToolPreview(View3DPreview &preview);
+bool GetPowerToolPreview(View3DPreview &preview);
 
 void ShowView3DWindow(std::string_view backend = {});
 void UpdateView3DMainView();

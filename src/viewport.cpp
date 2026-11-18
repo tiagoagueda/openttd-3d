@@ -105,6 +105,8 @@
 #include "table/strings.h"
 #include "table/string_colours.h"
 
+#include "power_func.h"
+
 #include "safeguards.h"
 
 Point _tile_fract_coords;
@@ -1345,7 +1347,10 @@ static void ViewportAddLandscape()
 				_vd.last_foundation_child[FoundationPart::Halftile] = LAST_CHILD_NONE;
 
 				_tile_type_procs[tile_type]->draw_tile_proc(&_cur_ti);
-				if (_cur_ti.tile != INVALID_TILE) DrawTileSelection(&_cur_ti);
+				if (_cur_ti.tile != INVALID_TILE) {
+					DrawPowerWireAbove(&_cur_ti);
+					DrawTileSelection(&_cur_ti);
+				}
 			}
 		}
 	}
@@ -3955,6 +3960,7 @@ void CollectTileSprites(TileIndex tile, TileSprites &sprites)
 	std::tie(_cur_ti.tileh, _cur_ti.z) = GetTilePixelSlope(tile);
 	/* The selection is left out; the 3D view marks the tiles itself (GetTileMark()). */
 	_tile_type_procs[GetTileType(tile)]->draw_tile_proc(&_cur_ti);
+	DrawPowerWireAbove(&_cur_ti);
 
 	Point origin = RemapCoords(_cur_ti.x, _cur_ti.y, _cur_ti.z);
 	auto part = [&](SpriteID image, PaletteID pal, const SubSprite *sub, int x, int y) {

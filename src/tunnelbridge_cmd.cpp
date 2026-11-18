@@ -43,6 +43,9 @@
 #include "table/strings.h"
 #include "table/bridge_land.h"
 
+#include "power_func.h"
+#include "power_map.h"
+
 #include "safeguards.h"
 
 BridgeSpec _bridge[MAX_BRIDGES]; ///< The specification of all bridges.
@@ -317,6 +320,8 @@ CommandCost CmdBuildBridge(DoCommandFlags flags, TileIndex tile_end, TileIndex t
 		/* User cannot modify height of tiles with one coordinate equal to zero, they are always at the sea level, and you can't build bridge in the sea.
 		 * Furthermore, they are void tiles unless map is infinite water. If we don't return for them here, we will still fail as their slope is invalid. */
 		if (TileX(t) == 0 || TileY(t) == 0) return CommandCost(transport_type == TransportType::Water ? STR_ERROR_BRIDGE_THROUGH_MAP_BORDER : STR_ERROR_TOO_CLOSE_TO_EDGE_OF_MAP);
+		/* Bridges and power lines do not mix. */
+		if (HasPowerWire(t)) return CommandCost(STR_ERROR_MUST_REMOVE_POWER_LINE_FIRST);
 	}
 
 	/* type of bridge */
@@ -511,6 +516,9 @@ CommandCost CmdBuildBridge(DoCommandFlags flags, TileIndex tile_end, TileIndex t
 				/* Disallow crossing bridges for the time being */
 				return CommandCost(STR_ERROR_MUST_DEMOLISH_BRIDGE_FIRST);
 			}
+
+			/* Bridges and power lines do not mix. */
+			if (HasPowerWire(tile)) return CommandCost(STR_ERROR_MUST_REMOVE_POWER_LINE_FIRST);
 
 			ret = CheckBuildAbove(tile, flags, direction, z_start + 1);
 			if (ret.Failed()) return ret;

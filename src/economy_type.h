@@ -162,6 +162,15 @@ enum class Price : uint8_t {
 	InfrastructureWater, ///< Canals maintenance cost.
 	InfrastructureStation, ///< Stations maintenance cost.
 	InfrastructureAirport, ///< Airports maintenance cost.
+	BuildPowerPylon, ///< Price for building power line pylons.
+	BuildPowerWire, ///< Price for building overhead power wire, per tile.
+	BuildPowerSubstation, ///< Price for building power substations.
+	ClearPowerPylon, ///< Price for removing power line pylons.
+	ClearPowerWire, ///< Price for removing overhead power wire, per tile.
+	ClearPowerSubstation, ///< Price for removing power substations.
+	PowerSale, ///< Income for 10 MW of power delivered for one balancing step.
+	BuildPowerCable, ///< Price for building underground power cable, per tile.
+	ClearPowerCable, ///< Price for removing underground power cable, per tile.
 	End, ///< Price base end marker.
 	Invalid = 0xFF ///< Invalid base price.
 };
@@ -184,6 +193,7 @@ enum class ExpensesType : uint8_t {
 	ShipRevenue, ///< Revenue from ships.
 	LoanInterest, ///< Interest payments over the loan.
 	Other, ///< Other expenses.
+	EnergySales, ///< Income from power delivered over power lines.
 	End, ///< End marker.
 	Begin = ExpensesType::Construction, ///< Begin marker.
 	Invalid = 0xFF, ///< Invalid expense type.

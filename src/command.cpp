@@ -37,6 +37,7 @@
 #include "news_cmd.h"
 #include "object_cmd.h"
 #include "order_cmd.h"
+#include "power_cmd.h"
 #include "rail_cmd.h"
 #include "road_cmd.h"
 #include "roadveh_cmd.h"

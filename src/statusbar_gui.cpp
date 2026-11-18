@@ -28,6 +28,7 @@
 #include "timer/timer.h"
 #include "timer/timer_game_calendar.h"
 #include "timer/timer_window.h"
+#include "weather.h"
 
 #include "widgets/statusbar_widget.h"
 
@@ -87,6 +88,11 @@ struct StatusBarWindow : Window {
 				d = GetStringBoundingBox(GetString(STR_JUST_DATE_LONG, GetParamMaxValue(TimerGameCalendar::DateAtStartOfYear(CalendarTime::MAX_YEAR).base())));
 				break;
 
+			case WID_S_WEATHER:
+				d = GetStringBoundingBox(GetString(STR_STATUSBAR_TIME_WEATHER, std::string{"00:00"}, STR_WEATHER_THUNDERSTORM));
+				d = maxdim(d, GetStringBoundingBox(GetString(STR_STATUSBAR_TIME_WEATHER, std::string{"00:00"}, STR_WEATHER_HEAVY_SNOW)));
+				break;
+
 			case WID_S_RIGHT: {
 				int64_t max_money = UINT32_MAX;
 				for (const Company *c : Company::Iterate()) max_money = std::max<int64_t>(c->money, max_money);
@@ -112,6 +118,14 @@ struct StatusBarWindow : Window {
 				/* Draw the date */
 				DrawString(tr, GetString(STR_JUST_DATE_LONG, TimerGameCalendar::date), TextColour::White, AlignmentH::Centre);
 				break;
+
+			case WID_S_WEATHER: {
+				const GameWeather &weather = GetGameWeather();
+				std::string time = weather.has_day ? fmt::format("{:02d}:{:02d}", weather.hour / 256, weather.hour % 256 * 60 / 256) : std::string{};
+				TextColour colour = GetWeatherVehicleSpeedFactor() < 240 ? TextColour::Orange : TextColour::White;
+				DrawString(tr, GetString(STR_STATUSBAR_TIME_WEATHER, time, GetWeatherName(weather)), colour, AlignmentH::Centre);
+				break;
+			}
 
 			case WID_S_RIGHT: {
 				if (_local_company == COMPANY_SPECTATOR) {
@@ -208,11 +222,17 @@ struct StatusBarWindow : Window {
 	const IntervalTimer<TimerGameCalendar> daily_interval = {{TimerGameCalendar::Trigger::Day, TimerGameCalendar::Priority::None}, [this](auto) {
 		this->SetWidgetDirty(WID_S_LEFT);
 	}};
+
+	/** The clock and the weather change during the day. */
+	const IntervalTimer<TimerWindow> weather_interval = {std::chrono::milliseconds(500), [this](auto) {
+		this->SetWidgetDirty(WID_S_WEATHER);
+	}};
 };
 
 static constexpr std::initializer_list<NWidgetPart> _nested_main_status_widgets = {
 	NWidget(NWID_HORIZONTAL),
 		NWidget(WWT_PANEL, Colours::Grey, WID_S_LEFT), SetMinimalSize(140, 12), EndContainer(),
+		NWidget(WWT_PANEL, Colours::Grey, WID_S_WEATHER), SetMinimalSize(80, 12), SetToolTip(STR_STATUSBAR_TOOLTIP_WEATHER), EndContainer(),
 		NWidget(WWT_PUSHBTN, Colours::Grey, WID_S_MIDDLE), SetMinimalSize(40, 12), SetToolTip(STR_STATUSBAR_TOOLTIP_SHOW_LAST_NEWS), SetResize(1, 0),
 		NWidget(WWT_PUSHBTN, Colours::Grey, WID_S_RIGHT), SetMinimalSize(140, 12),
 	EndContainer(),

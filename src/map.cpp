@@ -13,6 +13,8 @@
 #include "error_func.h"
 #include "pathfinder/water_regions.h"
 
+#include "power_func.h"
+
 #include "safeguards.h"
 
 /* static */ uint Map::log_x;     ///< 2^_map_log_x == _map_size_x
@@ -57,6 +59,7 @@
 	Tile::extended_tiles = std::make_unique<Tile::TileExtended[]>(Map::size);
 
 	AllocateWaterRegions();
+	AllocatePowerLayer();
 }
 
 /* static */ void Map::CountLandTiles()

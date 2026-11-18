@@ -36,6 +36,8 @@
 #include "ship_cmd.h"
 #include "script/api/script_event_types.hpp"
 
+#include "weather.h"
+
 #include "table/strings.h"
 
 #include <unordered_set>
@@ -424,6 +426,9 @@ static uint ShipAccelerate(Vehicle *v)
 	uint speed;
 	speed = std::min<uint>(v->cur_speed + v->acceleration, v->vcache.cached_max_speed);
 	speed = std::min<uint>(speed, v->current_order.GetMaxSpeed() * 2);
+	/* Heavy rain, thunderstorms and snowstorms slow ships down. */
+	uint weather_factor = GetWeatherVehicleSpeedFactor();
+	if (weather_factor < 256 && speed > 1) speed = std::max<uint>(std::min<uint>(speed, v->vcache.cached_max_speed * weather_factor / 256), 1);
 
 	/* updates statusbar only if speed have changed to save CPU time */
 	if (speed != v->cur_speed) {

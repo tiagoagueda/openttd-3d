@@ -50,6 +50,8 @@
 #include "../station_map.h"
 #include "../town.h"
 #include "../town_map.h"
+#include "../power_map.h"
+#include "../power_func.h"
 #include "../safeguards.h"
 
 /** Simple RGB colour with floating point channels in the range 0..255. */
@@ -1535,6 +1537,272 @@ static void AddStationTrack(TileIndex tile, const ModelPack &pack, std::vector<M
 	models.insert(models.end(), scratch.models.begin(), scratch.models.end());
 }
 
+/* Power lines. The numbers match those of OpenGFX3D's models_power.py. */
+static constexpr float POWER_WIRE_Z = POWER_WIRE_HEIGHT * HEIGHT_LEVEL_SIZE; ///< Height of the conductors above the foot of a pylon.
+static constexpr float POWER_PHASE = 2.6f; ///< How far apart the three conductors hang, across the line.
+static constexpr float POWER_EARTH_Z = POWER_WIRE_Z + 2.6f; ///< Height of the earth wire at the top of a pylon.
+
+/**
+ * Get the way a direction points on the map, as a vector of length 1.
+ * @param dir The direction.
+ * @return The vector, x and y.
+ */
+static std::array<float, 2> GetPowerDirVector(Direction dir)
+{
+	TileIndexDiffC d = TileIndexDiffCByDir(dir);
+	float length = std::sqrt(static_cast<float>(d.x * d.x + d.y * d.y));
+	return {d.x / length, d.y / length};
+}
+
+/**
+ * Get the direction of a step of one tile.
+ * @param dx Step along x, -1 to 1.
+ * @param dy Step along y, -1 to 1.
+ * @return The direction.
+ */
+static Direction GetPowerDirVectorDirection(int dx, int dy)
+{
+	for (Direction dir : EnumRange(Direction::End)) {
+		TileIndexDiffC d = TileIndexDiffCByDir(dir);
+		if (d.x == dx && d.y == dy) return dir;
+	}
+	return Direction::NE;
+}
+
+/**
+ * Which way the line runs through a pylon or substation: the x axis of its model.
+ * A pylon on a bend turns halfway, so its cross arm lies along the bisector of the bend.
+ * @param tile The power tile.
+ * @return A vector of length 1.
+ */
+static std::array<float, 2> GetPowerTileHeading(Tile tile)
+{
+	std::array<float, 2> first{1, 0}, second{};
+	uint count = 0;
+	for (Direction dir : EnumRange(Direction::End)) {
+		if (GetPowerSpan(tile, dir) == 0) continue;
+		if (count == 0) first = GetPowerDirVector(dir);
+		if (count == 1) second = GetPowerDirVector(dir);
+		count++;
+	}
+	if (count != 2) return first;
+	float x = first[0] - second[0], y = first[1] - second[1];
+	float length = std::sqrt(x * x + y * y);
+	if (length < 0.01f) return first;
+	return {x / length, y / length};
+}
+
+/**
+ * Where a power tile stands: the middle of the tile at the height of its foot.
+ * @param tile The power tile.
+ * @return The point in world units.
+ */
+static std::array<float, 3> GetPowerTileFoot(TileIndex tile)
+{
+	return {(TileX(tile) + 0.5f) * TILE_SIZE, (TileY(tile) + 0.5f) * TILE_SIZE, GetTileMaxPixelZ(tile) * WORLD_Z_SCALE};
+}
+
+/**
+ * Add a model, turned to point its x axis along a heading.
+ * @param entry The model.
+ * @param at Where its origin goes.
+ * @param heading Way its x axis points, of length 1.
+ * @param tint Its tint.
+ * @param models The models to add to.
+ */
+static void PlaceModelHeading(const ModelPack::Entry &entry, const std::array<float, 3> &at, const std::array<float, 2> &heading, const std::array<float, 4> &tint, std::vector<ModelInstance> &models)
+{
+	float s = entry.scale;
+	ModelInstance &instance = models.emplace_back();
+	instance.model = entry.model;
+	instance.transform.m = {
+		heading[0] * s, heading[1] * s, 0, 0,
+		-heading[1] * s, heading[0] * s, 0, 0,
+		0, 0, s, 0,
+		at[0], at[1], at[2], 1,
+	};
+	instance.tint = tint;
+}
+
+/**
+ * Add a model that is 16 units long along x, stretched from one point to another, keeping it upright.
+ * @param entry The model.
+ * @param a Where it starts.
+ * @param b Where it ends.
+ * @param models The models to add to.
+ */
+static void AddStretchedModel(const ModelPack::Entry &entry, const std::array<float, 3> &a, const std::array<float, 3> &b, std::vector<ModelInstance> &models)
+{
+	float dx = b[0] - a[0], dy = b[1] - a[1], dz = b[2] - a[2];
+	float length = std::sqrt(dx * dx + dy * dy);
+	if (length == 0) return;
+	float ux = dx / length, uy = dy / length;
+	float s = entry.scale;
+	ModelInstance &instance = models.emplace_back();
+	instance.model = entry.model;
+	instance.transform.m = {
+		dx / TILE_SIZE, dy / TILE_SIZE, dz / TILE_SIZE, 0,
+		-uy * s, ux * s, 0, 0,
+		0, 0, s, 0,
+		(a[0] + b[0]) * 0.5f, (a[1] + b[1]) * 0.5f, (a[2] + b[2]) * 0.5f, 1,
+	};
+	instance.tint = {1, 1, 1, 1};
+}
+
+/**
+ * Add a wire hanging from one point to another, sagging in the middle.
+ * @param entry The model of a piece of wire.
+ * @param a Where it starts.
+ * @param b Where it ends.
+ * @param tint Its tint.
+ * @param models The models to add to.
+ */
+static void AddSaggingWire(const ModelPack::Entry &entry, const std::array<float, 3> &a, const std::array<float, 3> &b, const std::array<float, 4> &tint, std::vector<ModelInstance> &models)
+{
+	static constexpr int PIECES = 6;
+	float span = std::hypot(b[0] - a[0], b[1] - a[1]);
+	float sag = std::min(1.6f, span * 0.035f);
+	auto point = [&](float t) -> std::array<float, 3> {
+		return {a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t - 4 * sag * t * (1 - t)};
+	};
+	for (int i = 0; i < PIECES; i++) {
+		AddStretchedModel(entry, point(static_cast<float>(i) / PIECES), point(static_cast<float>(i + 1) / PIECES), models);
+		models.back().tint = tint;
+	}
+}
+
+/**
+ * Add the wires of one span between two power tiles: three conductors, and an earth wire between two pylons.
+ * @param from One end.
+ * @param to The other end.
+ * @param pack The package of 3D models.
+ * @param tint Tint of the wires.
+ * @param models The models to add to.
+ */
+static void AddPowerSpanWires(TileIndex from, TileIndex to, const ModelPack &pack, const std::array<float, 4> &tint, std::vector<ModelInstance> &models)
+{
+	const ModelPack::Entry *wire = pack.Find(ModelKind::Power, 0, 4);
+	if (wire == nullptr) return;
+	std::array<float, 3> a = GetPowerTileFoot(from), b = GetPowerTileFoot(to);
+	float dx = b[0] - a[0], dy = b[1] - a[1];
+	float length = std::hypot(dx, dy);
+	if (length == 0) return;
+	/* Across the span; each end turns its cross arm to match, so the wires do not cross over. */
+	std::array<float, 2> across{-dy / length, dx / length};
+	auto arm = [&](TileIndex tile) -> std::array<float, 2> {
+		std::array<float, 2> heading = IsPowerTile(tile) ? GetPowerTileHeading(Tile(tile)) : std::array<float, 2>{dx / length, dy / length};
+		std::array<float, 2> side{-heading[1], heading[0]};
+		if (side[0] * across[0] + side[1] * across[1] < 0) side = {-side[0], -side[1]};
+		return side;
+	};
+	std::array<float, 2> arm_a = arm(from), arm_b = arm(to);
+	for (int k = -1; k <= 1; k++) {
+		AddSaggingWire(*wire,
+				{a[0] + arm_a[0] * k * POWER_PHASE, a[1] + arm_a[1] * k * POWER_PHASE, a[2] + POWER_WIRE_Z},
+				{b[0] + arm_b[0] * k * POWER_PHASE, b[1] + arm_b[1] * k * POWER_PHASE, b[2] + POWER_WIRE_Z}, tint, models);
+	}
+	auto is_pylon = [](TileIndex tile) { return !IsPowerTile(tile) || !IsPowerSubstation(tile); };
+	if (is_pylon(from) && is_pylon(to)) {
+		AddSaggingWire(*wire, {a[0], a[1], a[2] + POWER_EARTH_Z}, {b[0], b[1], b[2] + POWER_EARTH_Z}, tint, models);
+	}
+}
+
+/**
+ * Get the model of what stands on a power tile.
+ * @param kind What stands there.
+ * @param pack The package of 3D models.
+ * @return The model, or \c nullptr.
+ */
+static const ModelPack::Entry *FindPowerModel(PowerTileKind kind, const ModelPack &pack)
+{
+	switch (kind) {
+		case PowerTileKind::Pylon: return pack.Find(ModelKind::Power, 0, 0);
+		case PowerTileKind::OverheadSubstation: return pack.Find(ModelKind::Power, 0, 1);
+		case PowerTileKind::UndergroundSubstation: return pack.Find(ModelKind::Power, 0, 2);
+		case PowerTileKind::TransitionPylon: return pack.Find(ModelKind::Power, 0, 3);
+		default: return nullptr;
+	}
+}
+
+/**
+ * Add the model of a pylon or substation, and the spans of wire that leave it towards the north half of the compass;
+ * the other spans are added by the tile at their other end.
+ * @param tile The power tile.
+ * @param pack The package of 3D models.
+ * @param models The models to add to.
+ * @return Whether the package has a model for it.
+ */
+static bool AddPowerModels(TileIndex tile, const ModelPack &pack, std::vector<ModelInstance> &models)
+{
+	const ModelPack::Entry *entry = FindPowerModel(GetPowerTileKind(tile), pack);
+	if (entry == nullptr || pack.Find(ModelKind::Power, 0, 4) == nullptr) return false;
+	static const std::array<float, 4> WHITE{1, 1, 1, 1};
+	PlaceModelHeading(*entry, GetPowerTileFoot(tile), GetPowerTileHeading(Tile(tile)), WHITE, models);
+	for (Direction dir : {Direction::N, Direction::NE, Direction::E, Direction::SE}) {
+		uint span = GetPowerSpan(tile, dir);
+		if (span == 0) continue;
+		TileIndexDiffC d = TileIndexDiffCByDir(dir);
+		TileIndex other = TileAddWrap(tile, d.x * static_cast<int>(span), d.y * static_cast<int>(span));
+		if (other == INVALID_TILE || !IsPowerTile(other)) continue;
+		AddPowerSpanWires(tile, other, pack, WHITE, models);
+	}
+	return true;
+}
+
+/**
+ * Add what shows of an underground cable under a tile: a marker post on open land, and with the power network view on,
+ * the cable itself, towards the north half of the compass; the other pieces are added by the tile at their other end.
+ * @param tile The tile.
+ * @param pack The package of 3D models.
+ * @param models The models to add to.
+ */
+static void AddPowerCableModels(TileIndex tile, const ModelPack &pack, std::vector<ModelInstance> &models)
+{
+	uint8_t dirs = GetPowerCableDirs(tile);
+	if (dirs == 0) return;
+	static const std::array<float, 4> WHITE{1, 1, 1, 1};
+	auto centre = [](TileIndex t) -> std::array<float, 3> {
+		int x = TileX(t) * TILE_SIZE + TILE_SIZE / 2, y = TileY(t) * TILE_SIZE + TILE_SIZE / 2;
+		return {static_cast<float>(x), static_cast<float>(y), GetSlopePixelZ(x, y) * WORLD_Z_SCALE};
+	};
+	std::array<float, 3> here = centre(tile);
+	if (IsTileType(tile, TileType::Clear) || IsTileType(tile, TileType::Trees)) {
+		const ModelPack::Entry *marker = pack.Find(ModelKind::Power, 0, 5);
+		if (marker != nullptr) PlaceModelHeading(*marker, here, {1, 0}, WHITE, models);
+	}
+	if (!_power_network_view) return;
+	const ModelPack::Entry *cable = pack.Find(ModelKind::Power, 0, 6);
+	if (cable == nullptr) return;
+	for (Direction dir : {Direction::N, Direction::NE, Direction::E, Direction::SE}) {
+		if (!HasBit(dirs, to_underlying(dir))) continue;
+		TileIndexDiffC d = TileIndexDiffCByDir(dir);
+		TileIndex other = TileAddWrap(tile, d.x, d.y);
+		if (other == INVALID_TILE) continue;
+		std::array<float, 3> there = centre(other);
+		AddStretchedModel(*cable, {here[0], here[1], here[2] + 0.3f}, {there[0], there[1], there[2] + 0.3f}, models);
+	}
+}
+
+/**
+ * Whether the package draws underground cables with models, so the 2D cable sprites must not be drawn.
+ * @param pack The package of 3D models.
+ * @return True if it has models for cable markers and cables.
+ */
+static bool HasPowerCableModels(const ModelPack &pack)
+{
+	return pack.Find(ModelKind::Power, 0, 5) != nullptr && pack.Find(ModelKind::Power, 0, 6) != nullptr;
+}
+
+/**
+ * Whether the package draws overhead power lines with models, so the 2D wire sprites must not be drawn.
+ * @param pack The package of 3D models.
+ * @return True if it has models for pylons and wires.
+ */
+static bool HasPowerModels(const ModelPack &pack)
+{
+	return pack.Find(ModelKind::Power, 0, 0) != nullptr && pack.Find(ModelKind::Power, 0, 4) != nullptr;
+}
+
 /**
  * Find whether OpenGFX3D has a model for the building on a tile, and add the model when this tile is where it stands.
  * @param tile The tile.
@@ -1711,6 +1979,9 @@ static bool AddTileModel(TileIndex tile, const ModelPack &pack, std::vector<Mode
 			return true;
 		}
 
+		case TileType::Power:
+			return AddPowerModels(tile, pack, models);
+
 		default:
 			return false;
 	}
@@ -1763,6 +2034,14 @@ void AddPreviewModel(const View3DPreview &preview, TileIndex tile, uint track, c
 			entry = pack.Find(ModelKind::RoadStop, 0, (preview.drive_through ? 2 : 0) + (preview.truck ? 1 : 0));
 			if (preview.drive_through) front = preview.axis == Axis::X ? DiagDirection::SW : DiagDirection::NW;
 			break;
+		case View3DPreview::Kind::PowerPylon:
+		case View3DPreview::Kind::PowerSubstation: {
+			entry = FindPowerModel(preview.kind == View3DPreview::Kind::PowerPylon ? PowerTileKind::Pylon : PowerTileKind::OverheadSubstation, pack);
+			if (entry == nullptr) return;
+			std::array<float, 4> tint{1, 1, 1, 0.55f};
+			PlaceModelHeading(*entry, GetPowerTileFoot(tile), {1, 0}, tint, models);
+			return;
+		}
 		default:
 			break;
 	}
@@ -1770,6 +2049,47 @@ void AddPreviewModel(const View3DPreview &preview, TileIndex tile, uint track, c
 	std::array<float, 4> tint = GetOwnerTint(_local_company);
 	tint[3] = 0.55f;
 	PlaceModel(*entry, tile, 1, 1, front, tint, models);
+}
+
+/**
+ * Add see-through pylons and wires along an overhead power line that is being dragged.
+ * Pylons go as far apart as allowed, and existing pylons on the way are used, as CmdBuildPowerLine() does;
+ * whether the land allows them is only known once the line is built.
+ * @param start Where the line starts.
+ * @param end Where it ends, on a straight or diagonal line from the start.
+ * @param pack The package of 3D models.
+ * @param models The models to add to.
+ */
+void AddPowerLinePreview(TileIndex start, TileIndex end, const ModelPack &pack, std::vector<ModelInstance> &models)
+{
+	const ModelPack::Entry *pylon = pack.Find(ModelKind::Power, 0, 0);
+	if (pylon == nullptr || !HasPowerModels(pack)) return;
+	int dx = static_cast<int>(TileX(end)) - static_cast<int>(TileX(start));
+	int dy = static_cast<int>(TileY(end)) - static_cast<int>(TileY(start));
+	int length = std::max(std::abs(dx), std::abs(dy));
+	if (length > 256) return;
+	int sx = Clamp(dx, -1, 1), sy = Clamp(dy, -1, 1);
+	auto tile_at = [&](int i) { return TileXY(TileX(start) + sx * i, TileY(start) + sy * i); };
+
+	static const std::array<float, 4> GHOST{1, 1, 1, 0.55f};
+	auto add_pylon = [&](TileIndex t) {
+		if (!IsPowerTile(t)) PlaceModelHeading(*pylon, GetPowerTileFoot(t), GetPowerDirVector(GetPowerDirVectorDirection(sx, sy)), GHOST, models);
+	};
+	add_pylon(start);
+	int cur = 0;
+	while (cur < length) {
+		int step = std::min<int>(POWER_MAX_SPAN, length - cur);
+		for (int i = 1; i < step; i++) {
+			if (IsPowerTile(tile_at(cur + i))) {
+				step = i;
+				break;
+			}
+		}
+		TileIndex a = tile_at(cur), b = tile_at(cur + step);
+		add_pylon(b);
+		AddPowerSpanWires(a, b, pack, GHOST, models);
+		cur += step;
+	}
 }
 
 /**
@@ -2118,11 +2438,18 @@ static TileGround AddTileSprites(uint x, uint y, const std::array<uint8_t, 4> &h
 	static std::vector<SpritePart> group_parts;
 
 	TileIndex tile = TileXY(x, y);
+	/* Overhead power wires with models are added by the pylons at their ends, not by the tiles below them. */
+	_power_wire_sprites = ground_only || pack == nullptr || pack->IsEmpty() || !HasPowerModels(*pack);
+	bool cable_models = !ground_only && pack != nullptr && !pack->IsEmpty() && HasPowerCableModels(*pack);
+	_power_cable_sprites = ground_only || !cable_models;
 	CollectTileSprites(tile, sprites);
+	_power_wire_sprites = true;
+	_power_cable_sprites = true;
 
 	/* A building with a 3D model keeps its ground and foundation, but not its other sprites. */
 	_tile_parts = &mesh.parts;
 	bool replaced = !ground_only && pack != nullptr && !pack->IsEmpty() && AddTileModel(tile, *pack, mesh.models);
+	if (cable_models) AddPowerCableModels(tile, *pack, mesh.models);
 	_tile_parts = nullptr;
 
 	/* Signals with a 3D model replace the sprites the 2D game draws for them. */
@@ -2392,6 +2719,8 @@ void BuildTerrainChunkMesh(uint chunk_x, uint chunk_y, GroundTextures &textures,
 				ground = AddTileSprites(x, y, {static_cast<uint8_t>(hn - low), static_cast<uint8_t>(hw - low), static_cast<uint8_t>(he - low), static_cast<uint8_t>(hs - low)}, textures, atlas, pack, mesh);
 			} else {
 				ground = GetTileGround(tile, x, y, pack_ground);
+				/* Marker posts and the network view of underground cables under open land. */
+				if (pack != nullptr && !pack->IsEmpty() && HasPowerCable(tile) && HasPowerCableModels(*pack)) AddPowerCableModels(tile, *pack, mesh.models);
 			}
 			if (ground.shaded) light = AMBIENT + DIFFUSE * SUN_Z;
 			/* A slight checkerboard keeps individual tiles recognisable where there is no texture. */

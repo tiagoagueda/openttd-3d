@@ -906,7 +906,8 @@ static bool LoadOldCompanyYearly(LoadgameState &ls, int num)
 {
 	Company *c = Company::Get(_current_company_id);
 
-	for (ExpensesType i : EnumRange(ExpensesType::End)) {
+	/* TTD had no energy sales; they are the last kind of expenses. */
+	for (ExpensesType i : EnumRange(ExpensesType::EnergySales)) {
 		if (_savegame_type == SavegameType::TTO && i == ExpensesType::Property) {
 			_old_yearly = 0; // property maintenance
 		} else {

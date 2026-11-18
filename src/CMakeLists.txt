@@ -363,6 +363,12 @@ add_files(
     order_cmd.cpp
     order_cmd.h
     order_func.h
+    power_cmd.cpp
+    power_cmd.h
+    power_economy.cpp
+    power_func.h
+    power_gui.cpp
+    power_map.h
     order_gui.cpp
     order_type.h
     osk_gui.cpp
@@ -607,6 +613,8 @@ add_files(
     waypoint_cmd.h
     waypoint_func.h
     waypoint_gui.cpp
+    weather.cpp
+    weather.h
     widget.cpp
     widget_type.h
     window.cpp

@@ -132,6 +132,10 @@ enum ViewportDragDropSelectionProcess : uint8_t {
 	DDSP_BUILD_BRIDGE,         ///< Bridge placement
 	DDSP_BUILD_OBJECT,         ///< Build an object
 	DDSP_PLACE_HOUSE,          ///< Place a house
+	DDSP_BUILD_POWER_LINE,     ///< Build an overhead power line
+	DDSP_REMOVE_POWER_LINE,    ///< Remove an overhead power line
+	DDSP_BUILD_POWER_CABLE,    ///< Build an underground power cable
+	DDSP_REMOVE_POWER_CABLE,   ///< Remove an underground power cable
 
 	/* Rail specific actions */
 	DDSP_PLACE_RAIL,           ///< Rail placement

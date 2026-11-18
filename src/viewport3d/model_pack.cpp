@@ -380,7 +380,7 @@ ModelPack::ModelPack()
 				{"dock", ModelKind::Dock}, {"buoy", ModelKind::Buoy}, {"rail_depot", ModelKind::RailDepot},
 				{"road_depot", ModelKind::RoadDepot}, {"ship_depot", ModelKind::ShipDepot},
 				{"tree", ModelKind::Tree}, {"field", ModelKind::Field}, {"rough", ModelKind::Rough}, {"rocks", ModelKind::Rocks}, {"effect", ModelKind::Effect}, {"track", ModelKind::Track}, {"signal", ModelKind::Signal}, {"fence", ModelKind::Fence}, {"catenary", ModelKind::Catenary}, {"bridge", ModelKind::Bridge}, {"tunnel", ModelKind::Tunnel}, {"crossing", ModelKind::Crossing}, {"roadside", ModelKind::Roadside},
-				{"construction", ModelKind::Construction}, {"waypoint", ModelKind::Waypoint}, {"lock", ModelKind::Lock}, {"disaster", ModelKind::Disaster}, {"interface", ModelKind::Interface},
+				{"construction", ModelKind::Construction}, {"waypoint", ModelKind::Waypoint}, {"lock", ModelKind::Lock}, {"disaster", ModelKind::Disaster}, {"interface", ModelKind::Interface}, {"power", ModelKind::Power},
 			}, loaded);
 		}
 

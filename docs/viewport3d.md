@@ -158,7 +158,7 @@ The sky is one triangle behind everything (`vs_sky`, `fs_sky`), pale at the hori
 
 ### Seasons and weather
 
-The setting "Seasons and weather in the 3D view" (`gui.view3d_weather`, Interface > Viewports) has four values: off, seasons only, seasons and some weather (the default), seasons and a lot of weather.
+The weather is game state (`src/weather.cpp`, see "Weather and time in the game" in `docs/power_lines.md`); the 3D view only draws it. The setting "Seasons and weather in the 3D view" (`gui.view3d_weather`, Interface > Viewports) has three values: off, seasons only, seasons and the weather of the game (the default). How much weather there is, is the game setting `economy.weather`.
 Both are only looks. Nothing in the game changes, nothing is saved, and in multiplayer every player can have a setting of their own.
 
 `GetWeather3D()` in `weather3d.cpp` says what the image looks like at this moment (`Weather3D`): how much cloud, rain, snowfall and fog there is, how wet the ground is, how much snow lies on it, and how far the year is for leaves and grass.
@@ -225,7 +225,7 @@ The existing game is touched in a few small places:
 
 ## Day and night
 
-The game has no clock and its days last about two seconds, so the 3D view keeps a clock of its own: a day and a night together last a number of minutes of play, the setting "Day and night in the 3D view" (Interface, Viewports; `view3d_day_length`, 30 by default, 0 for the fixed light of the 2D graphics). The clock runs on game ticks, so it stands still while the game is paused and runs fast with fast forward. A new game starts at nine in the morning. The console command `view3d_time <hour>` holds the view at an hour (handy for screenshots), `view3d_time auto` lets go again, and `view3d_time` alone tells the time. It is only for looks: nothing in the game depends on it.
+The game keeps a clock of the hour of the day (`src/weather.cpp`): a day and a night together last a number of minutes of play, the game setting `economy.day_length` (Environment > Weather and time; 30 by default, 0 for no day and night). The 3D view draws it unless the player turns off "Show the night in the 3D view" (`gui.view3d_night`). The clock runs on game ticks, so it stands still while the game is paused and runs fast with fast forward. A new game starts at nine in the morning. The console command `view3d_time <hour>` holds the view at an hour (handy for screenshots), `view3d_time auto` lets go again, and `view3d_time` alone tells the time. Holding the view at an hour is only for looks; the clock of the game goes on.
 
 `lighting3d.cpp` turns the hour into a `Lighting3D`: the direction and colour of the light that casts shadows (the sun from six to six, rising in the east and standing in the south at noon, then the moon), the light from all around, the colours of the sky and the haze, how well the stars show, how much lamps glow and which share of the windows is lit. The window hands it to the renderer with `SetLighting()` and asks for a new image when the hour has moved on by a quarter of a minute of the day.
 

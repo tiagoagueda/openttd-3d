@@ -529,6 +529,7 @@ STR_LANDSCAPING_MENU_LANDSCAPING                                :Landscaping
 STR_LANDSCAPING_MENU_PLANT_TREES                                :Plant trees
 STR_LANDSCAPING_MENU_PLACE_SIGN                                 :Place sign
 STR_LANDSCAPING_MENU_PLACE_OBJECT                               :Place object
+STR_LANDSCAPING_MENU_POWER_LINES                                :Power lines
 
 # Music menu
 STR_TOOLBAR_SOUND_MUSIC                                         :Sound/music
@@ -868,6 +869,20 @@ STR_STATUSBAR_SAVING_GAME                                       :{RED}*  *  SAVI
 
 STR_STATUSBAR_SPECTATOR                                         :{WHITE}(spectator)
 STR_STATUSBAR_INFINITE_MONEY                                    :{WHITE}(infinite money)
+STR_STATUSBAR_TIME_WEATHER                                      :{RAW_STRING} {STRING}
+STR_STATUSBAR_TOOLTIP_WEATHER                                   :{BLACK}The hour of the day and the weather. Heavy rain, thunderstorms and snowstorms slow vehicles down and wear them faster (shown in orange); clouds, fog, snow and the night lower the output of solar plants, and wind farms need wind
+
+STR_WEATHER_CLEAR                                               :Clear
+STR_WEATHER_SUNNY                                               :Sunny
+STR_WEATHER_CLOUDY                                              :Cloudy
+STR_WEATHER_LIGHT_RAIN                                          :Light rain
+STR_WEATHER_RAIN                                                :Rain
+STR_WEATHER_HEAVY_RAIN                                          :Heavy rain
+STR_WEATHER_THUNDERSTORM                                        :Thunderstorm
+STR_WEATHER_LIGHT_SNOW                                          :Light snow
+STR_WEATHER_SNOW                                                :Snow
+STR_WEATHER_HEAVY_SNOW                                          :Snowstorm
+STR_WEATHER_FOG                                                 :Fog
 
 # News message history
 STR_MESSAGE_HISTORY                                             :{WHITE}Message History
@@ -1740,18 +1755,14 @@ STR_CONFIG_SETTING_VIEW3D_MAIN                                  :Show the map in
 STR_CONFIG_SETTING_VIEW3D_INTERFACE                             :3D-styled windows and buttons: {STRING2}
 STR_CONFIG_SETTING_VIEW3D_INTERFACE_HELPTEXT                    :While the map is shown in 3D, draw windows, buttons and the toolbar shaded like real raised and pressed buttons. Needs a 32bpp blitter
 STR_CONFIG_SETTING_VIEW3D_WEATHER                               :Seasons and weather in the 3D view: {STRING2}
-STR_CONFIG_SETTING_VIEW3D_WEATHER_HELPTEXT                      :Let the 3D view follow the time of the year: fresh green in spring, autumn colours, bare trees and snow in winter, and a dry season in the tropics. With weather there are also clouds, rain, thunderstorms, snowfall and fog. It only changes how the map looks, not the game
-###length 4
+STR_CONFIG_SETTING_VIEW3D_WEATHER_HELPTEXT                      :Let the 3D view show the time of the year: fresh green in spring, autumn colours, bare trees and snow in winter, and a dry season in the tropics; and the weather of the game: clouds, rain, thunderstorms, snowfall and fog. How much weather there is, is a game setting. This changes only what you see
+###length 3
 STR_CONFIG_SETTING_VIEW3D_WEATHER_OFF                           :Off
 STR_CONFIG_SETTING_VIEW3D_WEATHER_SEASONS                       :Seasons only
-STR_CONFIG_SETTING_VIEW3D_WEATHER_OCCASIONAL                    :Seasons and some weather
-STR_CONFIG_SETTING_VIEW3D_WEATHER_FREQUENT                      :Seasons and a lot of weather
+STR_CONFIG_SETTING_VIEW3D_WEATHER_WEATHER                       :Seasons and weather
 
-STR_CONFIG_SETTING_VIEW3D_DAY_LENGTH                            :Day and night in the 3D view: {STRING2}
-STR_CONFIG_SETTING_VIEW3D_DAY_LENGTH_HELPTEXT                   :How many minutes of play a day and a night last in the 3D view. The sun moves across the sky, and at night the moon, street lamps, headlights and lit windows give light. This is only for looks and has nothing to do with the date of the game
-STR_CONFIG_SETTING_VIEW3D_DAY_LENGTH_VALUE                      :{COMMA} minute{P 0 "" s}
-###setting-zero-is-special
-STR_CONFIG_SETTING_VIEW3D_DAY_LENGTH_OFF                        :Off (always day)
+STR_CONFIG_SETTING_VIEW3D_NIGHT                                 :Show the night in the 3D view: {STRING2}
+STR_CONFIG_SETTING_VIEW3D_NIGHT_HELPTEXT                        :Draw the time of day of the game in the 3D view: the sun moves across the sky, and at night the moon, street lamps, headlights and lit windows give light. Off keeps the view in daylight; the clock of the game goes on. How long a day lasts is a game setting
 STR_CONFIG_SETTING_VIEW3D_MAIN_HELPTEXT                         :Draw the main view of the map in 3D. Drag with the right mouse button to move, hold Ctrl while dragging to rotate and tilt, and use the mouse wheel to zoom. Extra viewports stay in 2D
 
 STR_CONFIG_SETTING_SMOOTH_SCROLLING                             :Smooth viewport scrolling: {STRING2}
@@ -2157,6 +2168,26 @@ STR_CONFIG_SETTING_TOWN_GROWTH_NORMAL                           :Normal
 STR_CONFIG_SETTING_TOWN_GROWTH_FAST                             :Fast
 STR_CONFIG_SETTING_TOWN_GROWTH_VERY_FAST                        :Very fast
 
+STR_CONFIG_SETTING_WEATHER                                      :Weather: {STRING2}
+STR_CONFIG_SETTING_WEATHER_HELPTEXT                             :How often there are clouds, rain, thunderstorms, snowfall and fog. The weather is the same for every player: solar and wind power depend on it, and so may vehicles. The seasons change in any case
+###length 3
+STR_CONFIG_SETTING_WEATHER_OFF                                  :Always clear
+STR_CONFIG_SETTING_WEATHER_SOME                                 :Some weather
+STR_CONFIG_SETTING_WEATHER_MUCH                                 :A lot of weather
+
+STR_CONFIG_SETTING_DAY_LENGTH                                   :Length of a day and a night: {STRING2}
+STR_CONFIG_SETTING_DAY_LENGTH_HELPTEXT                          :How many minutes of play a day and a night last. Solar power plants give nothing at night. The time of day has nothing to do with the date of the game
+STR_CONFIG_SETTING_DAY_LENGTH_VALUE                             :{COMMA} minute{P 0 "" s}
+###setting-zero-is-special
+STR_CONFIG_SETTING_DAY_LENGTH_OFF                               :Off (always day)
+
+STR_CONFIG_SETTING_WEATHER_SLOWS_VEHICLES                       :Bad weather slows vehicles down: {STRING2}
+STR_CONFIG_SETTING_WEATHER_SLOWS_VEHICLES_HELPTEXT              :In heavy rain, thunderstorms and snowstorms vehicles go up to 15%, 25% and 30% slower, and they wear out up to twice as fast, so they break down more often
+
+STR_CONFIG_SETTING_POWER_BONUS                                  :Extra output with full power: {STRING2}
+STR_CONFIG_SETTING_POWER_BONUS_HELPTEXT                         :How much more industries produce, and how much faster towns grow and make passengers and mail, when power lines give them all the power they need. Partial power gives part of it
+STR_CONFIG_SETTING_POWER_CATCHMENT                              :Reach of a power substation: {STRING2}
+STR_CONFIG_SETTING_POWER_CATCHMENT_HELPTEXT                     :How far around a substation it supplies industries and buildings, and takes power from power plants
 STR_CONFIG_SETTING_LARGER_TOWNS                                 :Proportion of towns that will become cities: {STRING2}
 STR_CONFIG_SETTING_LARGER_TOWNS_HELPTEXT                        :Amount of towns which will become a city, thus a town which starts out larger and grows faster
 STR_CONFIG_SETTING_LARGER_TOWNS_VALUE                           :1 in {COMMA}
@@ -2264,6 +2295,8 @@ STR_CONFIG_SETTING_ENVIRONMENT_TIME                             :Time
 STR_CONFIG_SETTING_ENVIRONMENT_AUTHORITIES                      :Authorities
 STR_CONFIG_SETTING_ENVIRONMENT_TOWNS                            :Towns
 STR_CONFIG_SETTING_ENVIRONMENT_INDUSTRIES                       :Industries
+STR_CONFIG_SETTING_ENVIRONMENT_ENERGY                           :Energy
+STR_CONFIG_SETTING_ENVIRONMENT_WEATHER                          :Weather and time of day
 STR_CONFIG_SETTING_ENVIRONMENT_CARGODIST                        :Cargo distribution
 STR_CONFIG_SETTING_ENVIRONMENT_TREES                            :Trees
 STR_CONFIG_SETTING_AI                                           :Competitors
@@ -3121,6 +3154,17 @@ STR_STATION_BUILD_NOISE                                         :{BLACK}Noise ge
 
 # Landscaping toolbar
 STR_LANDSCAPING_TOOLBAR                                         :{WHITE}Landscaping
+
+# Power line construction toolbar
+STR_POWER_TOOLBAR_CAPTION                                       :{WHITE}Power Lines
+STR_POWER_TOOLBAR_TOOLTIP_BUILD_LINE                            :{BLACK}Build an overhead power line. Drag along an axis or a diagonal; pylons are placed automatically, at most 2 tiles apart. Wires join only at pylons. Also press Shift to show cost estimate only
+STR_POWER_TOOLBAR_TOOLTIP_BUILD_PYLON                           :{BLACK}Build a single pylon. Also press Shift to show cost estimate only
+STR_POWER_TOOLBAR_TOOLTIP_BUILD_SUBSTATION                      :{BLACK}Build an overhead substation, where power lines meet power plants and consumers. Also press Shift to show cost estimate only
+STR_POWER_TOOLBAR_TOOLTIP_BUILD_TRANSITION                      :{BLACK}Build a transition pylon, where an overhead line goes underground, or turn a pylon into one. Also press Shift to show cost estimate only
+STR_POWER_TOOLBAR_TOOLTIP_BUILD_CABLE                           :{BLACK}Build an underground cable. Drag along an axis or a diagonal; it passes under anything. Cables join wherever they meet, connect to the network at underground substations and transition pylons, and lose half as much power as overhead lines. Also press Shift to show cost estimate only
+STR_POWER_TOOLBAR_TOOLTIP_BUILD_UNDERGROUND_SUBSTATION          :{BLACK}Build an underground substation, where cables meet power plants and consumers. Also press Shift to show cost estimate only
+STR_POWER_TOOLBAR_TOOLTIP_NETWORK_VIEW                          :{BLACK}Show or hide underground cables
+STR_POWER_TOOLBAR_TOOLTIP_REMOVE                                :{BLACK}Toggle removal of power lines and cables: dragging the line tool removes wires and the pylons left without wires, dragging the cable tool removes cable
 STR_LANDSCAPING_TOOLTIP_LOWER_A_CORNER_OF_LAND                  :{BLACK}Lower a corner of land. Click+Drag to lower the first selected corner and level the selected area to the new corner height. Ctrl+Click+Drag to select the area diagonally. Also press Shift to show cost estimate only
 STR_LANDSCAPING_TOOLTIP_RAISE_A_CORNER_OF_LAND                  :{BLACK}Raise a corner of land. Click+Drag to raise the first selected corner and level the selected area to the new corner height. Ctrl+Click+Drag to select the area diagonally. Also press Shift to show cost estimate only
 STR_LANDSCAPING_LEVEL_LAND_TOOLTIP                              :{BLACK}Level an area of land to the height of the first selected corner. Ctrl+Click+Drag to select the area diagonally. Also press Shift to show cost estimate only
@@ -3250,6 +3294,7 @@ STR_LAND_AREA_INFORMATION_OWNER                                 :{BLACK}Owner: {
 STR_LAND_AREA_INFORMATION_ROAD_OWNER                            :{BLACK}Road owner: {LTBLUE}{STRING1}
 STR_LAND_AREA_INFORMATION_TRAM_OWNER                            :{BLACK}Tramway owner: {LTBLUE}{STRING1}
 STR_LAND_AREA_INFORMATION_RAIL_OWNER                            :{BLACK}Railway owner: {LTBLUE}{STRING1}
+STR_LAND_AREA_INFORMATION_POWER_LINE_OWNER                      :{BLACK}Power line owner: {LTBLUE}{STRING1}
 STR_LAND_AREA_INFORMATION_LOCAL_AUTHORITY                       :{BLACK}Local authority: {LTBLUE}{STRING1}
 STR_LAND_AREA_INFORMATION_LOCAL_AUTHORITY_NONE                  :None
 STR_LAND_AREA_INFORMATION_LANDINFO_COORDS                       :{BLACK}Coordinates: {LTBLUE}{NUM} x {NUM} x {NUM}
@@ -3363,6 +3408,10 @@ STR_LAI_BRIDGE_DESCRIPTION_ROAD_TUBULAR_STEEL                   :Tubular road br
 STR_LAI_BRIDGE_DESCRIPTION_AQUEDUCT                             :Aqueduct
 
 STR_LAI_OBJECT_DESCRIPTION_TRANSMITTER                          :Transmitter
+STR_LAI_POWER_DESCRIPTION_PYLON                                 :Electricity pylon (network with {NUM} substation{P "" s})
+STR_LAI_POWER_DESCRIPTION_TRANSITION_PYLON                      :Transition pylon (network with {NUM} substation{P "" s})
+STR_LAI_POWER_DESCRIPTION_OVERHEAD_SUBSTATION                   :Overhead substation (network with {NUM} substation{P "" s})
+STR_LAI_POWER_DESCRIPTION_UNDERGROUND_SUBSTATION                :Underground substation (network with {NUM} substation{P "" s})
 STR_LAI_OBJECT_DESCRIPTION_LIGHTHOUSE                           :Lighthouse
 STR_LAI_OBJECT_DESCRIPTION_COMPANY_HEADQUARTERS                 :Company headquarters
 STR_LAI_OBJECT_DESCRIPTION_COMPANY_OWNED_LAND                   :Company-owned land
@@ -3819,6 +3868,7 @@ STR_TOWN_POPULATION                                             :{BLACK}World po
 STR_TOWN_VIEW_TOWN_CAPTION                                      :{WHITE}{TOWN}
 STR_TOWN_VIEW_CITY_CAPTION                                      :{WHITE}{TOWN} (City)
 STR_TOWN_VIEW_POPULATION_HOUSES                                 :{BLACK}Population: {ORANGE}{COMMA}{BLACK}  Houses: {ORANGE}{COMMA}
+STR_TOWN_VIEW_POWER                                             :{BLACK}Power: {ORANGE}{DECIMAL} of {DECIMAL} MW{BLACK}  Bonus: {ORANGE}+{COMMA}%
 STR_TOWN_VIEW_CARGO_LAST_MONTH_MAX                              :{BLACK}{CARGO_LIST} last month: {ORANGE}{COMMA}{BLACK}  max: {ORANGE}{COMMA}
 STR_TOWN_VIEW_CARGO_LAST_MINUTE_MAX                             :{BLACK}{CARGO_LIST} last minute: {ORANGE}{COMMA}{BLACK}  max: {ORANGE}{COMMA}
 STR_TOWN_VIEW_CARGO_FOR_TOWNGROWTH                              :{BLACK}Cargo needed for town growth:
@@ -4065,6 +4115,7 @@ STR_FINANCES_SECTION_AIRCRAFT_REVENUE                           :{GOLD}Aircraft
 STR_FINANCES_SECTION_SHIP_REVENUE                               :{GOLD}Ships
 STR_FINANCES_SECTION_LOAN_INTEREST                              :{GOLD}Loan Interest
 STR_FINANCES_SECTION_OTHER                                      :{GOLD}Other
+STR_FINANCES_SECTION_ENERGY_SALES                               :{GOLD}Energy Sales
 
 STR_FINANCES_TOTAL_CAPTION                                      :{WHITE}Total
 STR_FINANCES_NEGATIVE_INCOME                                    :-{CURRENCY_LONG}
@@ -4166,6 +4217,8 @@ STR_INDUSTRY_DIRECTORY_FILTER_NONE                              :None
 
 # Industry view
 STR_INDUSTRY_VIEW_CAPTION                                       :{WHITE}{INDUSTRY}
+STR_INDUSTRY_VIEW_POWER_PLANT                                   :{BLACK}Power sold: {ORANGE}{DECIMAL} of {DECIMAL} MW{BLACK}  Fuel: {ORANGE}{COMMA} day{P "" s}
+STR_INDUSTRY_VIEW_POWER_CONSUMER                                :{BLACK}Power: {ORANGE}{DECIMAL} of {DECIMAL} MW{BLACK}  Bonus: {ORANGE}+{COMMA}%
 STR_INDUSTRY_VIEW_PRODUCTION_LAST_MONTH_TITLE                   :{BLACK}Production last month:
 STR_INDUSTRY_VIEW_PRODUCTION_LAST_MINUTE_TITLE                  :{BLACK}Production last minute:
 STR_INDUSTRY_VIEW_TRANSPORTED                                   :{YELLOW}{CARGO_LONG}{RAW_STRING}{BLACK} ({COMMA}% transported)
@@ -5445,6 +5498,28 @@ STR_ERROR_TUNNEL_TOO_LONG                                       :tunnel too long
 STR_ERROR_TOO_MANY_OBJECTS                                      :too many objects
 STR_ERROR_CAN_T_BUILD_OBJECT                                    :Can't build object...
 STR_ERROR_OBJECT_IN_THE_WAY                                     :object in the way
+STR_ERROR_MUST_REMOVE_POWER_LINE_FIRST                          :power line in the way
+STR_ERROR_POWER_LINE_BRIDGE_IN_THE_WAY                          :bridge in the way of the power line
+STR_ERROR_POWER_LINES_CANNOT_CROSS                              :power lines cannot cross in mid-air
+STR_ERROR_POWER_LINES_JOIN_ONLY_AT_PYLONS                       :power lines can only join at a pylon
+STR_ERROR_POWER_LINE_OVER_AIRPORT                               :power lines cannot pass over airports
+STR_ERROR_POWER_LINE_OVER_INDUSTRY                              :power lines cannot pass over industries
+STR_ERROR_POWER_LINE_TALL_STRUCTURE                             :building too tall for a power line to pass over
+STR_ERROR_POWER_LINE_TOO_LOW                                    :power line would be too low
+STR_ERROR_POWER_LINE_NOT_STRAIGHT                               :power lines must run along an axis or a diagonal
+STR_ERROR_POWER_PYLON_UNDER_WIRE                                :there is a power line above
+STR_ERROR_POWER_PYLON_NEEDS_OPEN_LAND                           :pylons need open land
+STR_ERROR_POWER_PYLONS_HEIGHT_DIFFERENCE                        :pylons too far apart in height
+STR_ERROR_THERE_IS_NO_POWER_LINE                                :there is no power line here
+STR_ERROR_CAN_T_BUILD_POWER_LINE                                :Can't build power line here...
+STR_ERROR_CAN_T_BUILD_POWER_PYLON                               :Can't build pylon here...
+STR_ERROR_CAN_T_BUILD_POWER_SUBSTATION                          :Can't build substation here...
+STR_ERROR_CAN_T_REMOVE_POWER_LINE                               :Can't remove power line here...
+STR_ERROR_CAN_T_BUILD_POWER_CABLE                               :Can't build underground cable here...
+STR_ERROR_CAN_T_REMOVE_POWER_CABLE                              :Can't remove underground cable here...
+STR_ERROR_THERE_IS_NO_POWER_CABLE                               :there is no underground cable here
+STR_ERROR_POWER_CABLE_TOO_SHORT                                 :drag the cable over at least two tiles
+STR_ERROR_POWER_CABLE_OWNED_BY_OTHER                            :the cable belongs to another company
 STR_ERROR_COMPANY_HEADQUARTERS_IN                               :company headquarters in the way
 STR_ERROR_CAN_T_PURCHASE_THIS_LAND                              :Can't purchase this land area...
 STR_ERROR_YOU_ALREADY_OWN_IT                                    :you already own it!

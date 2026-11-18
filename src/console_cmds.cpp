@@ -59,6 +59,12 @@
 
 #include "table/strings.h"
 
+#include "power_cmd.h"
+#include "power_func.h"
+#include "industry.h"
+#include "town.h"
+#include "company_base.h"
+
 #include "safeguards.h"
 
 /* scriptfile handling */
@@ -298,7 +304,7 @@ static bool ConView3DTime(std::span<std::string_view> argv)
 {
 	if (argv.empty()) {
 		IConsolePrint(CC_HELP, "Show or hold the hour of the day in the 3D view. Usage: 'view3d_time [<hour>|auto]'.");
-		IConsolePrint(CC_HELP, "An hour from 0 to 24, such as 21.5, holds the view at that hour; 'auto' lets it follow the 'view3d_day_length' setting again.");
+		IConsolePrint(CC_HELP, "An hour from 0 to 24, such as 21.5, holds the view at that hour; 'auto' lets it follow the clock of the game again.");
 		return true;
 	}
 
@@ -318,7 +324,7 @@ static bool ConView3DTime(std::span<std::string_view> argv)
 	}
 	float hour = GetView3DHour();
 	if (hour < 0) {
-		IConsolePrint(CC_INFO, "The 3D view has no day and night (setting 'view3d_day_length' is 0).");
+		IConsolePrint(CC_INFO, "The 3D view has no day and night (game setting 'day_length' is 0, or 'view3d_night' is off).");
 	} else {
 		IConsolePrint(CC_INFO, "The hour in the 3D view is {:02d}:{:02d}.", static_cast<int>(hour), static_cast<int>(hour * 60) % 60);
 	}
@@ -544,6 +550,82 @@ static bool ConScrollToTile(std::span<std::string_view> argv)
 	}
 
 	return false;
+}
+
+/**
+ * Build power lines, pylons and substations for the local company; for testing and screenshots.
+ * @copydoc IConsoleCmdProc
+ */
+static bool ConPowerBuild(std::span<std::string_view> argv)
+{
+	if (argv.empty()) {
+		IConsolePrint(CC_HELP, "Build power lines for your company. Usage: 'power_build line <x1> <y1> <x2> <y2>', 'power_build pylon <x> <y>', 'power_build substation|usubstation|transition <x> <y>', 'power_build cable|removecable <x1> <y1> <x2> <y2>', 'power_build info', 'power_build fuel <industry> <amount>'.");
+		return true;
+	}
+	if (argv.size() == 2 && argv[1] == "info") {
+		/* For tests: the power plants, the consumers that get power, and the towns. */
+		for (const Industry *i : Industry::Iterate()) {
+			if (IsPowerPlant(i)) {
+				IConsolePrint(CC_DEFAULT, "plant {} at {},{}: offers {} sold {} fuel {} days", i->index, TileX(i->location.tile), TileY(i->location.tile), i->power_demand, i->power_supplied, GetPowerPlantFuelDays(i));
+			} else if (i->power_supplied != 0) {
+				IConsolePrint(CC_DEFAULT, "industry {} at {},{}: needs {} gets {} bonus {}%", i->index, TileX(i->location.tile), TileY(i->location.tile), i->power_demand, i->power_supplied, GetPowerBonusPercent(i->power_demand, i->power_supplied));
+			}
+		}
+		for (const Town *t : Town::Iterate()) {
+			IConsolePrint(CC_DEFAULT, "town {} at {},{}: needs {} gets {} bonus {}%", t->index, TileX(t->xy), TileY(t->xy), t->power_demand, t->power_supplied, GetPowerBonusPercent(t->power_demand, t->power_supplied));
+		}
+		for (const Company *c : Company::Iterate()) {
+			IConsolePrint(CC_DEFAULT, "company {}: money {} energy sales this year {}", c->index, c->money, -c->yearly_expenses[0][ExpensesType::EnergySales]);
+		}
+		return true;
+	}
+	if (argv.size() == 4 && argv[1] == "fuel") {
+		/* For tests in single player: deliver fuel to a power plant as if it arrived by train. */
+		if (_networking) {
+			IConsolePrint(CC_ERROR, "Only in single player.");
+			return true;
+		}
+		auto id = ParseInteger(argv[2], 0);
+		auto amount = ParseInteger(argv[3], 0);
+		Industry *i = id.has_value() ? Industry::GetIfValid(*id) : nullptr;
+		if (i == nullptr || !amount.has_value()) return false;
+		for (const auto &a : i->accepted) {
+			if (IsValidCargoType(a.cargo)) AddPowerPlantFuel(i, a.cargo, *amount);
+		}
+		return true;
+	}
+	if (argv.size() < 4) return false;
+	std::vector<uint> numbers;
+	for (size_t i = 2; i < argv.size(); i++) {
+		auto value = ParseInteger(argv[i], 0);
+		if (!value.has_value()) return false;
+		numbers.push_back(*value);
+	}
+	for (size_t i = 0; i + 1 < numbers.size(); i += 2) {
+		if (numbers[i] >= Map::SizeX() || numbers[i + 1] >= Map::SizeY()) {
+			IConsolePrint(CC_ERROR, "Tile does not exist.");
+			return true;
+		}
+	}
+	TileIndex a = TileXY(numbers[0], numbers[1]);
+	if (argv[1] == "line" && numbers.size() == 4) {
+		Command<Commands::BuildPowerLine>::Post(STR_ERROR_CAN_T_BUILD_POWER_LINE, TileXY(numbers[2], numbers[3]), a);
+	} else if (argv[1] == "pylon" && numbers.size() == 2) {
+		Command<Commands::BuildPowerPylon>::Post(STR_ERROR_CAN_T_BUILD_POWER_PYLON, a, PowerTileKind::Pylon);
+	} else if (argv[1] == "transition" && numbers.size() == 2) {
+		Command<Commands::BuildPowerPylon>::Post(STR_ERROR_CAN_T_BUILD_POWER_PYLON, a, PowerTileKind::TransitionPylon);
+	} else if (argv[1] == "substation" && numbers.size() == 2) {
+		Command<Commands::BuildPowerSubstation>::Post(STR_ERROR_CAN_T_BUILD_POWER_SUBSTATION, a, PowerTileKind::OverheadSubstation);
+	} else if (argv[1] == "usubstation" && numbers.size() == 2) {
+		Command<Commands::BuildPowerSubstation>::Post(STR_ERROR_CAN_T_BUILD_POWER_SUBSTATION, a, PowerTileKind::UndergroundSubstation);
+	} else if (argv[1] == "cable" && numbers.size() == 4) {
+		Command<Commands::BuildPowerCable>::Post(STR_ERROR_CAN_T_BUILD_POWER_CABLE, TileXY(numbers[2], numbers[3]), a);
+	} else if (argv[1] == "removecable" && numbers.size() == 4) {
+		Command<Commands::RemovePowerCable>::Post(STR_ERROR_CAN_T_REMOVE_POWER_CABLE, TileXY(numbers[2], numbers[3]), a);
+	} else {
+		return false;
+	}
+	return true;
 }
 
 /**
@@ -3124,6 +3206,7 @@ void IConsoleStdLibRegister()
 	IConsole::CmdRegister("view3d_season",           ConView3DSeason);
 	IConsole::CmdRegister("zoomto",                  ConZoomToLevel);
 	IConsole::CmdRegister("scrollto",                ConScrollToTile);
+	IConsole::CmdRegister("power_build",             ConPowerBuild);
 	IConsole::CmdRegister("alias",                   ConAlias);
 	IConsole::CmdRegister("load",                    ConLoad);
 	IConsole::CmdRegister("load_save",               ConLoad);

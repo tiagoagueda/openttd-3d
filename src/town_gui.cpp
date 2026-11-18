@@ -57,6 +57,8 @@
 #	include "viewport3d/view3d_gui.h"
 #endif
 
+#include "power_func.h"
+
 #include "safeguards.h"
 
 TownKdtree _town_local_authority_kdtree{};
@@ -400,6 +402,9 @@ public:
 		DrawString(tr, GetString(STR_TOWN_VIEW_POPULATION_HOUSES, this->town->cache.population, this->town->cache.num_houses));
 		tr.top += GetCharacterHeight(FontSize::Normal);
 
+		DrawString(tr, GetString(STR_TOWN_VIEW_POWER, this->town->power_supplied, 1, this->town->power_demand, 1, GetPowerBonusPercent(this->town->power_demand, this->town->power_supplied)));
+		tr.top += GetCharacterHeight(FontSize::Normal);
+
 		StringID str_last_period = TimerGameEconomy::UsingWallclockUnits() ? STR_TOWN_VIEW_CARGO_LAST_MINUTE_MAX : STR_TOWN_VIEW_CARGO_LAST_MONTH_MAX;
 
 		for (auto tpe : {TownProductionEffect::Passengers, TownProductionEffect::Mail}) {
@@ -538,7 +543,7 @@ public:
 	 */
 	uint GetDesiredInfoHeight(int width) const
 	{
-		uint aimed_height = static_cast<uint>(1 + CargoSpec::town_production_cargoes[TownProductionEffect::Passengers].size() + CargoSpec::town_production_cargoes[TownProductionEffect::Mail].size()) * GetCharacterHeight(FontSize::Normal);
+		uint aimed_height = static_cast<uint>(2 + CargoSpec::town_production_cargoes[TownProductionEffect::Passengers].size() + CargoSpec::town_production_cargoes[TownProductionEffect::Mail].size()) * GetCharacterHeight(FontSize::Normal);
 
 		bool first = true;
 		for (TownAcceptanceEffect i : EnumRange(TownAcceptanceEffect::End)) {

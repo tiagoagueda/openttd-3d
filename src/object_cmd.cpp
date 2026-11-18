@@ -44,6 +44,8 @@
 #include "table/strings.h"
 #include "table/object_land.h"
 
+#include "power_func.h"
+
 #include "safeguards.h"
 
 ObjectPool _object_pool("Object");
@@ -314,8 +316,10 @@ CommandCost CmdBuildObject(DoCommandFlags flags, TileIndex tile, ObjectType type
 	}
 	if (cost.Failed()) return cost;
 
-	/* Finally do a check for bridges. */
+	/* Finally do a check for bridges and power lines. */
 	for (TileIndex t : ta) {
+		if (CommandCost ret = CheckPowerWireAllowsStructure(t, spec->flags.Test(ObjectFlag::AllowUnderBridge) ? spec->height : -1); ret.Failed()) return ret;
+
 		if (IsBridgeAbove(t)) {
 			if (!spec->flags.Test(ObjectFlag::AllowUnderBridge)) return CommandCost(STR_ERROR_MUST_DEMOLISH_BRIDGE_FIRST);
 

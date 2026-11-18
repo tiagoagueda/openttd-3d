@@ -378,6 +378,7 @@ static const EnumIndexArray<AndOr, TileType, TileType::MaxSize> _smallmap_contou
 	AndOr(MKCOLOUR_XXXX(PC_DARK_RED), MKCOLOUR_0000), // TileType::Industry
 	AndOr(MKCOLOUR_0000, MKCOLOUR_FFFF), // TileType::TunnelBridge
 	AndOr(MKCOLOUR_0XX0(PC_DARK_RED), MKCOLOUR_F00F), // TileType::Object
+	AndOr(MKCOLOUR_0XX0(PC_GREY), MKCOLOUR_F00F), // TileType::Power
 };
 
 /** Colour masks for "Vehicles", "Industry", and "Vegetation" modes. */
@@ -393,6 +394,7 @@ static const EnumIndexArray<AndOr, TileType, TileType::MaxSize> _smallmap_vehicl
 	AndOr(MKCOLOUR_XXXX(PC_DARK_RED), MKCOLOUR_0000), // TileType::Industry
 	AndOr(MKCOLOUR_0000, MKCOLOUR_FFFF), // TileType::TunnelBridge
 	AndOr(MKCOLOUR_0XX0(PC_DARK_RED), MKCOLOUR_F00F), // TileType::Object
+	AndOr(MKCOLOUR_0XX0(PC_GREY), MKCOLOUR_F00F), // TileType::Power
 };
 
 /** Mapping of tile type to importance of the tile (higher number means more interesting to show). */
@@ -408,6 +410,7 @@ static const EnumIndexArray<uint8_t, TileType, TileType::MaxSize> _tiletype_impo
 	6, // TileType::Industry
 	8, // TileType::TunnelBridge
 	2, // TileType::Object
+	7, // TileType::Power
 };
 
 /**

@@ -11,6 +11,7 @@
 #define GROUND_VEHICLE_HPP
 
 #include "vehicle_base.h"
+#include "weather.h"
 #include "landscape.h"
 #include "window_func.h"
 
@@ -372,6 +373,10 @@ protected:
 	 */
 	inline uint DoUpdateSpeed(uint accel, int min_speed, int max_speed)
 	{
+		/* Heavy rain, thunderstorms and snowstorms slow traffic down. */
+		uint weather_factor = GetWeatherVehicleSpeedFactor();
+		if (weather_factor < 256 && max_speed > 1) max_speed = std::max(max_speed * static_cast<int>(weather_factor) / 256, 1);
+
 		uint spd = this->subspeed + accel;
 		this->subspeed = (uint8_t)spd;
 

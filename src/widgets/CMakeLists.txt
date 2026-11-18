@@ -37,6 +37,7 @@ add_files(
     newgrf_widget.h
     news_widget.h
     object_widget.h
+    power_widget.h
     order_widget.h
     osk_widget.h
     picker_widget.h
