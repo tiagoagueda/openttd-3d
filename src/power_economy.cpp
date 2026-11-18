@@ -25,7 +25,9 @@
 #include "newgrf_industries.h"
 #include "timer/timer_game_calendar.h"
 #include "core/math_func.hpp"
-#include "viewport3d/view3d_gui.h"
+#ifdef WITH_VIEWPORT3D
+#	include "viewport3d/view3d_gui.h"
+#endif
 
 #include <map>
 #include <queue>
@@ -672,9 +674,11 @@ static void UpdateStreetLamps()
 		}
 		if (share == t->street_lamp_share) continue;
 		t->street_lamp_share = share;
-		uint radius = IntSqrt(t->cache.squared_town_zone_radius[to_underlying(HouseZone::TownEdge)]) + 2;
-		uint x = TileX(t->xy), y = TileY(t->xy);
+		[[maybe_unused]] uint radius = IntSqrt(t->cache.squared_town_zone_radius[to_underlying(HouseZone::TownEdge)]) + 2;
+		[[maybe_unused]] uint x = TileX(t->xy), y = TileY(t->xy);
+#ifdef WITH_VIEWPORT3D
 		MarkAreaDirtyForView3D(x > radius ? x - radius : 0, y > radius ? y - radius : 0, std::min(Map::MaxX(), x + radius), std::min(Map::MaxY(), y + radius));
+#endif
 	}
 }
 
