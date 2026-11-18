@@ -1109,6 +1109,8 @@ static void AddPavementModels(RoadBits all, uint x, uint y, const std::array<int
 	}
 }
 
+static void AddStreetLamps(Tile tile, uint x, uint y, const std::array<int, 4> &heights, const ModelPack &pack, TerrainChunkMesh &mesh);
+
 /**
  * Add 3D pavements and tram rails on a road tile.
  * @param tile The tile, a normal road tile.
@@ -1125,6 +1127,7 @@ static void AddRoadModels(Tile tile, uint x, uint y, const std::array<int, 4> &h
 	Roadside roadside = GetRoadside(tile);
 	bool paved = roadside == Roadside::Paved || roadside == Roadside::StreetLights || roadside == Roadside::Trees || roadside == Roadside::PavedRoadWorks;
 	if (paved && road.Any()) AddPavementModels(road | tram, x, y, heights, pack, mesh);
+	if (paved && road.Any()) AddStreetLamps(tile, x, y, heights, pack, mesh);
 
 	const ModelPack::Entry *rails = pack.Find(ModelKind::Roadside, 0, 4);
 	if (tram.Any() && rails != nullptr) {
@@ -1135,6 +1138,223 @@ static void AddRoadModels(Tile tile, uint x, uint y, const std::array<int, 4> &h
 		for (const auto &[bit, dir] : BITS) {
 			if (tram.Test(bit)) AddPieceModel(*rails, x, y, heights, TILE_SIZE * 0.5f, TILE_SIZE * 0.5f, dir[0], dir[1], mesh);
 		}
+	}
+}
+
+/**
+ * A number from 0 to 1 made from another number, the same every time.
+ * @param n The number.
+ */
+static float Random01(uint32_t n)
+{
+	n = (n ^ 61) ^ (n >> 16);
+	n *= 9;
+	n ^= n >> 4;
+	n *= 0x27d4eb2d;
+	n ^= n >> 15;
+	return (n & 0xFFFFFF) / 16777216.0f;
+}
+
+/**
+ * Whether the street lamps of a town street have power to light up at night.
+ * This is where the energy network (a separate branch of the fork) can decide that lamps stay dark where towns get no power;
+ * until then all lamps light up.
+ * @param tile The road tile.
+ * @return True when the lamps light up at night.
+ */
+static bool IsStreetLampPowered([[maybe_unused]] TileIndex tile)
+{
+	return true;
+}
+
+/**
+ * Add 3D street lamps along a straight town street that has pavements but no lamps of the 2D game:
+ * one on every tile, on alternate sides of the street, at the kerb, reaching over the road.
+ * @param tile The tile, a normal road tile.
+ * @param x X coordinate of the tile.
+ * @param y Y coordinate of the tile.
+ * @param heights Heights of the northern, western, eastern and southern corner, in height levels.
+ * @param pack The package of 3D models.
+ * @param mesh The mesh to add to.
+ */
+static void AddStreetLamps(Tile tile, uint x, uint y, const std::array<int, 4> &heights, const ModelPack &pack, TerrainChunkMesh &mesh)
+{
+	if (GetRoadside(tile) != Roadside::Paved || HasRoadWorks(tile)) return;
+	RoadBits all = GetAllRoadBits(tile);
+	bool along_x = all == ROAD_X;
+	bool along_y = all == ROAD_Y;
+	if (!along_x && !along_y) return;
+
+	const ModelPack::Entry *lamp = pack.Find(ModelKind::Roadside, 0, 0);
+	if (!IsStreetLampPowered(tile)) {
+		const ModelPack::Entry *dark = pack.Find(ModelKind::Roadside, 0, 5);
+		if (dark != nullptr) lamp = dark;
+	}
+	if (lamp == nullptr) return;
+
+	/* Near the kerb, on the side that changes from tile to tile, reaching towards the middle of the road. */
+	static constexpr float KERB_DISTANCE = 2.1f;
+	bool far_side = ((along_x ? x : y) & 1) != 0;
+	float edge = far_side ? TILE_SIZE - KERB_DISTANCE : KERB_DISTANCE;
+	float px = along_x ? TILE_SIZE * 0.5f : edge;
+	float py = along_x ? edge : TILE_SIZE * 0.5f;
+	float dx = along_x ? 0.0f : (far_side ? -1.0f : 1.0f);
+	float dy = along_x ? (far_side ? -1.0f : 1.0f) : 0.0f;
+
+	auto [hn, hw, he, hs] = heights;
+	float zc = (hn + hw + he + hs) * 0.25f * HEIGHT_LEVEL_SIZE;
+	float ax = ((hw + hs) - (hn + he)) * 0.5f * HEIGHT_LEVEL_SIZE / TILE_SIZE;
+	float ay = ((he + hs) - (hn + hw)) * 0.5f * HEIGHT_LEVEL_SIZE / TILE_SIZE;
+	static constexpr float KERB = 0.16f;
+	float z = zc + ax * (px - TILE_SIZE * 0.5f) + ay * (py - TILE_SIZE * 0.5f) + KERB;
+	float s = lamp->scale;
+	ModelInstance &instance = mesh.models.emplace_back();
+	instance.model = lamp->model;
+	instance.transform.m = {dx * s, dy * s, 0, 0, -dy * s, dx * s, 0, 0, 0, 0, s, 0, x * TILE_SIZE + px, y * TILE_SIZE + py, z, 1};
+	instance.tint = {1, 1, 1, 1};
+}
+
+/**
+ * Whether a tile is a town street with a pavement along one of its sides.
+ * @param x X coordinate of the tile.
+ * @param y Y coordinate of the tile.
+ * @param side The side, by the road bit that would lead there.
+ * @return True when people can walk along that side.
+ */
+static bool HasPavement(uint x, uint y, RoadBit side)
+{
+	if (x >= Map::MaxX() || y >= Map::MaxY()) return false;
+	Tile tile(TileXY(x, y));
+	if (!IsTileType(tile, TileType::Road) || !IsNormalRoad(tile)) return false;
+	Roadside roadside = GetRoadside(tile);
+	if (roadside != Roadside::Paved && roadside != Roadside::StreetLights && roadside != Roadside::Trees && roadside != Roadside::PavedRoadWorks) return false;
+	if (GetRoadBits(tile, RoadTramType::Road).None()) return false;
+	return !GetAllRoadBits(tile).Test(side);
+}
+
+/**
+ * Find the straight stretches of pavement in a chunk, on which people walk up and down.
+ * A stretch ends where the pavement does, at the edge of the chunk, or after 16 tiles.
+ * More people walk where more houses line the street.
+ * @param chunk_x X coordinate of the chunk, in chunks.
+ * @param chunk_y Y coordinate of the chunk, in chunks.
+ * @param mesh The mesh to add to.
+ */
+static void AddWalkways(uint chunk_x, uint chunk_y, TerrainChunkMesh &mesh)
+{
+	static constexpr uint MAX_TILES = 16;
+	static constexpr float HALF = 1.3f; ///< From the edge of the tile to the middle of the pavement.
+	static constexpr float KERB = 0.16f;
+	uint x0 = chunk_x * TERRAIN_CHUNK_SIZE, y0 = chunk_y * TERRAIN_CHUNK_SIZE;
+	uint x1 = std::min(x0 + TERRAIN_CHUNK_SIZE, Map::MaxX()), y1 = std::min(y0 + TERRAIN_CHUNK_SIZE, Map::MaxY());
+
+	/* Each side: the road bit that leads there, whether the side runs along x, which neighbour lies beyond it, and where the pavement is. */
+	struct Side { RoadBit bit; bool along_x; int nx, ny; float offset; };
+	static constexpr Side SIDES[4] = {
+		{RoadBit::NW, true, 0, -1, HALF}, {RoadBit::SE, true, 0, 1, TILE_SIZE - HALF},
+		{RoadBit::NE, false, -1, 0, HALF}, {RoadBit::SW, false, 1, 0, TILE_SIZE - HALF},
+	};
+	for (uint y = y0; y < y1; y++) {
+		for (uint x = x0; x < x1; x++) {
+			for (const Side &side : SIDES) {
+				if (!HasPavement(x, y, side.bit)) continue;
+				/* Only from the first tile of a stretch. */
+				uint along = side.along_x ? x : y;
+				uint first = side.along_x ? x0 : y0;
+				auto at = [&](uint a) { return side.along_x ? std::pair<uint, uint>{a, y} : std::pair<uint, uint>{x, a}; };
+				if (along > first && (along - first) % MAX_TILES != 0) {
+					auto [px, py] = at(along - 1);
+					if (HasPavement(px, py, side.bit)) continue;
+				}
+				uint end = side.along_x ? x1 : y1;
+				uint length = 0;
+				uint houses = 0;
+				Walkway walkway;
+				while (length < MAX_TILES && along + length < end) {
+					auto [tx, ty] = at(along + length);
+					if (!HasPavement(tx, ty, side.bit)) break;
+					int hx = static_cast<int>(tx) + side.nx, hy = static_cast<int>(ty) + side.ny;
+					if (hx >= 0 && hy >= 0 && static_cast<uint>(hx) < Map::MaxX() && static_cast<uint>(hy) < Map::MaxY() && IsTileType(TileXY(hx, hy), TileType::House)) houses++;
+					/* A point at the start of the tile and one in its middle. */
+					for (float f : {0.02f, 0.5f}) {
+						float wx = side.along_x ? (tx + f) * TILE_SIZE : tx * TILE_SIZE + side.offset;
+						float wy = side.along_x ? ty * TILE_SIZE + side.offset : (ty + f) * TILE_SIZE;
+						walkway.points.push_back({wx, wy, GetSlopePixelZ(static_cast<int>(wx), static_cast<int>(wy), true) * WORLD_Z_SCALE + KERB});
+					}
+					length++;
+				}
+				if (length < 2) continue;
+				/* The end of the last tile. */
+				auto [tx, ty] = at(along + length - 1);
+				float wx = side.along_x ? (tx + 0.98f) * TILE_SIZE : tx * TILE_SIZE + side.offset;
+				float wy = side.along_x ? ty * TILE_SIZE + side.offset : (ty + 0.98f) * TILE_SIZE;
+				walkway.points.push_back({wx, wy, GetSlopePixelZ(static_cast<int>(wx), static_cast<int>(wy), true) * WORLD_Z_SCALE + KERB});
+				walkway.people = std::min(0.2f * length + 0.7f * houses, 1.2f * length);
+				walkway.seed = TileXY(x, y).base() * 4 + static_cast<uint>(&side - SIDES);
+				mesh.walkways.push_back(std::move(walkway));
+			}
+		}
+	}
+}
+
+/**
+ * Add the people walking along the pavement at this moment.
+ * Each walks up and down the stretch at a pace of their own, keeping to their right, and turns around at its ends.
+ * @param scene What the world looks like at this moment.
+ * @param models The models to add to.
+ */
+void Walkway::Place(const PartScene &scene, std::vector<ModelInstance> &models) const
+{
+	if (this->points.size() < 2 || scene.walkers[0] == UINT_MAX) return;
+	static constexpr float SPACING = TILE_SIZE * 0.5f; ///< Between two points.
+	static constexpr float STRIDE = 0.42f; ///< Distance walked from one model of a step to the next.
+	/* Shirts and dresses. */
+	static constexpr std::array<float, 3> CLOTHES[] = {
+		{0.80f, 0.20f, 0.18f}, {0.20f, 0.36f, 0.72f}, {0.92f, 0.86f, 0.70f}, {0.24f, 0.52f, 0.30f}, {0.88f, 0.62f, 0.16f},
+		{0.52f, 0.30f, 0.58f}, {0.92f, 0.92f, 0.94f}, {0.30f, 0.30f, 0.32f}, {0.62f, 0.78f, 0.90f}, {0.86f, 0.46f, 0.56f},
+	};
+	float length = SPACING * (this->points.size() - 1);
+	float wanted = this->people * scene.people;
+	uint count = static_cast<uint>(wanted + Random01(this->seed * 31U + 7U));
+	for (uint i = 0; i < count; i++) {
+		uint32_t id = this->seed * 977U + i * 7919U;
+		float speed = 1.0f + 0.7f * Random01(id);
+		float s = Random01(id + 1) * 2.0f * length + speed * scene.seconds;
+		float u = std::fmod(s, 2.0f * length);
+		bool forward = u < length;
+		float d = forward ? u : 2.0f * length - u;
+
+		/* Where along the stretch, and its direction there. */
+		uint k = std::min<uint>(static_cast<uint>(d / SPACING), static_cast<uint>(this->points.size()) - 2);
+		float f = d / SPACING - k;
+		const auto &a = this->points[k];
+		const auto &b = this->points[k + 1];
+		float dx = b[0] - a[0], dy = b[1] - a[1];
+		float n = std::sqrt(dx * dx + dy * dy);
+		if (n <= 0) continue;
+		dx /= n;
+		dy /= n;
+		if (!forward) {
+			dx = -dx;
+			dy = -dy;
+		}
+		/* Keep to the right of the way one walks, a little apart from the others. */
+		float side = -0.42f + (Random01(id + 2) - 0.5f) * 0.3f;
+		float px = a[0] + (b[0] - a[0]) * f - dy * side;
+		float py = a[1] + (b[1] - a[1]) * f + dx * side;
+		float pz = a[2] + (b[2] - a[2]) * f;
+
+		uint step = static_cast<uint>(s / STRIDE) % 4;
+		uint model = scene.walkers[(Random01(id + 3) < 0.5f ? 4 : 0) + step];
+		if (model == UINT_MAX) model = scene.walkers[step];
+		if (model == UINT_MAX) continue;
+		float scale = 0.92f + 0.16f * Random01(id + 4);
+		const auto &colour = CLOTHES[static_cast<uint>(Random01(id + 5) * std::size(CLOTHES)) % std::size(CLOTHES)];
+
+		ModelInstance &instance = models.emplace_back();
+		instance.model = model;
+		instance.transform.m = {dx * scale, dy * scale, 0, 0, -dy * scale, dx * scale, 0, 0, 0, 0, scale, 0, px, py, pz, 1};
+		instance.tint = {colour[0], colour[1], colour[2], 1};
 	}
 }
 
@@ -1399,6 +1619,7 @@ static void AddFences(Tile tile, uint x, uint y, SpriteAtlas &atlas, const Model
  * @param models The models to add to.
  */
 static std::vector<AnimatedPart> *_tile_parts = nullptr; ///< Where PlaceModel() puts the moving parts of models, if anywhere.
+static const ModelPack *_tile_pack = nullptr; ///< The package of the models PlaceModel() places, while #_tile_parts is set.
 
 /**
  * Place a model at a point, turned to face a direction.
@@ -1434,9 +1655,83 @@ static ModelInstance &PlaceModelAt(const ModelPack::Entry &entry, float x, float
  * @param seconds The moment, in seconds since some start.
  * @return The part.
  */
-ModelInstance AnimatedPart::Place(float seconds) const
+/**
+ * Add the puffs of smoke that rise from a chimney at this moment.
+ * Each chimney has a few puffs at a time, each older than the last; a puff rises, drifts with the wind,
+ * grows and fades, and starts over at the top of the chimney when it is gone.
+ * @param part The chimney.
+ * @param scene What the world looks like at this moment.
+ * @param models The models to add to.
+ */
+static void PlaceSmoke(const AnimatedPart &part, const PartScene &scene, std::vector<ModelInstance> &models)
 {
-	float t = seconds + this->phase;
+	if (scene.puff == UINT_MAX) return;
+	const bool house = part.amount < 0;
+	/* Of houses, only some have the fire lit; which ones goes by the phase, which comes from the place of the house. */
+	float strength = 1.0f;
+	if (house) {
+		float lot = Random01(std::bit_cast<uint32_t>(part.phase));
+		if (lot >= scene.house_smoke) return;
+		strength = 0.55f + 0.45f * std::min(1.0f, (scene.house_smoke - lot) * 4.0f);
+	}
+	const Matrix4 &m = part.transform;
+	/* The top of the chimney in the world, and the scale of the building. */
+	float x = m.m[0] * part.at[0] + m.m[4] * part.at[1] + m.m[8] * part.at[2] + m.m[12];
+	float y = m.m[1] * part.at[0] + m.m[5] * part.at[1] + m.m[9] * part.at[2] + m.m[13];
+	float z = m.m[2] * part.at[0] + m.m[6] * part.at[1] + m.m[10] * part.at[2] + m.m[14];
+	float scale = std::sqrt(m.m[8] * m.m[8] + m.m[9] * m.m[9] + m.m[10] * m.m[10]);
+	float radius = std::abs(part.amount) * scale;
+
+	static constexpr int PUFFS = 7;
+	const float life = house ? 5.5f : 8.0f; ///< Seconds a puff lives.
+	const float rise = house ? 6.0f : 13.0f + 3.0f * radius; ///< How high it rises in that time.
+	const std::array<float, 3> colour = house ? std::array<float, 3>{0.82f, 0.82f, 0.84f} : std::array<float, 3>{0.66f, 0.66f, 0.68f};
+	for (int k = 0; k < PUFFS; k++) {
+		float t = (scene.seconds + part.phase) / life + static_cast<float>(k) / PUFFS;
+		float age = t - std::floor(t);
+		/* Each puff wanders a little on its own way; which way changes with every new puff. */
+		uint32_t round = static_cast<uint32_t>(static_cast<int32_t>(std::floor(t))) * 7919U + static_cast<uint32_t>(k) * 104729U + std::bit_cast<uint32_t>(part.phase);
+		float wx = (Random01(round) - 0.5f) * 0.5f, wy = (Random01(round + 1) - 0.5f) * 0.5f;
+		/* Smoke comes out fast and slows down as it cools. */
+		float up = rise * age * (1.6f - 0.6f * age);
+		float drift = up + age * 2.0f;
+		float s = scene.puff_scale * radius * (0.55f + 2.2f * age) / 3.0f;
+		float alpha = 0.62f * strength * std::pow(1.0f - age, 1.3f) * std::min(1.0f, age * 10.0f);
+		if (alpha < 0.01f) continue;
+		float yaw = Random01(round + 2) * 6.2831853f;
+		float c = std::cos(yaw) * s, n = std::sin(yaw) * s;
+		ModelInstance &instance = models.emplace_back();
+		instance.model = scene.puff;
+		instance.transform.m = {
+			c, n, 0, 0,
+			-n, c, 0, 0,
+			0, 0, s, 0,
+			x + (scene.wind_x + wx) * drift, y + (scene.wind_y + wy) * drift, z + up + s * 0.5f, 1,
+		};
+		instance.tint = {colour[0], colour[1], colour[2], alpha};
+		instance.load = 0;
+	}
+}
+
+/**
+ * Add the models of the part as it is at this moment.
+ * @param scene What the world looks like at this moment.
+ * @param models The models to add to.
+ */
+void AnimatedPart::Place(const PartScene &scene, std::vector<ModelInstance> &models) const
+{
+	if (this->kind == PartKind::Smoke) {
+		PlaceSmoke(*this, scene, models);
+		return;
+	}
+	float opacity = 1.0f;
+	if (this->kind == PartKind::Night) {
+		/* Shows only after dusk, see-through. */
+		opacity = this->amount * std::clamp((scene.night - 0.15f) * 1.6f, 0.0f, 1.0f);
+		if (opacity < 0.01f) return;
+	}
+
+	float t = scene.seconds + this->phase;
 	float angle = this->spin * t;
 	if (this->swing != 0) angle += this->swing * std::sin(t * 6.2831853f / this->period);
 
@@ -1453,11 +1748,11 @@ ModelInstance AnimatedPart::Place(float seconds) const
 		k.x * k.z * v + k.y * s, k.y * k.z * v - k.x * s, c + k.z * k.z * v, 0,
 		this->at[0] + k.x * lift, this->at[1] + k.y * lift, this->at[2] + k.z * lift, 1,
 	};
-	ModelInstance instance;
+	ModelInstance &instance = models.emplace_back();
 	instance.model = this->model;
 	instance.transform = this->transform * local;
 	instance.tint = this->tint;
-	return instance;
+	if (this->kind == PartKind::Night) instance.tint[3] = std::min(opacity, 0.99f);
 }
 
 static void PlaceModel(const ModelPack::Entry &entry, TileIndex tile, uint size_x, uint size_y, DiagDirection front, const std::array<float, 4> &tint, std::vector<ModelInstance> &models)
@@ -1477,7 +1772,20 @@ static void PlaceModel(const ModelPack::Entry &entry, TileIndex tile, uint size_
 	/* Parts of neighbouring buildings move a little out of step, as the 2D game does too. */
 	float phase = (tile.base() * 2654435761U >> 20) / 4096.0f * 4.0f;
 	for (const ModelPack::ModelPart &part : entry.parts) {
-		_tile_parts->push_back({instance.transform, tint, part.model, part.at, part.axis, part.spin, part.swing, part.period, part.lift, phase});
+		AnimatedPart &added = _tile_parts->emplace_back(instance.transform, tint, part.model, part.at, part.axis, part.spin, part.swing, part.period, part.lift, phase);
+		if (part.night > 0) {
+			added.kind = PartKind::Night;
+			added.amount = part.night;
+		}
+	}
+	/* Smoke rises from the chimneys of the model; of houses from some only, more in the cold. */
+	if (_tile_pack != nullptr && instance.model < _tile_pack->GetModels().size()) {
+		bool house = IsTileType(tile, TileType::House);
+		for (const auto &[x, y, z, size] : _tile_pack->GetModels()[instance.model].smoke) {
+			AnimatedPart &added = _tile_parts->emplace_back(instance.transform, std::array<float, 4>{1, 1, 1, 1}, UINT_MAX, std::array<float, 3>{x, y, z}, std::array<float, 3>{0, 0, 1}, 0.0f, 0.0f, 1.0f, 0.0f, phase * 3.1f + x + y);
+			added.kind = PartKind::Smoke;
+			added.amount = house ? -size : size;
+		}
 	}
 }
 
@@ -1943,8 +2251,10 @@ bool GetTileModels(TileIndex tile, const ModelPack &pack, std::vector<ModelInsta
 	parts.clear();
 	if (pack.IsEmpty()) return false;
 	_tile_parts = &parts;
+	_tile_pack = &pack;
 	bool replaced = AddTileModel(tile, pack, models);
 	_tile_parts = nullptr;
+	_tile_pack = nullptr;
 	return replaced;
 }
 
@@ -2410,8 +2720,10 @@ static TileGround AddTileSprites(uint x, uint y, const std::array<uint8_t, 4> &h
 
 	/* A building with a 3D model keeps its ground and foundation, but not its other sprites. */
 	_tile_parts = &mesh.parts;
+	_tile_pack = pack;
 	bool replaced = !ground_only && pack != nullptr && !pack->IsEmpty() && AddTileModel(tile, *pack, mesh.models);
 	_tile_parts = nullptr;
+	_tile_pack = nullptr;
 
 	/* Signals with a 3D model replace the sprites the 2D game draws for them. */
 	static std::vector<std::pair<int, int>> signal_places;
@@ -2618,6 +2930,7 @@ void BuildTerrainChunkMesh(uint chunk_x, uint chunk_y, GroundTextures &textures,
 	const bool models_ok = pack != nullptr && !pack->IsEmpty();
 	mesh.models.clear();
 	mesh.parts.clear();
+	mesh.walkways.clear();
 	mesh.live.clear();
 	mesh.locks.clear();
 	mesh.vertices.reserve(TERRAIN_CHUNK_SIZE * TERRAIN_CHUNK_SIZE * 4);
@@ -2827,6 +3140,8 @@ void BuildTerrainChunkMesh(uint chunk_x, uint chunk_y, GroundTextures &textures,
 	}
 
 	if (mesh.min_height > mesh.max_height) mesh.min_height = mesh.max_height;
+
+	if (pack != nullptr && pack->Find(ModelKind::Pedestrian, 0, 0) != nullptr) AddWalkways(chunk_x, chunk_y, mesh);
 
 	/* FNV-1a hash, to cheaply see whether the chunk looks different from last time. */
 	uint64_t hash = 0xcbf29ce484222325ULL;

@@ -22,7 +22,7 @@ void main()
 	vec3 normal = normalize(mul(model, vec4(a_normal, 0.0)).xyz);
 	vec3 material = Material(a_color0.a);
 	vec3 colour = mix(a_color0.rgb, a_color0.rgb * i_data4.rgb, material.x);
-	colour = ModelWeather(colour, a_color0.a, normal, i_data3.xyz, a_position.z, 1.0);
+	colour = ModelWeather(colour, a_color0.a, normal, i_data3.xyz, a_position.z, 1.0, world.z);
 	v_color0 = vec4(colour, 1.0);
 	/* x: glow of a lit window. y: how much the surface faces the sun or the moon. z: glow of a lamp. */
 	v_texcoord0 = vec3(material.y, max(dot(normal, u_lightDirection.xyz), 0.0), material.z);

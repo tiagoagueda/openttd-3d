@@ -53,6 +53,26 @@ static_assert(sizeof(SpriteVertex) == 32);
 /** Most quads, of terrain or of sprites, that a chunk can have; limited by the 16 bit indices. */
 static constexpr uint MAX_CHUNK_QUADS = 16384;
 
+/** What a building looks like at this moment, for the parts of it that change by themselves; see AnimatedPart::Place(). */
+struct PartScene {
+	float seconds = 0; ///< Seconds since the view opened.
+	float night = 0; ///< How dark it is: 0 by day, 1 at night.
+	float house_smoke = 0.5f; ///< How many of the chimneys of houses smoke, 0 to 1; more when it is cold.
+	float wind_x = 0; ///< Which way smoke drifts along x, for each unit it rises.
+	float wind_y = 0; ///< The same along y.
+	float people = 1; ///< How many of the people are out walking, 0 to 1: fewer at night and in bad weather.
+	uint puff = UINT_MAX; ///< Model of a puff of smoke, or \c UINT_MAX for none.
+	float puff_scale = 1; ///< Scale of that model.
+	std::array<uint, 8> walkers{}; ///< Models of people walking, ModelKind::Pedestrian 0 to 7; \c UINT_MAX where there is none.
+};
+
+/** What kind of moving thing an AnimatedPart is. */
+enum class PartKind : uint8_t {
+	Move, ///< A part that turns or moves all the time.
+	Night, ///< A see-through part that shows and turns only at night, like the beams of a lighthouse.
+	Smoke, ///< A chimney: smoke rises from AnimatedPart::at.
+};
+
 /** A part of a building model that moves, placed on the map. */
 struct AnimatedPart {
 	Matrix4 transform; ///< From the frame of the building's model to world units.
@@ -65,9 +85,21 @@ struct AnimatedPart {
 	float period; ///< Seconds for one swing back and forth.
 	float lift; ///< How far it moves along its axis and back, once per period.
 	float phase; ///< Seconds the part is ahead of others, so that neighbours do not all move together.
+	PartKind kind = PartKind::Move; ///< What kind of part it is.
+	float amount = 1; ///< For PartKind::Night how opaque it is at night; for PartKind::Smoke the size of the chimney, below 0 for a house.
 
 	bool operator==(const AnimatedPart &other) const = default;
-	ModelInstance Place(float seconds) const;
+	void Place(const PartScene &scene, std::vector<ModelInstance> &models) const;
+};
+
+/** A straight stretch of pavement along a town street, on which people walk up and down. */
+struct Walkway {
+	std::vector<std::array<float, 3>> points; ///< Points along the middle of the pavement, half a tile apart, in world units.
+	float people; ///< How many people walk here.
+	uint32_t seed; ///< Makes each walkway look different.
+
+	bool operator==(const Walkway &other) const = default;
+	void Place(const PartScene &scene, std::vector<ModelInstance> &models) const;
 };
 
 /**
@@ -85,6 +117,7 @@ struct TerrainChunkMesh {
 	std::vector<ModelInstance> models; ///< 3D models standing on the terrain, in place of sprites.
 	std::vector<AnimatedPart> parts; ///< Parts of those models that move.
 	std::vector<TileIndex> locks; ///< Middle parts of locks whose gates and water move, see AddLockMovingParts().
+	std::vector<Walkway> walkways; ///< Pavements on which people walk.
 	std::map<TileIndex, std::vector<ModelInstance>> live; ///< Models that change often, like signals, by tile; drawn anew for every image, so a change does not rebuild the chunk.
 	uint64_t hash = 0; ///< Hash over the vertices, to detect whether a rebuild changed anything.
 };

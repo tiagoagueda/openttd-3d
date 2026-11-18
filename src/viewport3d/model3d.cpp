@@ -228,6 +228,18 @@ private:
 		}
 		Transform transform = parent * local;
 
+		/* Where smoke rises; not part of glTF itself, so it is in the extras of the node. */
+		if (node.contains("extras") && node.at("extras").is_object() && node.at("extras").contains("smoke")) {
+			for (const auto &item : node.at("extras").at("smoke")) {
+				auto v = item.get<std::vector<float>>();
+				if (v.size() < 3) continue;
+				std::array<float, 3> p = transform.Point({v[0], v[1], v[2]});
+				float size = v.size() > 3 ? v[3] : 1.0f;
+				/* From glTF axes to the frame of our models: front, left, up. */
+				this->model.smoke.push_back({p[2], p[0], p[1], size});
+			}
+		}
+
 		if (node.contains("mesh")) {
 			const nlohmann::json &mesh = this->json.at("meshes").at(node.at("mesh").get<size_t>());
 			for (const auto &primitive : mesh.at("primitives")) this->AddPrimitive(primitive, transform);

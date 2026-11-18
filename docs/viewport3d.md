@@ -258,6 +258,18 @@ What glows at night goes by the name of the material in the model files, so the 
 
 The patches of light are flat fans of triangles, made per model in `MakeLightPools()` in `renderer3d.cpp` and added to the picture after the model, just above the ground the model stands on. They do not follow slopes, and nothing is really lit by them: buildings next to a street lamp stay dark.
 
+## Life in towns
+
+These are looks only as well; nothing in the game changes and nothing is saved.
+
+* **Smoke from chimneys.** Models say where smoke rises: a list `smoke` in the `extras` of a node of the glTF file, each point the top of a chimney with its radius as a fourth number (`Model.smoke_at()` in OpenGFX3D). `PlaceModel()` in `terrain_mesh.cpp` turns each point into a moving part of kind `PartKind::Smoke`, and `PlaceSmoke()` puts a few puffs on it for every image: each rises, drifts with the wind of the weather, grows and fades, and starts over at the chimney. Puffs are the model of effect 0 (chimney smoke), see-through. Industries always smoke; of houses only some do, chosen by their place, more when it is cold or snowy (`PartScene::house_smoke`). The smoke the 2D game makes as effect vehicles is still drawn as well.
+* **Lighthouse.** Parts in the index can have `"night"`: such a part shows only after dusk, see-through by that much (`PartKind::Night`). The lighthouse has two beams of light that turn around its lamp; their material ends in `_glow`, so they shine.
+* **Street lamps.** Straight town streets with pavements and no lamps of the 2D game get a 3D street lamp on every tile, on alternate sides of the street at the kerb (`AddStreetLamps()`). Like other lamps they light up at night and cast a pool of light. `IsStreetLampPowered()` decides whether they get power; for now always. It is the place where the energy network can leave lamps dark in towns without power; they then use `roadside` model 5, a lamp that does not glow.
+* **People.** Straight stretches of pavement are found when a chunk is built (`AddWalkways()`, up to 16 tiles, ending at the edge of the chunk), with more people where more houses line the street. For every image, `Walkway::Place()` puts each person at a place that follows from the time: they walk up and down the stretch at their own pace, keep to the right and turn around at its ends. Each step shows one of four models (`pedestrian` 0 to 3, or 4 to 7 for people in a dress), and their clothes take a colour of their own through the colour of the owner. Fewer people are out at night and in rain, snow or fog, and none are drawn when the camera is far away.
+* **Snow and height.** More snow lies higher up (`SnowCover()` in `shaders/weather.sh`, used for the ground and for models): at five height levels lies the snow of the weather, at sea level half of it, and every level higher adds a tenth, up to more than twice as much. In winter the highest ground around (the top two fifths up to the highest height level of the chunks built so far, which counts as at least 16 levels) is white even when there is no snow below (`WithPeak()` in `view3d_gui.cpp`, `u_snowHeight`).
+
+All of these change by themselves, so while any is in view a new image is made for every frame, as with moving vehicles.
+
 ## Limitations
 
 * The renderer uses Vulkan, or OpenGL 3.3 when Vulkan is not available (Metal on macOS, untested). Direct3D is not used yet, because its shaders can only be compiled on Windows.

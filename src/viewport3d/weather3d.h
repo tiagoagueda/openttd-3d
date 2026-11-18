@@ -45,6 +45,7 @@ struct Weather3D {
 	float dry = 0; ///< How dry and yellow the grass is.
 	float wind_x = 0; ///< How far rain and snow drift along x for each unit they fall.
 	float wind_y = 0; ///< The same along y.
+	float peak = 0; ///< Height of the highest ground around in world units, set by the view; more snow lies higher up. 0 when snow does not depend on height.
 
 	/** Whether something moves by itself, so images have to be made all the time. */
 	bool IsMoving() const { return this->rain > 0.005f || this->snow > 0.005f || this->flash > 0.005f; }

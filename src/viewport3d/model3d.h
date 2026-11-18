@@ -39,6 +39,7 @@ struct Model3D {
 	size_t num_fixed_indices = 0; ///< Number of indices before the triangles of the load.
 	float load_depth = 0; ///< How far the load can sink into the vehicle, in units of the model.
 	std::vector<Vec3> lamps; ///< The middle of each lamp that casts light on the ground at night.
+	std::vector<std::array<float, 4>> smoke; ///< Where smoke rises, such as the tops of chimneys: x, y, z and about the radius of the chimney.
 };
 
 /** One model to draw somewhere on the map. */

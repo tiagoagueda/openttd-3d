@@ -69,6 +69,7 @@ class View3DWindow : public Window {
 		uint min_height = 0; ///< Lowest height level in the chunk; only valid when built.
 		uint max_height = 0; ///< Highest height level in the chunk; only valid when built.
 		std::vector<AnimatedPart> parts; ///< Parts of models in the chunk that move.
+		std::vector<Walkway> walkways; ///< Pavements in the chunk on which people walk.
 		std::map<TileIndex, std::vector<ModelInstance>> live; ///< Models in the chunk that change often, by tile.
 		std::vector<TileIndex> locks; ///< Locks in the chunk whose gates and water move.
 	};
@@ -118,6 +119,7 @@ class View3DWindow : public Window {
 	Vec3 zoom_anchor{}; ///< Spot on the ground below the cursor when zooming started.
 	bool view_changed = true; ///< Whether the camera or image size changed since the last render.
 	float hour = -2.0f; ///< The hour of the day the renderer has the light of; see GetView3DHour().
+	uint peak_level = 0; ///< Highest height level of the chunks built so far; more snow lies higher up.
 
 	bool main_view = false; ///< Whether this is the 3D view in place of the main view, rather than a window of its own.
 	Point main_scrollpos{INT_MIN, INT_MIN}; ///< Where the 2D main view was when we last looked; it moves us when it moves.
@@ -1035,10 +1037,7 @@ public:
 		this->vehicle_models.insert(this->vehicle_models.end(), this->lock_models.begin(), this->lock_models.end());
 		/* Moving parts of buildings are drawn anew for every image, like vehicles. */
 		float seconds = std::chrono::duration<float>(now - this->opened).count();
-		for (Renderer3D::ChunkID id : this->visible_chunks) {
-			for (const AnimatedPart &part : this->chunks[id].parts) this->vehicle_models.push_back(part.Place(seconds));
-			for (const auto &[tile, models] : this->chunks[id].live) this->vehicle_models.insert(this->vehicle_models.end(), models.begin(), models.end());
-		}
+		this->AddMovingParts(this->camera, this->visible_chunks, seconds, this->vehicle_models);
 		this->AddPreviewModels();
 		this->AddLabels(view_proj, view->current_x, view->current_y);
 		this->AddCursorModels(seconds);
@@ -1056,11 +1055,79 @@ public:
 
 		this->weather = weather;
 		this->weather_drawn = now;
-		this->renderer->SetWeather(weather);
+		this->renderer->SetWeather(this->WithPeak(weather));
 		this->renderer->Render(0, view->current_x, view->current_y, this->camera, this->visible_chunks, this->vehicle_sprites, this->vehicle_models, this->moving_water);
 		this->view_changed = false;
 		this->vehicle_hash = hash;
 		this->PollRenderer();
+	}
+
+	/**
+	 * The weather with the height of the highest ground seen, so that more snow lies higher up.
+	 * The highest ground counts as at least 16 height levels, so on flat maps no hill gets a white top of its own.
+	 * @param weather The weather.
+	 * @return The weather with Weather3D::peak.
+	 */
+	Weather3D WithPeak(Weather3D weather) const
+	{
+		static constexpr uint MIN_PEAK = 16;
+		weather.peak = std::max(this->peak_level, MIN_PEAK) * HEIGHT_LEVEL_SIZE;
+		return weather;
+	}
+
+	/**
+	 * What moving parts, smoke and people look like at this moment.
+	 * @param seconds Seconds since the window opened.
+	 * @return The scene.
+	 */
+	PartScene GetPartScene(float seconds) const
+	{
+		PartScene scene;
+		scene.seconds = seconds;
+		scene.night = GetLighting3D(this->hour).lamps;
+		const Weather3D &w = this->weather;
+		/* People light their fires when it is cold, and fewer of them in summer. */
+		scene.house_smoke = std::clamp(0.22f + 0.6f * w.bare + 0.4f * w.cover + 0.15f * w.overcast - 0.15f * w.dry, 0.1f, 0.95f);
+		/* Without wind smoke still leans a little, so it does not look like a column. */
+		scene.wind_x = 0.18f + 1.6f * w.wind_x;
+		scene.wind_y = 0.08f + 1.6f * w.wind_y;
+		scene.people = (1.0f - 0.75f * scene.night) * (1.0f - 0.65f * std::max(w.rain, w.snow)) * (1.0f - 0.3f * w.fog);
+		if (this->model_pack != nullptr) {
+			if (const ModelPack::Entry *puff = this->model_pack->Find(ModelKind::Effect, 0, 0); puff != nullptr) {
+				scene.puff = puff->model;
+				scene.puff_scale = puff->scale;
+			}
+			for (uint i = 0; i < scene.walkers.size(); i++) {
+				const ModelPack::Entry *walker = this->model_pack->Find(ModelKind::Pedestrian, 0, i);
+				scene.walkers[i] = walker == nullptr ? UINT_MAX : walker->model;
+			}
+		} else {
+			scene.walkers.fill(UINT_MAX);
+		}
+		return scene;
+	}
+
+	/**
+	 * Add what moves by itself in some chunks: the moving parts of buildings, smoke from chimneys, people on the pavements, and live models such as signals.
+	 * @param camera The camera that looks at them.
+	 * @param chunks The chunks.
+	 * @param seconds Seconds since the window opened.
+	 * @param models The models to add to.
+	 */
+	void AddMovingParts(const Camera3D &camera, std::span<const Renderer3D::ChunkID> chunks, float seconds, std::vector<ModelInstance> &models)
+	{
+		PartScene scene = this->GetPartScene(seconds);
+		/* People are too small to see from far away. */
+		static constexpr float PEOPLE_DISTANCE = 2200.0f;
+		const bool people = camera.distance < PEOPLE_DISTANCE;
+		for (Renderer3D::ChunkID id : chunks) {
+			const ChunkState &chunk = this->chunks[id];
+			for (const AnimatedPart &part : chunk.parts) part.Place(scene, models);
+			if (people) {
+				for (const Walkway &walkway : chunk.walkways) walkway.Place(scene, models);
+			}
+			for (const auto &[tile, live] : chunk.live) models.insert(models.end(), live.begin(), live.end());
+		}
 	}
 
 	/**
@@ -1341,16 +1408,13 @@ private:
 			BuildVehicleSprites(view.camera, Frustum3D(view_proj), *this->atlas, this->model_pack.get(), this->small_sprites, this->small_places, this->small_models);
 			this->small_models.insert(this->small_models.end(), this->lock_models.begin(), this->lock_models.end());
 			float seconds = std::chrono::duration<float>(now - this->opened).count();
-			for (Renderer3D::ChunkID id : this->small_chunks) {
-				for (const AnimatedPart &part : this->chunks[id].parts) this->small_models.push_back(part.Place(seconds));
-				for (const auto &[tile, models] : this->chunks[id].live) this->small_models.insert(this->small_models.end(), models.begin(), models.end());
-			}
+			this->AddMovingParts(view.camera, this->small_chunks, seconds, this->small_models);
 			uint64_t hash = HashMoving(this->small_sprites, this->small_models, this->small_water);
 			/* Rain, snow and a change of the weather need a new image as well. */
 			Weather3D weather = GetWeather3D();
 			if (!view.changed && hash == view.hash && !weather.IsMoving() && weather.LooksLike(view.weather)) continue;
 			view.weather = weather;
-			this->renderer->SetWeather(weather);
+			this->renderer->SetWeather(this->WithPeak(weather));
 
 			this->renderer->UpdateGroundTextures(*this->ground_textures);
 			this->renderer->UpdateSpriteAtlas(*this->atlas);
@@ -1597,7 +1661,9 @@ private:
 					chunk.hash = this->scratch_mesh.hash;
 					chunk.min_height = this->scratch_mesh.min_height;
 					chunk.max_height = this->scratch_mesh.max_height;
+					this->peak_level = std::max(this->peak_level, chunk.max_height);
 					chunk.parts = this->scratch_mesh.parts;
+					chunk.walkways = this->scratch_mesh.walkways;
 					chunk.live = this->scratch_mesh.live;
 					chunk.locks = this->scratch_mesh.locks;
 					this->RememberTileKeys(cx, cy);
