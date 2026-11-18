@@ -10,6 +10,7 @@
 #include "../stdafx.h"
 #include "view3d_gui.h"
 #include "camera3d.h"
+#include "lighting3d.h"
 #include "renderer3d.h"
 #include "vehicle_sprites.h"
 #include "terrain_mesh.h"
@@ -113,6 +114,7 @@ class View3DWindow : public Window {
 	bool zoom_anchored = false; ///< Whether zooming keeps #zoom_anchor in place on the screen.
 	Vec3 zoom_anchor{}; ///< Spot on the ground below the cursor when zooming started.
 	bool view_changed = true; ///< Whether the camera or image size changed since the last render.
+	float hour = -2.0f; ///< The hour of the day the renderer has the light of; see GetView3DHour().
 
 	bool main_view = false; ///< Whether this is the 3D view in place of the main view, rather than a window of its own.
 	Point main_scrollpos{INT_MIN, INT_MIN}; ///< Where the 2D main view was when we last looked; it moves us when it moves.
@@ -962,6 +964,16 @@ public:
 		if (this->main_view) this->MoveMainView();
 		this->PollRenderer();
 		if (this->renderer->IsBusy()) return;
+
+		/* The light changes slowly; a new image for it is only needed now and then. */
+		float hour = GetView3DHour();
+		if (hour >= 0) hour = std::round(hour * 240.0f) / 240.0f;
+		if (hour != this->hour) {
+			this->hour = hour;
+			this->renderer->SetLighting(GetLighting3D(hour));
+			this->view_changed = true;
+			for (auto &small : this->small_views) small.changed = true;
+		}
 
 		/* Pictures for construction windows are made once, and come first. */
 		if (this->RenderPicture()) return;

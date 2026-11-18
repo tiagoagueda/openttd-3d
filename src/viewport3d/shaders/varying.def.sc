@@ -14,3 +14,4 @@ vec4 i_data3     : TEXCOORD4;
 vec4 i_data4     : TEXCOORD3;
 vec2 v_haze      : TEXCOORD2 = vec2(0.0, 0.0);
 vec3 v_tile      : TEXCOORD3 = vec3(0.0, 0.0, 0.0);
+vec3 v_local     : TEXCOORD4 = vec3(0.0, 0.0, 0.0);

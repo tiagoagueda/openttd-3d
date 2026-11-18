@@ -53,6 +53,7 @@ static constexpr float SPRITE_PIXEL_SIZE = 0.35355339f;
 struct Vec3 {
 	float x = 0, y = 0, z = 0;
 
+	bool operator==(const Vec3 &other) const = default;
 	Vec3 operator+(const Vec3 &o) const { return {this->x + o.x, this->y + o.y, this->z + o.z}; }
 	Vec3 operator-(const Vec3 &o) const { return {this->x - o.x, this->y - o.y, this->z - o.z}; }
 	Vec3 operator*(float f) const { return {this->x * f, this->y * f, this->z * f}; }

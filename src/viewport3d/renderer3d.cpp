@@ -9,6 +9,7 @@
 
 #include "../stdafx.h"
 #include "renderer3d.h"
+#include "lighting3d.h"
 #include "model_pack.h"
 #include "../core/math_func.hpp"
 #include "../debug.h"
@@ -97,14 +98,21 @@ struct GpuModel {
 	uint32_t num_indices = 0; ///< Number of indices.
 	uint32_t num_fixed_indices = 0; ///< Number of indices before the triangles of the load.
 	float load_depth = 0; ///< How far the load can sink into the vehicle.
+	bgfx::VertexBufferHandle pool_vertices = BGFX_INVALID_HANDLE; ///< The light that the lamps of the model cast on the ground at night.
+	bgfx::IndexBufferHandle pool_indices = BGFX_INVALID_HANDLE; ///< The triangles of that.
+	uint32_t num_pool_indices = 0; ///< Number of indices of that.
 };
 
 struct Renderer3D::Impl {
 	bgfx::VertexLayout model_layout;
 	bgfx::ProgramHandle model_program = BGFX_INVALID_HANDLE;
 	bgfx::UniformHandle model_tint = BGFX_INVALID_HANDLE;
-	bgfx::UniformHandle model_sun = BGFX_INVALID_HANDLE;
-	bgfx::UniformHandle model_light = BGFX_INVALID_HANDLE;
+	Lighting3D lighting; ///< The light of the moment.
+	bgfx::UniformHandle light_ambient = BGFX_INVALID_HANDLE; ///< Light from all around, and how much lamps glow.
+	bgfx::UniformHandle light_direct = BGFX_INVALID_HANDLE; ///< Light from the sun or the moon, and the share of windows that is lit.
+	bgfx::UniformHandle light_direction = BGFX_INVALID_HANDLE; ///< Direction towards the sun or the moon.
+	bgfx::UniformHandle sky_sun = BGFX_INVALID_HANDLE; ///< Where the sun is in the sky.
+	bgfx::UniformHandle sky_moon = BGFX_INVALID_HANDLE; ///< Where the moon is in the sky.
 	std::vector<GpuModel> models;
 	bgfx::UniformHandle model_sampler = BGFX_INVALID_HANDLE;
 	bgfx::TextureHandle model_textures = BGFX_INVALID_HANDLE; ///< Texture array with the textures of the models; ModelVertex::texture is the layer.
@@ -299,8 +307,11 @@ static bgfx::ShaderHandle CreateShader(const ShaderVariants &variants)
 	}
 	impl.model_program = bgfx::createProgram(CreateShader(SHADER_VARIANTS(vs_model)), CreateShader(SHADER_VARIANTS(fs_model)), true);
 	impl.model_tint = bgfx::createUniform("u_modelTint", bgfx::UniformType::Vec4);
-	impl.model_sun = bgfx::createUniform("u_modelSun", bgfx::UniformType::Vec4);
-	impl.model_light = bgfx::createUniform("u_modelLight", bgfx::UniformType::Vec4);
+	impl.light_ambient = bgfx::createUniform("u_lightAmbient", bgfx::UniformType::Vec4);
+	impl.light_direct = bgfx::createUniform("u_lightDirect", bgfx::UniformType::Vec4);
+	impl.light_direction = bgfx::createUniform("u_lightDirection", bgfx::UniformType::Vec4);
+	impl.sky_sun = bgfx::createUniform("u_skySun", bgfx::UniformType::Vec4);
+	impl.sky_moon = bgfx::createUniform("u_skyMoon", bgfx::UniformType::Vec4);
 	impl.sprite_axes = bgfx::createUniform("u_spriteAxes", bgfx::UniformType::Vec4);
 	impl.sprite_nearer = bgfx::createUniform("u_spriteNearer", bgfx::UniformType::Vec4);
 	/* Without smaller versions of the atlas: sprites next to each other would blend into one another. */
@@ -400,13 +411,16 @@ Renderer3D::~Renderer3D()
 	for (GpuModel &model : impl.models) {
 		if (bgfx::isValid(model.vertices)) bgfx::destroy(model.vertices);
 		if (bgfx::isValid(model.indices)) bgfx::destroy(model.indices);
+		if (bgfx::isValid(model.pool_vertices)) bgfx::destroy(model.pool_vertices);
+		if (bgfx::isValid(model.pool_indices)) bgfx::destroy(model.pool_indices);
 	}
 	if (bgfx::isValid(impl.model_program)) bgfx::destroy(impl.model_program);
 	if (bgfx::isValid(impl.model_sampler)) bgfx::destroy(impl.model_sampler);
 	if (bgfx::isValid(impl.model_textures)) bgfx::destroy(impl.model_textures);
 	if (bgfx::isValid(impl.model_tint)) bgfx::destroy(impl.model_tint);
-	if (bgfx::isValid(impl.model_sun)) bgfx::destroy(impl.model_sun);
-	if (bgfx::isValid(impl.model_light)) bgfx::destroy(impl.model_light);
+	for (bgfx::UniformHandle handle : {impl.light_ambient, impl.light_direct, impl.light_direction, impl.sky_sun, impl.sky_moon}) {
+		if (bgfx::isValid(handle)) bgfx::destroy(handle);
+	}
 	if (bgfx::isValid(impl.shadow_program)) bgfx::destroy(impl.shadow_program);
 	if (bgfx::isValid(impl.sprite_shadow_program)) bgfx::destroy(impl.sprite_shadow_program);
 	if (bgfx::isValid(impl.model_instanced_program)) bgfx::destroy(impl.model_instanced_program);
@@ -598,6 +612,79 @@ void Renderer3D::SetFarModel(uint id, uint far)
 	impl.far[id] = far;
 }
 
+/**
+ * Make the light that the lamps of a model cast on the ground at night: flat patches just above the ground the model
+ * stands on, bright in the middle and black at the rim, to be added to what is below them.
+ * A lamp high up lights a circle below it. A lamp low down is a headlight and lights a stretch in front of the vehicle;
+ * lamps at its back are tail lights and light nothing. Lamps on the ground, like those along runways, light a small circle.
+ * @param model The model.
+ * @return The patches; empty when the model has no lamps.
+ */
+static Model3D MakeLightPools(const Model3D &model)
+{
+	static constexpr int SIDES = 14;
+	static constexpr float HEIGHT = 0.14f;
+	/* Brightness at the middle, half way and at the rim. */
+	static constexpr float RINGS[3] = {1.0f, 0.42f, 0.0f};
+
+	Model3D pools;
+	bool headlights_in_front = std::ranges::any_of(model.lamps, [](const Vec3 &lamp) { return lamp.z >= 0.6f && lamp.z <= 3.0f && lamp.x > 0; });
+	for (const Vec3 &lamp : model.lamps) {
+		float cx = lamp.x, cy = lamp.y, along = 0, across = 0, bright = 1.0f;
+		/* Unit vector along the patch. */
+		float dx = 1, dy = 0;
+		if (lamp.z > 3.0f) {
+			along = across = std::clamp(lamp.z * 1.3f, 4.5f, 9.0f);
+			bright = 0.85f;
+		} else if (lamp.z < 0.6f) {
+			along = across = 2.2f;
+			bright = 0.6f;
+		} else {
+			if (headlights_in_front && lamp.x <= 0) continue;
+			if (std::abs(lamp.x) < std::abs(lamp.y)) {
+				dx = 0;
+				dy = lamp.y < 0 ? -1.0f : 1.0f;
+			} else {
+				dx = lamp.x < 0 ? -1.0f : 1.0f;
+			}
+			along = 6.0f;
+			across = 2.4f;
+			cx += dx * (along - 0.5f);
+			cy += dy * (along - 0.5f);
+			bright = 0.7f;
+		}
+
+		uint32_t first = static_cast<uint32_t>(pools.vertices.size());
+		auto add = [&](float x, float y, float level) {
+			uint8_t r = static_cast<uint8_t>(255 * level * bright), g = static_cast<uint8_t>(214 * level * bright), b = static_cast<uint8_t>(140 * level * bright);
+			pools.vertices.push_back({x, y, HEIGHT, 0, 0, 1, r, g, b, ModelVertex::LAMP, 0, 0, -1});
+		};
+		add(cx, cy, RINGS[0]);
+		for (int ring = 1; ring <= 2; ring++) {
+			for (int i = 0; i < SIDES; i++) {
+				float angle = 6.2831853f * i / SIDES;
+				float u = std::cos(angle) * along * ring * 0.5f, v = std::sin(angle) * across * ring * 0.5f;
+				add(cx + dx * u - dy * v, cy + dy * u + dx * v, RINGS[ring]);
+			}
+		}
+		for (uint32_t i = 0; i < SIDES; i++) {
+			uint32_t next = (i + 1) % SIDES;
+			pools.indices.insert(pools.indices.end(), {first, first + 1 + i, first + 1 + next});
+			pools.indices.insert(pools.indices.end(), {first + 1 + i, first + 1 + SIDES + i, first + 1 + SIDES + next, first + 1 + i, first + 1 + SIDES + next, first + 1 + next});
+		}
+	}
+	return pools;
+}
+
+/**
+ * Set the light to draw the next images with.
+ * @param lighting The light.
+ */
+void Renderer3D::SetLighting(const Lighting3D &lighting)
+{
+	this->impl->lighting = lighting;
+}
+
 void Renderer3D::SetModel(uint id, const Model3D &model)
 {
 	Impl &impl = *this->impl;
@@ -605,8 +692,17 @@ void Renderer3D::SetModel(uint id, const Model3D &model)
 	GpuModel &gpu = impl.models[id];
 	if (bgfx::isValid(gpu.vertices)) bgfx::destroy(gpu.vertices);
 	if (bgfx::isValid(gpu.indices)) bgfx::destroy(gpu.indices);
+	if (bgfx::isValid(gpu.pool_vertices)) bgfx::destroy(gpu.pool_vertices);
+	if (bgfx::isValid(gpu.pool_indices)) bgfx::destroy(gpu.pool_indices);
 	gpu = {};
 	if (model.vertices.empty() || model.indices.empty()) return;
+
+	Model3D pools = MakeLightPools(model);
+	if (!pools.indices.empty()) {
+		gpu.pool_vertices = bgfx::createVertexBuffer(bgfx::copy(pools.vertices.data(), static_cast<uint32_t>(pools.vertices.size() * sizeof(ModelVertex))), impl.model_layout);
+		gpu.pool_indices = bgfx::createIndexBuffer(bgfx::copy(pools.indices.data(), static_cast<uint32_t>(pools.indices.size() * sizeof(uint32_t))), BGFX_BUFFER_INDEX32);
+		gpu.num_pool_indices = static_cast<uint32_t>(pools.indices.size());
+	}
 
 	gpu.vertices = bgfx::createVertexBuffer(bgfx::copy(model.vertices.data(), static_cast<uint32_t>(model.vertices.size() * sizeof(ModelVertex))), impl.model_layout);
 	gpu.indices = bgfx::createIndexBuffer(bgfx::copy(model.indices.data(), static_cast<uint32_t>(model.indices.size() * sizeof(uint32_t))), BGFX_BUFFER_INDEX32);
@@ -804,7 +900,11 @@ void Renderer3D::Render(uint target_id, uint width, uint height, const Camera3D 
 	bgfx::touch(VIEW_SCENE);
 
 	/* The shadow map looks from the sun at the area around the point the camera looks at; further away there are no shadows. */
-	static constexpr float MODEL_SUN[4] = {-0.4683f, 0.5620f, 0.6817f, 0};
+	/* Pictures for windows, which have a background of their own, are always taken by day. */
+	const Lighting3D lighting = this->background != 0 ? Lighting3D{} : impl.lighting;
+	const float MODEL_SUN[4] = {lighting.direction.x, lighting.direction.y, lighting.direction.z, 0};
+	const float light_ambient[4] = {lighting.ambient[0], lighting.ambient[1], lighting.ambient[2], lighting.lamps};
+	const float light_direct[4] = {lighting.direct[0], lighting.direct[1], lighting.direct[2], lighting.windows};
 	ShadowView shadow = GetShadowView(camera, Vec3{MODEL_SUN[0], MODEL_SUN[1], MODEL_SUN[2]}, bgfx::getCaps()->homogeneousDepth, bgfx::getCaps()->originBottomLeft);
 	bgfx::setViewFrameBuffer(VIEW_SHADOW, impl.shadow_map);
 	bgfx::setViewRect(VIEW_SHADOW, 0, 0, SHADOW_MAP_SIZE, SHADOW_MAP_SIZE);
@@ -864,8 +964,10 @@ void Renderer3D::Render(uint target_id, uint width, uint height, const Camera3D 
 		WORLD_Z_SCALE / std::max(0.35f, std::sin(camera.pitch))};
 
 	/* Far away things fade into the colour of the sky at the horizon; the sky gets deeper blue above it. */
-	static constexpr float HAZE_COLOUR[4] = {0.80f, 0.86f, 0.92f, 1};
-	static constexpr float SKY_COLOUR[4] = {0.40f, 0.60f, 0.86f, 1};
+	const float HAZE_COLOUR[4] = {lighting.haze[0], lighting.haze[1], lighting.haze[2], 1};
+	const float SKY_COLOUR[4] = {lighting.sky[0], lighting.sky[1], lighting.sky[2], lighting.stars};
+	const float sky_sun[4] = {lighting.sun.x, lighting.sun.y, lighting.sun.z, 0};
+	const float sky_moon[4] = {lighting.moon.x, lighting.moon.y, lighting.moon.z, 0};
 	/* Under clouds the sky and the haze turn grey; fog, and rain and snow a little, bring the haze nearer and make it thicker;
 	 * lightning lights it all up. */
 	const float mist = std::max({weather.fog, 0.3f * weather.rain, 0.4f * weather.snow});
@@ -897,8 +999,8 @@ void Renderer3D::Render(uint target_id, uint width, uint height, const Camera3D 
 	const float terrain[4] = {terrain_textures ? static_cast<float>(GROUND_TEXTURE_TERRAIN_END) : 0.0f, terrain_textures ? 1.0f / impl.terrain_tiles : 1.0f,
 		static_cast<float>(GROUND_TEXTURE_BEACH), static_cast<float>(GROUND_TEXTURE_SHALLOWS)};
 	bgfx::setUniform(impl.terrain, terrain);
-	/* x: first layer that is mixed. y: layer of asphalt, followed by gravel and paving. z: the light of flat ground, as in BuildTerrainChunkMesh(), at half brightness. */
-	const float layers[4] = {terrain_textures && bgfx::isValid(impl.ground_mix) ? static_cast<float>(GROUND_TEXTURE_END) : 4096.0f, static_cast<float>(GROUND_TEXTURE_ASPHALT), 0.5f * (0.45f + 0.80f * 0.6817f), 0};
+	/* x: first layer that is mixed. y: layer of asphalt, followed by gravel and paving. z: the light of flat ground, as in BuildTerrainChunkMesh(), at half brightness. w: world units per height level. */
+	const float layers[4] = {terrain_textures && bgfx::isValid(impl.ground_mix) ? static_cast<float>(GROUND_TEXTURE_END) : 4096.0f, static_cast<float>(GROUND_TEXTURE_ASPHALT), 0.5f * (Lighting3D::REFERENCE_AMBIENT + Lighting3D::REFERENCE_DIRECT * Lighting3D::REFERENCE_SUN.z), HEIGHT_LEVEL_SIZE};
 	bgfx::setUniform(impl.layers, layers);
 	/* Draws are sorted before they are made, so a draw may come before the one these were set for; and they would
 	 * then keep the values of the previous image, which can be of another view. So every draw sets them. */
@@ -910,6 +1012,9 @@ void Renderer3D::Render(uint target_id, uint width, uint height, const Camera3D 
 		bgfx::setUniform(impl.water, water);
 		bgfx::setUniform(impl.terrain, terrain);
 		bgfx::setUniform(impl.layers, layers);
+		bgfx::setUniform(impl.light_ambient, light_ambient);
+		bgfx::setUniform(impl.light_direct, light_direct);
+		bgfx::setUniform(impl.light_direction, MODEL_SUN);
 		set_shadow();
 	};
 
@@ -920,13 +1025,17 @@ void Renderer3D::Render(uint target_id, uint width, uint height, const Camera3D 
 		bgfx::setUniform(impl.sky_matrix, inverse.m.data());
 		bgfx::setUniform(impl.haze_colour, haze_colour);
 		bgfx::setUniform(impl.sky_colour, sky_colour);
+		bgfx::setUniform(impl.sky_sun, sky_sun);
+		bgfx::setUniform(impl.sky_moon, sky_moon);
 		bgfx::setVertexBuffer(0, impl.sky_vertices);
 		bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_DEPTH_TEST_LEQUAL);
 		bgfx::submit(VIEW_SCENE, impl.sky_program);
 	}
 
-	/* The same light as the terrain gets in BuildTerrainChunkMesh(). */
-	static constexpr float MODEL_LIGHT[4] = {0.45f, 0.80f, 0, 0};
+	/* At night the light of lamps is added to the ground below them, more as it gets darker. */
+	const bool light_pools = lighting.lamps > 0.02f;
+	const uint32_t pool_strength = static_cast<uint32_t>(std::clamp(lighting.lamps * 0.62f, 0.0f, 1.0f) * 255.0f) * 0x01010101U;
+	static constexpr uint64_t POOL_STATE = BGFX_STATE_WRITE_RGB | BGFX_STATE_DEPTH_TEST_LEQUAL | BGFX_STATE_BLEND_FUNC(BGFX_STATE_BLEND_FACTOR, BGFX_STATE_BLEND_ONE);
 	/* Copies of the same model are drawn together when the GPU can, which matters for the thousands of trees in a forest. */
 	const bool instancing = bgfx::isValid(impl.model_instanced_program) && bgfx::isValid(impl.shadow_instanced_program);
 	if (impl.batches.size() < impl.models.size()) impl.batches.resize(impl.models.size());
@@ -962,8 +1071,6 @@ void Renderer3D::Render(uint target_id, uint width, uint height, const Camera3D 
 			bgfx::setVertexBuffer(0, gpu.vertices);
 			bgfx::setIndexBuffer(gpu.indices, first, count);
 			bgfx::setUniform(impl.model_tint, instance.tint.data());
-			bgfx::setUniform(impl.model_sun, MODEL_SUN);
-			bgfx::setUniform(impl.model_light, MODEL_LIGHT);
 			bgfx::setTexture(0, impl.model_sampler, impl.model_textures);
 			set_scene();
 			if (see_through) {
@@ -973,6 +1080,17 @@ void Renderer3D::Render(uint target_id, uint width, uint height, const Camera3D 
 			}
 			bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A | BGFX_STATE_WRITE_Z | BGFX_STATE_DEPTH_TEST_LESS);
 			bgfx::submit(VIEW_SCENE, impl.model_program);
+
+			if (light_pools && first == 0 && gpu.num_pool_indices != 0) {
+				bgfx::setTransform(transform.m.data());
+				bgfx::setVertexBuffer(0, gpu.pool_vertices);
+				bgfx::setIndexBuffer(gpu.pool_indices, 0, gpu.num_pool_indices);
+				bgfx::setUniform(impl.model_tint, instance.tint.data());
+				bgfx::setTexture(0, impl.model_sampler, impl.model_textures);
+				set_scene();
+				bgfx::setState(POOL_STATE, pool_strength);
+				bgfx::submit(VIEW_SCENE, impl.model_program);
+			}
 
 			if (!impl.shadows) return;
 			bgfx::setTransform(transform.m.data());
@@ -1082,12 +1200,20 @@ void Renderer3D::Render(uint target_id, uint width, uint height, const Camera3D 
 			bgfx::setVertexBuffer(0, gpu.vertices);
 			bgfx::setIndexBuffer(gpu.indices, 0, gpu.num_fixed_indices);
 			bgfx::setInstanceDataBuffer(&copies);
-			bgfx::setUniform(impl.model_sun, MODEL_SUN);
-			bgfx::setUniform(impl.model_light, MODEL_LIGHT);
 			bgfx::setTexture(0, impl.model_sampler, impl.model_textures);
 			set_scene();
 			bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A | BGFX_STATE_WRITE_Z | BGFX_STATE_DEPTH_TEST_LESS);
 			bgfx::submit(VIEW_SCENE, impl.model_instanced_program);
+
+			if (light_pools && gpu.num_pool_indices != 0) {
+				bgfx::setVertexBuffer(0, gpu.pool_vertices);
+				bgfx::setIndexBuffer(gpu.pool_indices, 0, gpu.num_pool_indices);
+				bgfx::setInstanceDataBuffer(&copies);
+				bgfx::setTexture(0, impl.model_sampler, impl.model_textures);
+				set_scene();
+				bgfx::setState(POOL_STATE, pool_strength);
+				bgfx::submit(VIEW_SCENE, impl.model_instanced_program);
+			}
 
 			if (!impl.shadows) continue;
 			bgfx::setVertexBuffer(0, gpu.vertices);

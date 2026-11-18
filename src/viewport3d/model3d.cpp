@@ -11,6 +11,8 @@
 #include "model3d.h"
 #include "../3rdparty/nlohmann/json.hpp"
 
+#include <cfloat>
+
 #include "../safeguards.h"
 
 /*
@@ -114,6 +116,7 @@ private:
 	const ModelTextureFinder &find_texture; ///< Finds the textures.
 	std::map<size_t, int> textures; ///< The textures that were looked up, by the number of their image in the file.
 	std::vector<uint32_t> load_indices; ///< The triangles of the load, until they are added after the others.
+	uint32_t windows = 0; ///< Makes the numbers of the windows of one kind of glass differ from those of the next.
 	nlohmann::json json; ///< The scene description.
 	std::span<const uint8_t> bin; ///< The binary data that the scene description refers to.
 
@@ -234,6 +237,65 @@ private:
 		}
 	}
 
+	/**
+	 * Find the separate pieces of glass or lamp in the triangles that were just added: triangles that share a corner are one piece.
+	 * Each window gets a number, so the game can light them one by one; each lamp is noted with its place, for the light it casts.
+	 * @param first The first of the new corners.
+	 * @param first_index The first of the new indices.
+	 * @param lamps Whether the pieces are lamps rather than windows.
+	 */
+	void AddGlowingPieces(uint32_t first, size_t first_index, bool lamps)
+	{
+		size_t count = this->model.vertices.size() - first;
+		std::vector<uint32_t> piece(count);
+		std::iota(piece.begin(), piece.end(), 0);
+		auto find = [&](uint32_t i) {
+			while (piece[i] != i) i = piece[i] = piece[piece[i]];
+			return i;
+		};
+		/* Corners at the same place are the same corner. */
+		std::map<std::array<int, 3>, uint32_t> places;
+		for (uint32_t i = 0; i < count; i++) {
+			const ModelVertex &v = this->model.vertices[first + i];
+			auto [it, inserted] = places.try_emplace({static_cast<int>(std::lround(v.x * 64)), static_cast<int>(std::lround(v.y * 64)), static_cast<int>(std::lround(v.z * 64))}, i);
+			if (!inserted) piece[find(i)] = find(it->second);
+		}
+		for (size_t i = first_index; i + 2 < this->model.indices.size(); i += 3) {
+			uint32_t a = find(this->model.indices[i] - first);
+			piece[find(this->model.indices[i + 1] - first)] = a;
+			piece[find(this->model.indices[i + 2] - first)] = a;
+		}
+
+		struct Box {
+			Vec3 min{FLT_MAX, FLT_MAX, FLT_MAX};
+			Vec3 max{-FLT_MAX, -FLT_MAX, -FLT_MAX};
+		};
+		std::map<uint32_t, Box> boxes;
+		for (uint32_t i = 0; i < count; i++) {
+			const ModelVertex &v = this->model.vertices[first + i];
+			Box &box = boxes[find(i)];
+			box.min = {std::min(box.min.x, v.x), std::min(box.min.y, v.y), std::min(box.min.z, v.z)};
+			box.max = {std::max(box.max.x, v.x), std::max(box.max.y, v.y), std::max(box.max.z, v.z)};
+		}
+		if (lamps) {
+			for (const auto &[root, box] : boxes) this->model.lamps.push_back((box.min + box.max) * 0.5f);
+			return;
+		}
+		for (uint32_t i = 0; i < count; i++) {
+			ModelVertex &v = this->model.vertices[first + i];
+			const Box &box = boxes[find(i)];
+			Vec3 size = box.max - box.min;
+			if (std::max({size.x, size.y, size.z}) > 3.2f) {
+				v.a = ModelVertex::GLASS;
+				continue;
+			}
+			/* Windows are numbered by where they are, so the same model always gets the same numbers. */
+			uint32_t number = static_cast<uint32_t>(std::lround(box.min.x * 7) * 3 + std::lround(box.min.y * 7) * 5 + std::lround(box.min.z * 7) * 11) + this->windows;
+			v.a = static_cast<uint8_t>(ModelVertex::WINDOW + number % ModelVertex::NUM_WINDOWS * 8);
+		}
+		this->windows += 3;
+	}
+
 	void AddPrimitive(const nlohmann::json &primitive, const Transform &transform)
 	{
 		if (primitive.value("mode", 4) != 4) return; // Only triangles.
@@ -254,6 +316,7 @@ private:
 		bool is_load = false;
 		int texture = -1;
 		Accessor coordinates{};
+		bool casts_light = false;
 		if (primitive.contains("material")) {
 			const nlohmann::json &material = this->json.at("materials").at(primitive.at("material").get<size_t>());
 			std::vector<float> factor{1, 1, 1, 1};
@@ -276,6 +339,13 @@ private:
 				colour[3] = has("dark") || has("blue") ? ModelVertex::LEAF_EVERGREEN : ModelVertex::LEAF;
 			}
 			is_load = name.starts_with("load");
+			/* What glows at night goes by the name of the material as well. */
+			if (name.find("glass") != std::string::npos) {
+				colour[3] = ModelVertex::WINDOW;
+			} else if (name == "light" || name.ends_with("_lamp") || name.ends_with("_on") || name.ends_with("_glow") || name.ends_with("ufo_light")) {
+				colour[3] = ModelVertex::LAMP;
+				casts_light = name == "light" || name.ends_with("_lamp");
+			}
 		}
 
 		/* From glTF axes to the frame of our models: front, left, up. */
@@ -331,6 +401,8 @@ private:
 				}
 			}
 		}
+
+		if (colour[3] == ModelVertex::WINDOW || casts_light) this->AddGlowingPieces(first, first_index, casts_light);
 
 		if (is_load) {
 			this->load_indices.insert(this->load_indices.end(), this->model.indices.begin() + first_index, this->model.indices.end());

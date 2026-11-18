@@ -48,6 +48,7 @@ public:
 	void UpdateSpriteAtlas(SpriteAtlas &atlas);
 
 	void SetModelTextures(uint size, std::span<const std::vector<uint32_t>> textures);
+	void SetLighting(const struct Lighting3D &lighting);
 	void SetModel(uint id, const Model3D &model);
 	void SetFarModel(uint id, uint far);
 	void SetChunk(ChunkID id, const TerrainChunkMesh &mesh);

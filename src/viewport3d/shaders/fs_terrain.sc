@@ -19,6 +19,7 @@ SAMPLER2DARRAY(s_terrain, 2);
 SAMPLER2DARRAY(s_mix, 3);
 #include "shadow.sh"
 #include "haze.sh"
+#include "light.sh"
 
 /* x: layer of the water texture. y: first layer of the coasts made from sprites. z: one past their last layer. w: seconds, for the movement. */
 uniform vec4 u_water;
@@ -26,7 +27,7 @@ uniform vec4 u_water;
  * z: layer of the beach. w: layer of the water over coasts. */
 uniform vec4 u_terrain;
 /* x: first layer of s_ground that is mixed with the textures of s_terrain through s_mix. y: layer of asphalt in s_terrain, followed by gravel and paving.
- * z: the light of flat ground at half brightness, which the colours of sprites already have. */
+ * z: the light of flat ground at half brightness, which the colours of sprites already have. w: world units per height level. */
 uniform vec4 u_layers;
 
 /* Layer of full grass, which the beach turns into higher up. */
@@ -174,7 +175,14 @@ void main()
 
 	ground = GroundWeather(ground, v_texcoord0.xy, land, v_color0.g * 2.0);
 
-	/* In shadow only the light from all around is left, about half of the light on flat ground. */
+	/* The colour of the vertices has the light of late morning in it. To light the ground for the time of day, find which way
+	 * the ground faces from how its position changes across the screen. The baked light makes slopes steeper than they are, so do the same. */
+	vec3 world = vec3(v_texcoord0.xy * 16.0, v_tile.z * u_layers.w);
+	vec3 normal = cross(dFdx(world), dFdy(world));
+	vec3 eye = mul(u_invView, vec4(0.0, 0.0, 0.0, 1.0)).xyz;
+	if (dot(normal, eye - world) < 0.0) normal = -normal;
+	normal = normalize(vec3(normal.xy * (12.0 / u_layers.w), normal.z));
+	/* In shadow only the light from all around is left. */
 	float sun = ShadowVisibility(v_texcoord1);
-	gl_FragColor = vec4(ApplyHaze(ground * v_color0.rgb * 2.0 * mix(0.5, 1.0, sun), v_haze.x), alpha);
+	gl_FragColor = vec4(ApplyHaze(ground * v_color0.rgb * 2.0 * Relight(normal, sun), v_haze.x), alpha);
 }

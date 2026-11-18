@@ -2,6 +2,8 @@ add_files(
     camera3d.h
     ground_textures.cpp
     ground_textures.h
+    lighting3d.cpp
+    lighting3d.h
     model3d.cpp
     model3d.h
     model_pack.cpp

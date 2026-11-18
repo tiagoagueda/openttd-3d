@@ -78,6 +78,7 @@ All code lives in `src/viewport3d/`:
 | `tile_sprites.h` | Asks a tile which sprites the 2D game draws for it. The implementation is `CollectTileSprites()` in `viewport.cpp`. |
 | `renderer3d.cpp` | The only file that uses bgfx. Draws the chunks into an offscreen image and reads the pixels back. |
 | `camera3d.h` | Orbit camera, matrices and frustum culling. |
+| `lighting3d.cpp` | The light at each hour of the day and the night. |
 | `weather3d.cpp` | The season and the weather of the moment. |
 | `shaders/` | Shader sources and their precompiled forms. |
 
@@ -221,6 +222,29 @@ The existing game is touched in a few small places:
 * `window_type.h` has the new window class.
 * `lang/english.txt` has the strings of the window.
 
+## Day and night
+
+The game has no clock and its days last about two seconds, so the 3D view keeps a clock of its own: a day and a night together last a number of minutes of play, the setting "Day and night in the 3D view" (Interface, Viewports; `view3d_day_length`, 30 by default, 0 for the fixed light of the 2D graphics). The clock runs on game ticks, so it stands still while the game is paused and runs fast with fast forward. A new game starts at nine in the morning. The console command `view3d_time <hour>` holds the view at an hour (handy for screenshots), `view3d_time auto` lets go again, and `view3d_time` alone tells the time. It is only for looks: nothing in the game depends on it.
+
+`lighting3d.cpp` turns the hour into a `Lighting3D`: the direction and colour of the light that casts shadows (the sun from six to six, rising in the east and standing in the south at noon, then the moon), the light from all around, the colours of the sky and the haze, how well the stars show, how much lamps glow and which share of the windows is lit. The window hands it to the renderer with `SetLighting()` and asks for a new image when the hour has moved on by a quarter of a minute of the day.
+
+The shaders get it through `shaders/light.sh`:
+
+* Models are lit per pixel with `Light()`.
+* The terrain keeps the light of the 2D graphics in the colours of its vertices, so chunks need no rebuild as the sun moves. The fragment shader finds which way the ground faces from how the position changes across the screen, and `Relight()` divides the baked light out and multiplies the light of the moment in. With the cycle off the two are the same and the ground looks as before.
+* Sprites of the 2D game are relit as if they were flat ground. Names and signs stay bright enough to read.
+* The sky draws the sun, the moon and the stars.
+
+What glows at night goes by the name of the material in the model files, so the model package needs nothing new (`AddPrimitive()` in `model3d.cpp`), and is passed on in the alpha of the vertex colours (`shaders/material.sh`):
+
+| Material name | What it does at night |
+| --- | --- |
+| contains `glass` | A window. Each separate piece of glass of a building is lit or dark by lot, from where the building stands; more are lit in the evening than deep in the night. A large pane (over 3.2 units) has many rooms behind it, which are lit one by one. Vehicles light all their windows. |
+| `light`, or ends in `_lamp` | A lamp: glows, and casts a patch of light on the ground. Lamps high up, like street lamps, light a circle below them; low lamps in the front half of a model are headlights and light the road ahead; lamps on the ground, like runway lights, light a small circle. |
+| ends in `_on`, `_glow` or `ufo_light` | Glows without lighting the ground: signals, crossing lights, furnaces. |
+
+The patches of light are flat fans of triangles, made per model in `MakeLightPools()` in `renderer3d.cpp` and added to the picture after the model, just above the ground the model stands on. They do not follow slopes, and nothing is really lit by them: buildings next to a street lamp stay dark.
+
 ## Limitations
 
 * The renderer uses Vulkan, or OpenGL 3.3 when Vulkan is not available (Metal on macOS, untested). Direct3D is not used yet, because its shaders can only be compiled on Windows.
@@ -246,7 +270,7 @@ Textures for the landscape, the coast, the water, roads and the ground beside tr
 1. Fix what turns up while playing the game in 3D (second round done 2026-11-18: title screen, map generation, river banks, town stop pavements, small view flicker, 3D pictures in construction windows).
 2. Replace the last ground made of 2D sprites (done for level crossings, depots, industries with models and NewGRF stations with models; half-tile foundations remain).
 3. Textures for the 3D models (done: surface textures by material; lettering, liveries and textures drawn for single models can follow).
-4. Day and night: light that follows the time of day, lit windows and lamps.
+4. Day and night: light that follows the time of day, lit windows and lamps. Done, see "Day and night".
 5. Weather and seasons: snow, rain, autumn colours. Done, see "Seasons and weather".
 
 ## Changing the shaders

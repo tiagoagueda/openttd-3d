@@ -20,10 +20,14 @@ struct ModelVertex {
 	float x, y, z; ///< Position.
 	float nx, ny, nz; ///< Direction the surface faces, for the light.
 	uint8_t r, g, b; ///< Colour.
-	uint8_t a; ///< 255 for a fixed colour; 0 when the colour is multiplied with the colour of the owner; #LEAF for leaves.
+	uint8_t a; ///< What it is made of: 255 for a fixed colour; 0 when the colour is multiplied with the colour of the owner; #LAMP; or #WINDOW plus 8 times the number of the window; #GLASS; or #LEAF for leaves.
 	float u, v; ///< Position in the texture, which repeats beyond 0 to 1.
 	float texture; ///< Which texture the colour is multiplied with, as given by the #ModelTextureFinder; -1 for none.
 
+	static constexpr uint8_t LAMP = 48; ///< A lamp, which glows at night.
+	static constexpr uint8_t WINDOW = 96; ///< The first window; windows may have light behind them at night.
+	static constexpr uint8_t NUM_WINDOWS = 8; ///< How many windows of a model can be lit apart from each other.
+	static constexpr uint8_t GLASS = 160; ///< A large pane of glass with many rooms behind it, which are lit apart from each other.
 	static constexpr uint8_t LEAF = 208; ///< Alpha of leaves that change colour with the seasons; the shaders take 184 to 232 for it.
 	static constexpr uint8_t LEAF_EVERGREEN = 216; ///< Alpha of dark leaves while a model is read; ModelPack turns it into #LEAF or 255.
 };
@@ -34,6 +38,7 @@ struct Model3D {
 	std::vector<uint32_t> indices; ///< Three corners per triangle; the triangles of the load come last.
 	size_t num_fixed_indices = 0; ///< Number of indices before the triangles of the load.
 	float load_depth = 0; ///< How far the load can sink into the vehicle, in units of the model.
+	std::vector<Vec3> lamps; ///< The middle of each lamp that casts light on the ground at night.
 };
 
 /** One model to draw somewhere on the map. */

@@ -194,6 +194,8 @@ static bool AddVehicleModel(const Vehicle *v, const ModelPack *pack, std::vector
 	if (v->owner < MAX_COMPANIES) {
 		instance.tint = ModelPack::GetTint(_company_colours[v->owner]);
 	}
+	/* Vehicles have light behind all their windows at night; see material.sh. */
+	instance.tint[3] = 2;
 
 	/* The main rotor of a helicopter turns as fast as the game turns its sprites. */
 	const Vehicle *rotor = v->type == VehicleType::Aircraft && v->Next() != nullptr ? v->Next()->Next() : nullptr;

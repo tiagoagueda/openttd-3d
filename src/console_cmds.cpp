@@ -54,6 +54,7 @@
 #ifdef WITH_VIEWPORT3D
 #	include "viewport3d/view3d_gui.h"
 #	include "viewport3d/weather3d.h"
+#	include "viewport3d/lighting3d.h"
 #endif
 
 #include "table/strings.h"
@@ -283,6 +284,44 @@ static bool ConView3D(std::span<std::string_view> argv)
 		return true;
 	}
 	ShowView3DWindow(argv.size() > 1 ? argv[1] : std::string_view{});
+#else
+	IConsolePrint(CC_ERROR, "This build of OpenTTD does not include the 3D view (OPTION_VIEWPORT3D).");
+#endif
+	return true;
+}
+
+/**
+ * Hold the 3D view at an hour of the day.
+ * @copydoc IConsoleCmdProc
+ */
+static bool ConView3DTime(std::span<std::string_view> argv)
+{
+	if (argv.empty()) {
+		IConsolePrint(CC_HELP, "Show or hold the hour of the day in the 3D view. Usage: 'view3d_time [<hour>|auto]'.");
+		IConsolePrint(CC_HELP, "An hour from 0 to 24, such as 21.5, holds the view at that hour; 'auto' lets it follow the 'view3d_day_length' setting again.");
+		return true;
+	}
+
+#ifdef WITH_VIEWPORT3D
+	if (argv.size() > 1) {
+		if (argv[1] == "auto") {
+			SetView3DHour(-1.0f);
+		} else {
+			double hour = 0;
+			auto result = std::from_chars(argv[1].data(), argv[1].data() + argv[1].size(), hour);
+			if (result.ec != std::errc{} || hour < 0 || hour > 24) {
+				IConsolePrint(CC_ERROR, "The hour must be a number from 0 to 24, or 'auto'.");
+				return true;
+			}
+			SetView3DHour(static_cast<float>(hour));
+		}
+	}
+	float hour = GetView3DHour();
+	if (hour < 0) {
+		IConsolePrint(CC_INFO, "The 3D view has no day and night (setting 'view3d_day_length' is 0).");
+	} else {
+		IConsolePrint(CC_INFO, "The hour in the 3D view is {:02d}:{:02d}.", static_cast<int>(hour), static_cast<int>(hour * 60) % 60);
+	}
 #else
 	IConsolePrint(CC_ERROR, "This build of OpenTTD does not include the 3D view (OPTION_VIEWPORT3D).");
 #endif
@@ -3080,6 +3119,7 @@ void IConsoleStdLibRegister()
 	IConsole::CmdRegister("screenshot",              ConScreenShot);
 	IConsole::CmdRegister("script",                  ConScript);
 	IConsole::CmdRegister("view3d",                  ConView3D);
+	IConsole::CmdRegister("view3d_time",             ConView3DTime);
 	IConsole::CmdRegister("view3d_weather",          ConView3DWeather);
 	IConsole::CmdRegister("view3d_season",           ConView3DSeason);
 	IConsole::CmdRegister("zoomto",                  ConZoomToLevel);

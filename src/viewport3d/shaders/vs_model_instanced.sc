@@ -1,5 +1,5 @@
 $input a_position, a_normal, a_color0, a_texcoord0, i_data0, i_data1, i_data2, i_data3, i_data4
-$output v_color0, v_texcoord0, v_texcoord1, v_haze, v_tile
+$output v_color0, v_texcoord0, v_texcoord1, v_haze, v_tile, v_local
 
 /*
  * Vertex shader for many copies of the same 3D model in the OpenTTD 3D viewport, such as trees.
@@ -8,11 +8,9 @@ $output v_color0, v_texcoord0, v_texcoord1, v_haze, v_tile
 
 #include <bgfx_shader.sh>
 #include "haze.sh"
+#include "light.sh"
+#include "material.sh"
 
-/* xyz: direction towards the light. */
-uniform vec4 u_modelSun;
-/* x: light from all around. y: light from that direction. */
-uniform vec4 u_modelLight;
 /* World to shadow map. */
 uniform mat4 u_shadowMtx;
 
@@ -22,12 +20,16 @@ void main()
 	vec4 world = mul(model, vec4(a_position, 1.0));
 	gl_Position = mul(u_viewProj, world);
 	vec3 normal = normalize(mul(model, vec4(a_normal, 0.0)).xyz);
-	vec3 colour = mix(a_color0.rgb * i_data4.rgb, a_color0.rgb, a_color0.a);
+	vec3 material = Material(a_color0.a);
+	vec3 colour = mix(a_color0.rgb, a_color0.rgb * i_data4.rgb, material.x);
 	colour = ModelWeather(colour, a_color0.a, normal, i_data3.xyz, a_position.z, 1.0);
 	v_color0 = vec4(colour, 1.0);
-	v_texcoord0 = vec3(u_modelLight.x, u_modelLight.y * max(dot(normal, u_modelSun.xyz), 0.0), 0.0);
+	/* x: glow of a lit window. y: how much the surface faces the sun or the moon. z: glow of a lamp. */
+	v_texcoord0 = vec3(material.y, max(dot(normal, u_lightDirection.xyz), 0.0), material.z);
 	v_texcoord1 = mul(u_shadowMtx, world);
-	v_haze = vec2(HazeAmount(world), 0.0);
+	/* y: the lot of a window. */
+	v_haze = vec2(HazeAmount(world), WindowLot(a_color0.a, i_data3.xyz, step(1.5, i_data4.a)));
+	v_local = a_position;
 	/* Where in which texture; a layer below 0 is no texture. */
 	v_tile = a_texcoord0.xyz;
 }
