@@ -10,6 +10,8 @@
 #ifndef POWER_FUNC_H
 #define POWER_FUNC_H
 
+#include "industry_type.h"
+
 #include "command_type.h"
 #include "house_type.h"
 #include "tile_cmd.h"
@@ -56,6 +58,18 @@ extern uint32_t _power_network_version;
 void OnTick_Power();
 void AddPowerPlantFuel(Industry *i, CargoType cargo, uint amount);
 bool IsPowerPlant(const Industry *i);
+
+/** What drives a power plant. */
+enum class PowerPlantSource : uint8_t {
+	Fuel, ///< Coal or oil delivered to it.
+	Solar, ///< The sun.
+	Wind, ///< The wind.
+	Hydro, ///< A river.
+};
+PowerPlantSource GetPowerPlantSource(IndustryType type);
+uint GetPowerPlantWeatherFactor(PowerPlantSource source);
+enum class IndustryAvailabilityCallType : uint8_t;
+bool IsPowerPlantTypeAvailable(IndustryType type, IndustryAvailabilityCallType creation);
 uint GetPowerPlantFuelDays(const Industry *i);
 uint ApplyIndustryPowerBonus(Industry *i, uint amount);
 uint ApplyTownPowerBonus(Town *t, uint amount);

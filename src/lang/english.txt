@@ -4202,6 +4202,10 @@ STR_INDUSTRY_DIRECTORY_FILTER_NONE                              :None
 # Industry view
 STR_INDUSTRY_VIEW_CAPTION                                       :{WHITE}{INDUSTRY}
 STR_INDUSTRY_VIEW_POWER_PLANT                                   :{BLACK}Power sold: {ORANGE}{DECIMAL} of {DECIMAL} MW{BLACK}  Fuel: {ORANGE}{COMMA} day{P "" s}
+STR_INDUSTRY_VIEW_POWER_PLANT_WEATHER                           :{BLACK}Power sold: {ORANGE}{DECIMAL} of {DECIMAL} MW{BLACK}  {STRING}: {ORANGE}{NUM}%
+STR_INDUSTRY_VIEW_POWER_SUN                                     :Sunlight
+STR_INDUSTRY_VIEW_POWER_WIND                                    :Wind
+STR_INDUSTRY_VIEW_POWER_RIVER                                   :River flow
 STR_INDUSTRY_VIEW_POWER_CONSUMER                                :{BLACK}Power: {ORANGE}{DECIMAL} of {DECIMAL} MW{BLACK}  Bonus: {ORANGE}+{COMMA}%
 STR_INDUSTRY_VIEW_PRODUCTION_LAST_MONTH_TITLE                   :{BLACK}Production last month:
 STR_INDUSTRY_VIEW_PRODUCTION_LAST_MINUTE_TITLE                  :{BLACK}Production last minute:
@@ -5488,6 +5492,8 @@ STR_ERROR_POWER_LINES_CANNOT_CROSS                              :power lines can
 STR_ERROR_POWER_LINES_JOIN_ONLY_AT_PYLONS                       :power lines can only join at a pylon
 STR_ERROR_POWER_LINE_OVER_AIRPORT                               :power lines cannot pass over airports
 STR_ERROR_POWER_LINE_OVER_INDUSTRY                              :power lines cannot pass over industries
+STR_ERROR_HYDRO_DAM_NEEDS_RIVER_STEP                            :{WHITE}... a dam must stand across a river where it drops (a river step), on river without a lock
+STR_ERROR_HYDRO_DAM_MUST_SPAN_RIVER                             :{WHITE}... the dam must reach across the whole river
 STR_ERROR_POWER_LINE_TALL_STRUCTURE                             :building too tall for a power line to pass over
 STR_ERROR_POWER_LINE_TOO_LOW                                    :power line would be too low
 STR_ERROR_POWER_LINE_NOT_STRAIGHT                               :power lines must run along an axis or a diagonal
@@ -5754,6 +5760,10 @@ STR_INDUSTRY_NAME_FIZZY_DRINK_FACTORY                           :Fizzy Drink Fac
 STR_INDUSTRY_NAME_BUBBLE_GENERATOR                              :Bubble Generator
 STR_INDUSTRY_NAME_TOFFEE_QUARRY                                 :Toffee Quarry
 STR_INDUSTRY_NAME_SUGAR_MINE                                    :Sugar Mine
+STR_INDUSTRY_NAME_OIL_POWER_STATION                             :Oil Power Station
+STR_INDUSTRY_NAME_SOLAR_POWER_PLANT                             :Solar Power Plant
+STR_INDUSTRY_NAME_WIND_FARM                                     :Wind Farm
+STR_INDUSTRY_NAME_HYDRO_POWER_STATION                           :Hydro Power Station
 
 ############ WARNING, using range 0x6000 for strings that are stored in the savegame
 ############ These strings may never get a new id, or savegames will break!

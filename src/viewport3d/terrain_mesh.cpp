@@ -2319,6 +2319,8 @@ static bool GetGroundPattern(TileIndex tile, Slope slope, const ModelPack *pack,
 		/* Industries with a model stand on gravel where they dig or pump, on paving where they make things, and on grass where they grow things. */
 		IndustryGfx gfx = GetIndustryGfx(tile);
 		if (pack->Find(ModelKind::IndustryTile, GetIndustryTileSpec(gfx)->grf_prop, gfx) == nullptr) return false;
+		/* Solar panels and wind turbines stand on the land as it is. */
+		if (gfx == GFX_SOLAR_PANELS || gfx == GFX_WIND_TURBINE) return false;
 		IndustryLifeTypes life = GetIndustrySpec(Industry::GetByTile(tile)->type)->life_type;
 		if (life.Test(IndustryLifeType::Extractive)) {
 			kind = GroundTextures::PatternKind::Gravel;

@@ -963,7 +963,12 @@ public:
 
 		/* Energy: what a power plant sells, or what a consumer gets. */
 		ir.top += WidgetDimensions::scaled.vsep_wide;
-		if (IsPowerPlant(i)) {
+		PowerPlantSource source = GetPowerPlantSource(i->type);
+		if (source != PowerPlantSource::Fuel) {
+			static const StringID source_names[] = {STR_NULL, STR_INDUSTRY_VIEW_POWER_SUN, STR_INDUSTRY_VIEW_POWER_WIND, STR_INDUSTRY_VIEW_POWER_RIVER};
+			uint factor = GetPowerPlantWeatherFactor(source) * 100 / 255;
+			DrawString(ir, GetString(STR_INDUSTRY_VIEW_POWER_PLANT_WEATHER, i->power_supplied, 1, i->power_demand, 1, source_names[to_underlying(source)], factor));
+		} else if (IsPowerPlant(i)) {
 			DrawString(ir, GetString(STR_INDUSTRY_VIEW_POWER_PLANT, i->power_supplied, 1, i->power_demand, 1, GetPowerPlantFuelDays(i)));
 		} else {
 			DrawString(ir, GetString(STR_INDUSTRY_VIEW_POWER_CONSUMER, i->power_supplied, 1, i->power_demand, 1, GetPowerBonusPercent(i->power_demand, i->power_supplied)));

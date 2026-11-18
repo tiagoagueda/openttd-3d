@@ -21,6 +21,9 @@
 #include "timer/timer_game_tick.h"
 #include "settings_type.h"
 #include "window_func.h"
+#include "weather.h"
+#include "newgrf_industries.h"
+#include "timer/timer_game_calendar.h"
 
 #include <map>
 #include <queue>
@@ -42,7 +45,8 @@ uint32_t _power_network_version = 0;
 
 /** What an industry does with energy. */
 struct PowerIndustryRole {
-	bool plant = false; ///< A fuel power plant rather than a consumer.
+	bool plant = false; ///< A power plant rather than a consumer.
+	PowerPlantSource source = PowerPlantSource::Fuel; ///< For plants: what drives it.
 	uint capacity = 0; ///< For plants: highest output, in tenths of MW.
 	uint idle = 0; ///< For consumers: demand when making nothing, in tenths of MW.
 	uint per_100 = 0; ///< For consumers: extra demand for every 100 units of cargo made last month, in tenths of MW.
@@ -72,6 +76,25 @@ static uint GetPowerFuelYield(CargoType cargo)
 static PowerIndustryRole GetPowerIndustryRole(const Industry *i)
 {
 	PowerIndustryRole role;
+	PowerPlantSource source = GetPowerPlantSource(i->type);
+	if (source != PowerPlantSource::Fuel) {
+		role.plant = true;
+		role.source = source;
+		/* 120 MW for a solar plant at a clear noon, 30 MW for each wind turbine, 80 MW for each tile of dam at normal flow. */
+		uint per_tile = source == PowerPlantSource::Wind ? 300 : 800;
+		IndustryGfx counted = source == PowerPlantSource::Wind ? GFX_WIND_TURBINE : GFX_HYDRO_DAM_X;
+		if (source == PowerPlantSource::Solar) {
+			role.capacity = 1200;
+		} else {
+			for (TileIndex tile : i->location) {
+				if (!IsTileType(tile, TileType::Industry) || GetIndustryIndex(tile) != i->index) continue;
+				IndustryGfx gfx = GetIndustryGfx(tile);
+				if (gfx == counted || (counted == GFX_HYDRO_DAM_X && gfx == GFX_HYDRO_DAM_Y)) role.capacity += per_tile;
+			}
+		}
+		return role;
+	}
+
 	bool produces = std::ranges::any_of(i->produced, [](const auto &p) { return IsValidCargoType(p.cargo); });
 	if (!produces) {
 		for (const auto &a : i->accepted) {
@@ -185,10 +208,68 @@ void AddPowerPlantFuel(Industry *i, CargoType cargo, uint amount)
 	i->power_fuel = static_cast<uint32_t>(std::min<uint64_t>(limit, i->power_fuel + static_cast<uint64_t>(amount) * yield));
 }
 
-/** Whether an industry is a fuel power plant. */
+/** Whether an industry is a power plant. */
 bool IsPowerPlant(const Industry *i)
 {
 	return GetPowerIndustryRole(i).plant;
+}
+
+/**
+ * What drives a kind of power plant.
+ * @param type The industry type.
+ * @return The source; #PowerPlantSource::Fuel also for every industry that is no weather power plant.
+ */
+PowerPlantSource GetPowerPlantSource(IndustryType type)
+{
+	/* A NewGRF that takes over one of these types decides itself what it is. */
+	if (type >= NEW_INDUSTRYOFFSET || GetIndustrySpec(type)->grf_prop.HasGrfFile()) return PowerPlantSource::Fuel;
+	switch (type) {
+		case IT_SOLAR_PLANT: return PowerPlantSource::Solar;
+		case IT_WIND_FARM: return PowerPlantSource::Wind;
+		case IT_HYDRO_POWER_STATION: return PowerPlantSource::Hydro;
+		default: return PowerPlantSource::Fuel;
+	}
+}
+
+/**
+ * How much of its capacity a weather power plant gives now.
+ * @param source What drives it.
+ * @return From 0 to 255; hydro goes from about 120 (low water) through 205 (normal) to 255 (high water).
+ */
+uint GetPowerPlantWeatherFactor(PowerPlantSource source)
+{
+	const GameWeather &weather = GetGameWeather();
+	switch (source) {
+		case PowerPlantSource::Solar: return GetWeatherSolarFactor(weather);
+		case PowerPlantSource::Wind: return GetWeatherWindFactor(weather);
+		/* Full capacity at a flow of 212, so normal flow (170) gives 80% and high water 120%, capped at the capacity of the turbines. */
+		case PowerPlantSource::Hydro: return std::min<uint>(255, GetWeatherRiverFlow(weather) * 255 / 212);
+		default: return 255;
+	}
+}
+
+/**
+ * Whether the time has come for a power plant of the power lines fork, and whether it may be made this way.
+ * @param type The industry type.
+ * @param creation How it would be made.
+ * @return True when it may be made.
+ */
+bool IsPowerPlantTypeAvailable(IndustryType type, IndustryAvailabilityCallType creation)
+{
+	if (type < IT_OIL_POWER_STATION || type >= NEW_INDUSTRYOFFSET || GetIndustrySpec(type)->grf_prop.HasGrfFile()) return true;
+	TimerGameCalendar::Year from;
+	switch (type) {
+		case IT_OIL_POWER_STATION: from = TimerGameCalendar::Year{1950}; break;
+		case IT_SOLAR_PLANT: from = TimerGameCalendar::Year{1995}; break;
+		case IT_WIND_FARM: from = TimerGameCalendar::Year{1985}; break;
+		case IT_HYDRO_POWER_STATION:
+			/* Only players build dams, on a river step they choose. */
+			if (creation != IndustryAvailabilityCallType::UserCreation) return false;
+			from = TimerGameCalendar::Year{1920};
+			break;
+		default: return true;
+	}
+	return TimerGameCalendar::year >= from;
 }
 
 /**
@@ -412,7 +493,10 @@ static uint GetHousePowerDemand(TileIndex tile)
  */
 static uint GetIndustryPowerAmount(const Industry *i, const PowerIndustryRole &role)
 {
-	if (role.plant) return std::min<uint>(role.capacity, i->power_fuel);
+	if (role.plant) {
+		if (role.source == PowerPlantSource::Fuel) return std::min<uint>(role.capacity, i->power_fuel);
+		return role.capacity * GetPowerPlantWeatherFactor(role.source) / 255;
+	}
 	uint made = 0;
 	for (const auto &p : i->produced) {
 		if (IsValidCargoType(p.cargo)) made += p.history[LAST_MONTH].production;
@@ -521,7 +605,7 @@ static void BalancePower()
 			if (roles[id.base()].plant) {
 				uint sold = st.supply == 0 ? 0 : static_cast<uint>(static_cast<uint64_t>(st.sold) * part / st.supply);
 				i->power_supplied = static_cast<uint16_t>(std::min<uint>(UINT16_MAX, i->power_supplied + sold));
-				i->power_fuel -= std::min<uint32_t>(i->power_fuel, sold);
+				if (roles[id.base()].source == PowerPlantSource::Fuel) i->power_fuel -= std::min<uint32_t>(i->power_fuel, sold);
 			} else if (st.demand != 0) {
 				uint got = static_cast<uint>(static_cast<uint64_t>(st.delivered) * part / st.demand);
 				i->power_supplied = static_cast<uint16_t>(std::min<uint>(UINT16_MAX, i->power_supplied + got));

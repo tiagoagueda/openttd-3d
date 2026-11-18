@@ -425,6 +425,7 @@ enum class SaveLoadVersion : uint16_t {
 	LabelOrientationUnification, ///< Saveload version: 367, GitHub pull request: 15888\n Unify the orientation in which labels are written.
 	DoubleEndedShips, ///< Saveload version: 368, GitHub pull request: 16002\n Double-ended (NewGRF-only) ships can reverse without turning.
 	EnergySales, ///< Saveload version: 369, power lines fork\n Energy sales get their own line in the yearly expenses.
+	PowerPlants, ///< Saveload version: 370, power lines fork\n Oil, solar, wind and hydro power plants join the base industries; NewGRF industry types and tiles move up.
 
 	MaxVersion, ///< Highest possible saveload version.
 };

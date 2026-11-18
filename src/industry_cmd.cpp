@@ -1476,9 +1476,57 @@ bool IsSlopeRefused(Slope current, Slope refused)
  * @param type                    Type of the industry.
  * @return Failed or succeeded command.
  */
+/**
+ * Check a tile of a dam of a hydro power station: it must be river without a lock; where the river drops, it must flow
+ * across the dam; and the dam must reach from bank to bank.
+ * @param tile The tile of the dam.
+ * @param gfx Its industry tile, which says along which axis the river flows.
+ * @param north The north tile of the industry.
+ * @param layout The layout of the industry.
+ * @return Succeeded or failed command.
+ */
+static CommandCost CheckHydroDamTile(TileIndex tile, IndustryGfx gfx, TileIndex north, const IndustryTileLayout &layout)
+{
+	if (!IsWaterTile(tile) || !IsRiver(tile)) return CommandCost(STR_ERROR_HYDRO_DAM_NEEDS_RIVER_STEP);
+	Slope slope = GetTileSlope(tile);
+	if (slope != SLOPE_FLAT) {
+		DiagDirection down = GetInclinedSlopeDirection(slope);
+		if (down == DiagDirection::Invalid || (DiagDirToAxis(down) == Axis::X) != (gfx == GFX_HYDRO_DAM_X)) return CommandCost(STR_ERROR_SITE_UNSUITABLE);
+	}
+
+	/* Beside the dam, across the river, is either more of the power station or dry land. */
+	DiagDirection across = gfx == GFX_HYDRO_DAM_X ? DiagDirection::SE : DiagDirection::SW;
+	for (DiagDirection side : {across, ReverseDiagDir(across)}) {
+		TileIndex next = TileAddByDiagDir(tile, side);
+		if (!IsValidTile(next)) continue;
+		bool ours = std::ranges::any_of(layout, [&](const IndustryTileLayoutTile &it) { return TileAddWrap(north, it.ti.x, it.ti.y) == next; });
+		if (ours) continue;
+		/* The banks of a river step are often shore; that is land too. */
+		if (HasTileWaterGround(next)) return CommandCost(STR_ERROR_HYDRO_DAM_MUST_SPAN_RIVER);
+	}
+	return CommandCost();
+}
+
+/**
+ * Whether the dam of a hydro power station stands where the river drops: at least one of its tiles is a river step.
+ * @param north The north tile of the industry.
+ * @param layout The layout of the industry.
+ * @return True if so.
+ */
+static bool IsHydroDamOnRiverStep(TileIndex north, const IndustryTileLayout &layout)
+{
+	return std::ranges::any_of(layout, [&](const IndustryTileLayoutTile &it) {
+		if (it.gfx != GFX_HYDRO_DAM_X && it.gfx != GFX_HYDRO_DAM_Y) return false;
+		TileIndex tile = TileAddWrap(north, it.ti.x, it.ti.y);
+		return IsValidTile(tile) && IsWaterTile(tile) && IsRiver(tile) && GetInclinedSlopeDirection(GetTileSlope(tile)) != DiagDirection::Invalid;
+	});
+}
+
 static CommandCost CheckIfIndustryTilesAreFree(TileIndex tile, const IndustryTileLayout &layout, IndustryType type)
 {
 	IndustryBehaviours ind_behav = GetIndustrySpec(type)->behaviour;
+
+	if (type == IT_HYDRO_POWER_STATION && !GetIndustrySpec(type)->grf_prop.HasGrfFile() && !IsHydroDamOnRiverStep(tile, layout)) return CommandCost(STR_ERROR_HYDRO_DAM_NEEDS_RIVER_STEP);
 
 	for (const IndustryTileLayoutTile &it : layout) {
 		IndustryGfx gfx = GetTranslatedIndustryTileID(it.gfx);
@@ -1501,8 +1549,19 @@ static CommandCost CheckIfIndustryTilesAreFree(TileIndex tile, const IndustryTil
 
 			const IndustryTileSpec *its = GetIndustryTileSpec(gfx);
 
+			/* The dam of a hydro power station stands in a river; it has checks of its own. */
+			bool dam = (gfx == GFX_HYDRO_DAM_X || gfx == GFX_HYDRO_DAM_Y) && type == IT_HYDRO_POWER_STATION;
+			/* The powerhouse may stand on the shore beside the river. */
+			bool shore = type == IT_HYDRO_POWER_STATION && IsTileType(cur_tile, TileType::Water) && IsCoastTile(cur_tile);
+			if (dam) {
+				ret = CheckHydroDamTile(cur_tile, gfx, tile, layout);
+				if (ret.Failed()) return ret;
+			}
+
 			/* Perform land/water check if not disabled */
-			if (!HasBit(its->slopes_refused, 5) && ((HasTileWaterClass(cur_tile) && IsTileOnWater(cur_tile)) != ind_behav.Test(IndustryBehaviour::BuiltOnWater))) return CommandCost(STR_ERROR_SITE_UNSUITABLE);
+			if (!dam && !shore && !HasBit(its->slopes_refused, 5) && ((HasTileWaterClass(cur_tile) && IsTileOnWater(cur_tile)) != ind_behav.Test(IndustryBehaviour::BuiltOnWater))) {
+				return CommandCost(STR_ERROR_SITE_UNSUITABLE);
+			}
 
 			if (ind_behav.Any({IndustryBehaviour::OnlyInTown, IndustryBehaviour::Town1200More}) || // Tile must be a house
 					(ind_behav.Test(IndustryBehaviour::OnlyNearTown) && IsTileType(cur_tile, TileType::House))) { // Tile is allowed to be a house (and it is a house)
@@ -2052,7 +2111,8 @@ static CommandCost CreateNewIndustryHelper(TileIndex tile, IndustryType type, Do
 
 	if (flags.Test(DoCommandFlag::Execute)) {
 		*ip = Industry::Create(tile);
-		if (!custom_shape_check) CheckIfCanLevelIndustryPlatform(tile, {DoCommandFlag::NoWater, DoCommandFlag::Execute}, layout);
+		/* A hydro power station stands on a river step as it is. */
+		if (!custom_shape_check && type != IT_HYDRO_POWER_STATION) CheckIfCanLevelIndustryPlatform(tile, {DoCommandFlag::NoWater, DoCommandFlag::Execute}, layout);
 		DoCreateNewIndustry(*ip, tile, type, layout, layout_index, t, founder, random_initial_bits);
 	}
 

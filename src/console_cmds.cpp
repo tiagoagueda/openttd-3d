@@ -65,6 +65,9 @@
 #include "town.h"
 #include "company_base.h"
 
+#include "industry_cmd.h"
+#include "water_map.h"
+
 #include "safeguards.h"
 
 /* scriptfile handling */
@@ -559,14 +562,17 @@ static bool ConScrollToTile(std::span<std::string_view> argv)
 static bool ConPowerBuild(std::span<std::string_view> argv)
 {
 	if (argv.empty()) {
-		IConsolePrint(CC_HELP, "Build power lines for your company. Usage: 'power_build line <x1> <y1> <x2> <y2>', 'power_build pylon <x> <y>', 'power_build substation|usubstation|transition <x> <y>', 'power_build cable|removecable <x1> <y1> <x2> <y2>', 'power_build info', 'power_build fuel <industry> <amount>'.");
+		IConsolePrint(CC_HELP, "Build power lines for your company. Usage: 'power_build line <x1> <y1> <x2> <y2>', 'power_build pylon <x> <y>', 'power_build substation|usubstation|transition <x> <y>', 'power_build cable|removecable <x1> <y1> <x2> <y2>', 'power_build info', 'power_build fuel <industry> <amount>', 'power_build plant <industry type> <x> <y> [layout]', 'power_build riversteps'.");
 		return true;
 	}
 	if (argv.size() == 2 && argv[1] == "info") {
 		/* For tests: the power plants, the consumers that get power, and the towns. */
 		for (const Industry *i : Industry::Iterate()) {
-			if (IsPowerPlant(i)) {
-				IConsolePrint(CC_DEFAULT, "plant {} at {},{}: offers {} sold {} fuel {} days", i->index, TileX(i->location.tile), TileY(i->location.tile), i->power_demand, i->power_supplied, GetPowerPlantFuelDays(i));
+			PowerPlantSource source = GetPowerPlantSource(i->type);
+			if (source != PowerPlantSource::Fuel) {
+				IConsolePrint(CC_DEFAULT, "plant {} at {},{} (type {}): offers {} sold {} weather factor {}", i->index, TileX(i->location.tile), TileY(i->location.tile), i->type, i->power_demand, i->power_supplied, GetPowerPlantWeatherFactor(source));
+			} else if (IsPowerPlant(i)) {
+				IConsolePrint(CC_DEFAULT, "plant {} at {},{} (type {}): offers {} sold {} fuel {} days", i->index, TileX(i->location.tile), TileY(i->location.tile), i->type, i->power_demand, i->power_supplied, GetPowerPlantFuelDays(i));
 			} else if (i->power_supplied != 0) {
 				IConsolePrint(CC_DEFAULT, "industry {} at {},{}: needs {} gets {} bonus {}%", i->index, TileX(i->location.tile), TileY(i->location.tile), i->power_demand, i->power_supplied, GetPowerBonusPercent(i->power_demand, i->power_supplied));
 			}
@@ -592,6 +598,56 @@ static bool ConPowerBuild(std::span<std::string_view> argv)
 		for (const auto &a : i->accepted) {
 			if (IsValidCargoType(a.cargo)) AddPowerPlantFuel(i, a.cargo, *amount);
 		}
+		return true;
+	}
+	if (argv.size() == 2 && argv[1] == "riversteps") {
+		/* For tests: where a hydro power station could go. */
+		uint found = 0;
+		for (const auto tile : Map::Iterate()) {
+			if (!IsWaterTile(tile) || !IsRiver(tile)) continue;
+			DiagDirection down = GetInclinedSlopeDirection(GetTileSlope(tile));
+			if (down == DiagDirection::Invalid) continue;
+			/* Walk across the river from bank to bank, over river that drops the same way or is flat; at most 4 wide. */
+			DiagDirection across = ChangeDiagDir(down, DiagDirDiff::Left90);
+			auto river = [down](TileIndex t) {
+				if (!IsValidTile(t) || !IsWaterTile(t) || !IsRiver(t)) return false;
+				Slope slope = GetTileSlope(t);
+				return slope == SLOPE_FLAT || GetInclinedSlopeDirection(slope) == down;
+			};
+			TileIndex first = tile;
+			while (river(TileAddByDiagDir(first, ReverseDiagDir(across)))) first = TileAddByDiagDir(first, ReverseDiagDir(across));
+			/* Report each crossing once, from its first step. */
+			bool earlier_step = false;
+			for (TileIndex t = first; t != TileIndex{tile}; t = TileAddByDiagDir(t, across)) {
+				if (GetTileSlope(t) != SLOPE_FLAT) earlier_step = true;
+			}
+			if (earlier_step) continue;
+			uint width = 0;
+			TileIndex cur = first;
+			while (river(cur) && width < 5) {
+				width++;
+				cur = TileAddByDiagDir(cur, across);
+			}
+			TileIndex before = TileAddByDiagDir(first, ReverseDiagDir(across));
+			auto wet = [](TileIndex t) { return !IsValidTile(t) || HasTileWaterGround(t); };
+			if (width > 4 || wet(before) || wet(cur)) continue;
+			IConsolePrint(CC_DEFAULT, "river step at {},{}, flowing along {}, {} wide from {},{}", TileX(tile), TileY(tile), DiagDirToAxis(down) == Axis::X ? "x" : "y", width, TileX(first), TileY(first));
+			if (++found == 10) break;
+		}
+		return true;
+	}
+	if ((argv.size() == 5 || argv.size() == 6) && argv[1] == "plant") {
+		/* For tests: fund an industry, such as a power plant, with the first layout that fits from the one given. */
+		auto type = ParseInteger(argv[2], 0);
+		auto x = ParseInteger(argv[3], 0);
+		auto y = ParseInteger(argv[4], 0);
+		auto layout = argv.size() == 6 ? ParseInteger(argv[5], 0) : std::optional<uint>{0};
+		if (!type.has_value() || !x.has_value() || !y.has_value() || !layout.has_value() || *type >= NUM_INDUSTRYTYPES) return false;
+		if (*x >= Map::SizeX() || *y >= Map::SizeY()) {
+			IConsolePrint(CC_ERROR, "Tile does not exist.");
+			return true;
+		}
+		Command<Commands::BuildIndustry>::Post(STR_ERROR_CAN_T_CONSTRUCT_THIS_INDUSTRY, TileXY(*x, *y), static_cast<IndustryType>(*type), *layout, true, InteractiveRandom());
 		return true;
 	}
 	if (argv.size() < 4) return false;

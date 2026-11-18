@@ -294,7 +294,7 @@ static GameWeather ComputeGameWeather()
 	int64_t cover = winter_snow * Clamp<int64_t>(seasons.winter * 2 - ONE, 0, ONE) / ONE;
 	weather.cover = out(cover);
 	if (_settings_game.economy.weather == to_underlying(WeatherSetting::Off)) {
-		weather.wind = out(Q(0.3));
+		weather.wind = out(Q(0.45));
 		return weather;
 	}
 

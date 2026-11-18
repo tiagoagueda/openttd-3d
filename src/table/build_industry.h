@@ -1019,6 +1019,221 @@ static const std::vector<IndustryTileLayout> _tile_table_sugar_mine {
 	_tile_table_sugar_mine_0,
 };
 
+/* Power plants of the power lines fork. Tiles: 175 oil turbine hall, 176 oil tanks, 177 solar panels,
+ * 178 solar inverter house, 179 wind turbine, 180 dam across a river flowing along x, 181 dam across a river
+ * flowing along y, 182 hydro powerhouse. 10 is the transformer yard of the coal power station. */
+
+static const IndustryTileLayout _tile_table_oil_power_station_0 {
+	{{0, 0}, 176},
+	{{0, 1}, 176},
+	{{1, 0}, 175},
+	{{1, 1}, 175},
+	{{2, 0}, 10},
+	{{2, 1}, 10},
+};
+
+static const IndustryTileLayout _tile_table_oil_power_station_1 {
+	{{0, 0}, 176},
+	{{1, 0}, 176},
+	{{0, 1}, 175},
+	{{1, 1}, 175},
+	{{0, 2}, 10},
+	{{1, 2}, 10},
+};
+
+static const std::vector<IndustryTileLayout> _tile_table_oil_power_station {
+	_tile_table_oil_power_station_0,
+	_tile_table_oil_power_station_1,
+};
+
+static const IndustryTileLayout _tile_table_solar_plant_0 {
+	{{0, 0}, 177},
+	{{0, 1}, 177},
+	{{0, 2}, 177},
+	{{1, 0}, 177},
+	{{1, 1}, 177},
+	{{1, 2}, 177},
+	{{2, 0}, 177},
+	{{2, 1}, 177},
+	{{2, 2}, 177},
+	{{3, 0}, 177},
+	{{3, 1}, 178},
+	{{3, 2}, 177},
+};
+
+static const IndustryTileLayout _tile_table_solar_plant_1 {
+	{{0, 0}, 177},
+	{{1, 0}, 177},
+	{{2, 0}, 177},
+	{{0, 1}, 177},
+	{{1, 1}, 177},
+	{{2, 1}, 177},
+	{{0, 2}, 177},
+	{{1, 2}, 177},
+	{{2, 2}, 177},
+	{{0, 3}, 177},
+	{{1, 3}, 178},
+	{{2, 3}, 177},
+};
+
+static const std::vector<IndustryTileLayout> _tile_table_solar_plant {
+	_tile_table_solar_plant_0,
+	_tile_table_solar_plant_1,
+};
+
+static const IndustryTileLayout _tile_table_wind_farm_0 {
+	{{0, 0}, 179},
+	{{2, 1}, 179},
+	{{4, 0}, 179},
+	{{1, 3}, 179},
+	{{3, 4}, 179},
+};
+
+static const IndustryTileLayout _tile_table_wind_farm_1 {
+	{{0, 0}, 179},
+	{{2, 0}, 179},
+	{{4, 0}, 179},
+	{{1, 2}, 179},
+	{{3, 2}, 179},
+};
+
+static const IndustryTileLayout _tile_table_wind_farm_2 {
+	{{0, 0}, 179},
+	{{0, 2}, 179},
+	{{0, 4}, 179},
+	{{2, 1}, 179},
+	{{2, 3}, 179},
+};
+
+static const std::vector<IndustryTileLayout> _tile_table_wind_farm {
+	_tile_table_wind_farm_0,
+	_tile_table_wind_farm_1,
+	_tile_table_wind_farm_2,
+};
+
+static const IndustryTileLayout _tile_table_hydro_power_station_x1a {
+	{{0, 0}, 182},
+	{{0, 1}, 180},
+};
+
+static const IndustryTileLayout _tile_table_hydro_power_station_x1b {
+	{{0, 0}, 180},
+	{{0, 1}, 182},
+};
+
+static const IndustryTileLayout _tile_table_hydro_power_station_x2a {
+	{{0, 0}, 182},
+	{{0, 1}, 180},
+	{{0, 2}, 180},
+};
+
+static const IndustryTileLayout _tile_table_hydro_power_station_x2b {
+	{{0, 0}, 180},
+	{{0, 1}, 180},
+	{{0, 2}, 182},
+};
+
+static const IndustryTileLayout _tile_table_hydro_power_station_x3a {
+	{{0, 0}, 182},
+	{{0, 1}, 180},
+	{{0, 2}, 180},
+	{{0, 3}, 180},
+};
+
+static const IndustryTileLayout _tile_table_hydro_power_station_x3b {
+	{{0, 0}, 180},
+	{{0, 1}, 180},
+	{{0, 2}, 180},
+	{{0, 3}, 182},
+};
+
+static const IndustryTileLayout _tile_table_hydro_power_station_x4a {
+	{{0, 0}, 182},
+	{{0, 1}, 180},
+	{{0, 2}, 180},
+	{{0, 3}, 180},
+	{{0, 4}, 180},
+};
+
+static const IndustryTileLayout _tile_table_hydro_power_station_x4b {
+	{{0, 0}, 180},
+	{{0, 1}, 180},
+	{{0, 2}, 180},
+	{{0, 3}, 180},
+	{{0, 4}, 182},
+};
+
+static const IndustryTileLayout _tile_table_hydro_power_station_y1a {
+	{{0, 0}, 182},
+	{{1, 0}, 181},
+};
+
+static const IndustryTileLayout _tile_table_hydro_power_station_y1b {
+	{{0, 0}, 181},
+	{{1, 0}, 182},
+};
+
+static const IndustryTileLayout _tile_table_hydro_power_station_y2a {
+	{{0, 0}, 182},
+	{{1, 0}, 181},
+	{{2, 0}, 181},
+};
+
+static const IndustryTileLayout _tile_table_hydro_power_station_y2b {
+	{{0, 0}, 181},
+	{{1, 0}, 181},
+	{{2, 0}, 182},
+};
+
+static const IndustryTileLayout _tile_table_hydro_power_station_y3a {
+	{{0, 0}, 182},
+	{{1, 0}, 181},
+	{{2, 0}, 181},
+	{{3, 0}, 181},
+};
+
+static const IndustryTileLayout _tile_table_hydro_power_station_y3b {
+	{{0, 0}, 181},
+	{{1, 0}, 181},
+	{{2, 0}, 181},
+	{{3, 0}, 182},
+};
+
+static const IndustryTileLayout _tile_table_hydro_power_station_y4a {
+	{{0, 0}, 182},
+	{{1, 0}, 181},
+	{{2, 0}, 181},
+	{{3, 0}, 181},
+	{{4, 0}, 181},
+};
+
+static const IndustryTileLayout _tile_table_hydro_power_station_y4b {
+	{{0, 0}, 181},
+	{{1, 0}, 181},
+	{{2, 0}, 181},
+	{{3, 0}, 181},
+	{{4, 0}, 182},
+};
+
+static const std::vector<IndustryTileLayout> _tile_table_hydro_power_station {
+	_tile_table_hydro_power_station_x1a,
+	_tile_table_hydro_power_station_x1b,
+	_tile_table_hydro_power_station_x2a,
+	_tile_table_hydro_power_station_x2b,
+	_tile_table_hydro_power_station_x3a,
+	_tile_table_hydro_power_station_x3b,
+	_tile_table_hydro_power_station_x4a,
+	_tile_table_hydro_power_station_x4b,
+	_tile_table_hydro_power_station_y1a,
+	_tile_table_hydro_power_station_y1b,
+	_tile_table_hydro_power_station_y2a,
+	_tile_table_hydro_power_station_y2b,
+	_tile_table_hydro_power_station_y3a,
+	_tile_table_hydro_power_station_y3b,
+	_tile_table_hydro_power_station_y4a,
+	_tile_table_hydro_power_station_y4b,
+};
+
 /** Array with saw sound, for sawmill */
 static const std::initializer_list<uint8_t> _sawmill_sounds = { SND_28_SAWMILL };
 
@@ -1069,7 +1284,7 @@ enum IndustryTypes : uint8_t {
 	IT_BUBBLE_GENERATOR    =  34,
 	IT_TOFFEE_QUARRY       =  35,
 	IT_SUGAR_MINE          =  36,
-	IT_END,
+	/* 37 to 40 are the power plants of the power lines fork, see industry_type.h. */
 };
 
 /**
@@ -1502,6 +1717,46 @@ extern const IndustrySpec _origin_industry_specs[NEW_INDUSTRYOFFSET] = {
 	   {},
 	   STR_INDUSTRY_NAME_SUGAR_MINE,                    STR_NEWS_INDUSTRY_CONSTRUCTION,
 	   STR_NEWS_INDUSTRY_CLOSURE_GENERAL,    STR_NEWS_INDUSTRY_PRODUCTION_INCREASE_GENERAL,     STR_NEWS_INDUSTRY_PRODUCTION_DECREASE_GENERAL),
+
+	MI(_tile_table_oil_power_station,          {},
+	   235,  0xFFFFFFFF,                       2, 2, 2, 0,    3, 3, 3, 0,        184,
+	   IT_INVALID,        IT_INVALID,          IT_INVALID,       IndustryCheck::None,
+	   CT_INVALID,     0, CT_INVALID,       0, 5,
+	   CT_OIL,       256, CT_INVALID,     256, CT_INVALID,   256,
+	   INDUSTRYLIFE_BLACK_HOLE,                LandscapeTypes({LandscapeType::Temperate, LandscapeType::Arctic, LandscapeType::Tropic}),
+	   {},
+	   STR_INDUSTRY_NAME_OIL_POWER_STATION,             STR_NEWS_INDUSTRY_CONSTRUCTION,
+	   STR_NEWS_INDUSTRY_CLOSURE_GENERAL,    STR_NEWS_INDUSTRY_PRODUCTION_INCREASE_GENERAL,     STR_NEWS_INDUSTRY_PRODUCTION_DECREASE_GENERAL),
+
+	MI(_tile_table_solar_plant,                {},
+	   230,  0xFFFFFFFF,                       2, 1, 3, 2,    2, 1, 3, 2,        152,
+	   IT_INVALID,        IT_INVALID,          IT_INVALID,       IndustryCheck::None,
+	   CT_INVALID,     0, CT_INVALID,       0, 5,
+	   CT_INVALID,   256, CT_INVALID,     256, CT_INVALID,   256,
+	   INDUSTRYLIFE_BLACK_HOLE,                LandscapeTypes({LandscapeType::Temperate, LandscapeType::Arctic, LandscapeType::Tropic, LandscapeType::Toyland}),
+	   {},
+	   STR_INDUSTRY_NAME_SOLAR_POWER_PLANT,             STR_NEWS_INDUSTRY_CONSTRUCTION,
+	   STR_NEWS_INDUSTRY_CLOSURE_GENERAL,    STR_NEWS_INDUSTRY_PRODUCTION_INCREASE_GENERAL,     STR_NEWS_INDUSTRY_PRODUCTION_DECREASE_GENERAL),
+
+	MI(_tile_table_wind_farm,                  {},
+	   220,  0xFFFFFFFF,                       2, 2, 2, 2,    2, 2, 2, 2,         15,
+	   IT_INVALID,        IT_INVALID,          IT_INVALID,       IndustryCheck::None,
+	   CT_INVALID,     0, CT_INVALID,       0, 5,
+	   CT_INVALID,   256, CT_INVALID,     256, CT_INVALID,   256,
+	   INDUSTRYLIFE_BLACK_HOLE,                LandscapeTypes({LandscapeType::Temperate, LandscapeType::Arctic, LandscapeType::Tropic, LandscapeType::Toyland}),
+	   {},
+	   STR_INDUSTRY_NAME_WIND_FARM,                     STR_NEWS_INDUSTRY_CONSTRUCTION,
+	   STR_NEWS_INDUSTRY_CLOSURE_GENERAL,    STR_NEWS_INDUSTRY_PRODUCTION_INCREASE_GENERAL,     STR_NEWS_INDUSTRY_PRODUCTION_DECREASE_GENERAL),
+
+	MI(_tile_table_hydro_power_station,        {},
+	   245,  0xFFFFFFFF,                       0, 0, 0, 0,    0, 0, 0, 0,        154,
+	   IT_INVALID,        IT_INVALID,          IT_INVALID,       IndustryCheck::None,
+	   CT_INVALID,     0, CT_INVALID,       0, 5,
+	   CT_INVALID,   256, CT_INVALID,     256, CT_INVALID,   256,
+	   INDUSTRYLIFE_BLACK_HOLE,                LandscapeTypes({LandscapeType::Temperate, LandscapeType::Arctic, LandscapeType::Tropic}),
+	   {},
+	   STR_INDUSTRY_NAME_HYDRO_POWER_STATION,           STR_NEWS_INDUSTRY_CONSTRUCTION,
+	   STR_NEWS_INDUSTRY_CLOSURE_GENERAL,    STR_NEWS_INDUSTRY_PRODUCTION_INCREASE_GENERAL,     STR_NEWS_INDUSTRY_PRODUCTION_DECREASE_GENERAL),
 };
 #undef MI
 
@@ -1752,6 +2007,22 @@ static const IndustryTileSpec _origin_industry_tile_specs[NEW_INDUSTRYTILEOFFSET
 	{0, CT_INVALID, 0, CT_INVALID, false},
 	{0, CT_INVALID, 0, CT_INVALID, false},
 	{0, CT_INVALID, 0, CT_INVALID, false},
+
+	/* Oil power station: turbine hall, oil tanks */
+	{0, CT_INVALID, 0, CT_INVALID, false},
+	{8, CT_OIL, 0, CT_INVALID, false},
+
+	/* Solar power plant: panels, inverter house */
+	{0, CT_INVALID, 0, CT_INVALID, false},
+	{0, CT_INVALID, 0, CT_INVALID, false},
+
+	/* Wind farm: turbine */
+	{0, CT_INVALID, 0, CT_INVALID, false},
+
+	/* Hydro power station: dam across a river along x, dam across a river along y, powerhouse; on sloped land too */
+	{0, CT_INVALID, 0, CT_INVALID, 0, CT_INVALID, SLOPE_FLAT, INDUSTRYTILE_NOANIM, INDUSTRYTILE_NOANIM, false},
+	{0, CT_INVALID, 0, CT_INVALID, 0, CT_INVALID, SLOPE_FLAT, INDUSTRYTILE_NOANIM, INDUSTRYTILE_NOANIM, false},
+	{0, CT_INVALID, 0, CT_INVALID, 0, CT_INVALID, SLOPE_FLAT, INDUSTRYTILE_NOANIM, INDUSTRYTILE_NOANIM, false},
 };
 
 #endif  /* BUILD_INDUSTRY_H */

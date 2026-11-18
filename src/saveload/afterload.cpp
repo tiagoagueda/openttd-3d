@@ -577,6 +577,15 @@ bool AfterLoadGame()
 	/* Group hierarchy may be evaluated during conversion, so ensure its correct early on. */
 	UpdateGroupChildren();
 
+	/* The power plants of the power lines fork took the first industry tiles of NewGRFs. */
+	if (IsSavegameVersionBefore(SaveLoadVersion::PowerPlants)) {
+		for (const auto t : Map::Iterate()) {
+			if (!IsTileType(t, TileType::Industry)) continue;
+			IndustryGfx gfx = GetCleanIndustryGfx(t);
+			if (gfx >= OLD_NEW_INDUSTRYTILEOFFSET) SetIndustryGfx(t, gfx + NEW_INDUSTRYTILEOFFSET - OLD_NEW_INDUSTRYTILEOFFSET);
+		}
+	}
+
 	if (IsSavegameVersionBefore(SaveLoadVersion::Gamelog)) _gamelog.GRFAddList(_grfconfig);
 
 	if (IsSavegameVersionBefore(SaveLoadVersion::PauseModes)) {

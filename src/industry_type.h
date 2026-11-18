@@ -45,12 +45,14 @@ using IndustryAnimationTriggers = EnumBitSet<IndustryAnimationTrigger, uint8_t>;
 
 static const IndustryType NUM_INDUSTRYTYPES_PER_GRF = 128;            ///< maximum number of industry types per NewGRF; limited to 128 because bit 7 has a special meaning in some variables/callbacks (see MapNewGRFIndustryType).
 
-static const IndustryType NEW_INDUSTRYOFFSET     = 37;                ///< original number of industry types
+static const IndustryType NEW_INDUSTRYOFFSET     = 41;                ///< original number of industry types (37 of the base game and 4 power plants of the power lines fork)
+static const IndustryType OLD_NEW_INDUSTRYOFFSET = 37;                ///< original number of industry types in savegames before SaveLoadVersion::PowerPlants
 static const IndustryType NUM_INDUSTRYTYPES      = 240;               ///< total number of industry types, new and old; limited to 240 because we need some special ids like IT_INVALID, IT_AI_UNKNOWN, IT_AI_TOWN, ...
 static const IndustryType IT_INVALID             = 0xFF;
 
 static const IndustryGfx INDUSTRYTILE_NOANIM = UINT16_MAX; ///< Sentinel value to mark industry tiles as having no animation
-static const IndustryGfx  NEW_INDUSTRYTILEOFFSET = 175;               ///< original number of tiles
+static const IndustryGfx  NEW_INDUSTRYTILEOFFSET = 183;               ///< original number of tiles (175 of the base game and 8 of the power plants)
+static const IndustryGfx  OLD_NEW_INDUSTRYTILEOFFSET = 175;           ///< original number of tiles in savegames before SaveLoadVersion::PowerPlants
 static const IndustryGfx  NUM_INDUSTRYTILES      = 512;               ///< total number of industry tiles, new and old
 static const IndustryGfx  INVALID_INDUSTRYTILE   = NUM_INDUSTRYTILES; ///< one above amount is considered invalid
 
@@ -93,6 +95,17 @@ static constexpr IndustryGfx GFX_BUBBLE_CATCHER = 162;
 static constexpr IndustryGfx GFX_TOFFEE_QUARRY = 165;
 static constexpr IndustryGfx GFX_SUGAR_MINE_SIEVE = 174;
 /** @} */
+/* Industry types and tiles the power lines fork adds to the base game. */
+static const IndustryType IT_OIL_POWER_STATION   = 37; ///< Burns oil.
+static const IndustryType IT_SOLAR_PLANT         = 38; ///< Follows the sun.
+static const IndustryType IT_WIND_FARM           = 39; ///< Follows the wind.
+static const IndustryType IT_HYDRO_POWER_STATION = 40; ///< A dam on a river step, built by players only.
+static constexpr IndustryGfx GFX_SOLAR_PANELS = 177; ///< A field of solar panels.
+static constexpr IndustryGfx GFX_WIND_TURBINE = 179; ///< A wind turbine of a wind farm.
+static constexpr IndustryGfx GFX_HYDRO_DAM_X = 180; ///< A dam across a river flowing along x.
+static constexpr IndustryGfx GFX_HYDRO_DAM_Y = 181; ///< A dam across a river flowing along y.
+static constexpr IndustryGfx GFX_HYDRO_POWERHOUSE = 182; ///< The powerhouse of a hydro power station, on the bank.
+
 static constexpr IndustryGfx GFX_WATERTILE_SPECIALCHECK = UINT16_MAX; ///< Sentinel marker in industry layout to perform a water tile check.
 
 static const int INDUSTRY_COMPLETED = 3; ///< final stage of industry construction.

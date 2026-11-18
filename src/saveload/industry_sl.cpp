@@ -291,6 +291,12 @@ struct INDYChunkHandler : ChunkHandler {
 				i->valid_history = (std::numeric_limits<uint64_t>::max() >> (std::numeric_limits<uint64_t>::digits - (oldest_valid + 1 - LAST_MONTH))) << LAST_MONTH;
 			}
 
+			/* The power plants of the power lines fork took the first ids of NewGRF industries. */
+			if (IsSavegameVersionBefore(SaveLoadVersion::PowerPlants) && i->type >= OLD_NEW_INDUSTRYOFFSET && i->type < NUM_INDUSTRYTYPES) {
+				i->type += NEW_INDUSTRYOFFSET - OLD_NEW_INDUSTRYOFFSET;
+				if (i->type >= NUM_INDUSTRYTYPES) SlErrorCorrupt("Too many NewGRF industry types to make room for the power plants");
+			}
+
 			Industry::industries[i->type].insert(i->index);
 		}
 	}
@@ -303,12 +309,41 @@ struct INDYChunkHandler : ChunkHandler {
 	}
 };
 
+/**
+ * Move the NewGRF entries of a mapping of a savegame from before the power plants of the power lines fork up, past
+ * the ids the power plants now take.
+ * @param mapping The mapping.
+ * @param old_offset First NewGRF id in the savegame.
+ * @param new_offset First NewGRF id now.
+ */
+static void MoveOldNewGRFMappings(OverrideManagerBase &mapping, uint old_offset, uint new_offset)
+{
+	if (!IsSavegameVersionBefore(SaveLoadVersion::PowerPlants)) return;
+	uint shift = new_offset - old_offset;
+	for (uint i = mapping.GetMaxMapping(); i-- > new_offset;) {
+		mapping.mappings[i] = mapping.mappings[i - shift];
+	}
+	for (uint i = old_offset; i < new_offset; i++) mapping.mappings[i] = {};
+}
+
 struct IIDSChunkHandler : NewGRFMappingChunkHandler {
 	IIDSChunkHandler() : NewGRFMappingChunkHandler("IIDS", _industry_mngr) {}
+
+	void Load() const override
+	{
+		this->NewGRFMappingChunkHandler::Load();
+		MoveOldNewGRFMappings(this->mapping, OLD_NEW_INDUSTRYOFFSET, NEW_INDUSTRYOFFSET);
+	}
 };
 
 struct TIDSChunkHandler : NewGRFMappingChunkHandler {
 	TIDSChunkHandler() : NewGRFMappingChunkHandler("TIDS", _industile_mngr) {}
+
+	void Load() const override
+	{
+		this->NewGRFMappingChunkHandler::Load();
+		MoveOldNewGRFMappings(this->mapping, OLD_NEW_INDUSTRYTILEOFFSET, NEW_INDUSTRYTILEOFFSET);
+	}
 };
 
 /** Description of the data to save and load in #IndustryBuildData. */
@@ -371,6 +406,15 @@ struct ITBLChunkHandler : ChunkHandler {
 		int index;
 		while ((index = SlIterateArray()) != -1) {
 			if ((uint)index >= NUM_INDUSTRYTYPES) SlErrorCorrupt("Too many industry builder datas");
+			/* The power plants of the power lines fork took the first ids of NewGRF industries. */
+			if (IsSavegameVersionBefore(SaveLoadVersion::PowerPlants) && index >= OLD_NEW_INDUSTRYOFFSET) {
+				index += NEW_INDUSTRYOFFSET - OLD_NEW_INDUSTRYOFFSET;
+				if (index >= NUM_INDUSTRYTYPES) {
+					IndustryTypeBuildData dummy;
+					SlObject(&dummy, slt);
+					continue;
+				}
+			}
 			SlObject(_industry_builder.builddata + index, slt);
 		}
 	}

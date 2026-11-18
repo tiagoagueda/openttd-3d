@@ -24,6 +24,8 @@
 
 #include "table/strings.h"
 
+#include "power_func.h"
+
 #include "safeguards.h"
 
 /* Since the industry IDs defined by the GRF file don't necessarily correlate
@@ -577,6 +579,9 @@ CommandCost CheckIfCallBackAllowsCreation(TileIndex tile, IndustryType type, siz
 uint32_t GetIndustryProbabilityCallback(IndustryType type, IndustryAvailabilityCallType creation_type, uint32_t default_prob)
 {
 	const IndustrySpec *indspec = GetIndustrySpec(type);
+
+	/* The power plants of the power lines fork come with their time, and dams are only built by players. */
+	if (!IsPowerPlantTypeAvailable(type, creation_type)) return 0;
 
 	if (indspec->callback_mask.Test(IndustryCallbackMask::Probability)) {
 		uint16_t res = GetIndustryCallback(CBID_INDUSTRY_PROBABILITY, 0, to_underlying(creation_type), nullptr, type, INVALID_TILE);
