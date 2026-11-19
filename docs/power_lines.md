@@ -201,3 +201,18 @@ about 8.7 per month) the networks share out power.
   3D view rebuilds the town; `IsStreetLampPowered()` in `terrain_mesh.cpp` picks which lamps stay dark.
 - `power_build info` shows how many lamps of every four are lit, and "off grid" for towns no substation
   reaches.
+
+## Play-test fixes (after phase 5)
+
+Changes after Tiago's first real play test of the energy branch.
+
+* **Utilities menu.** Power lines moved out of the landscaping menu into a new main toolbar button, "Utilities" (`WID_TN_UTILITIES`, after aircraft). Its dropdown has one entry, power lines, and room for pipelines later.
+* **Icons and cursors.** The power toolbar has its own icons and cursors (power.grf 40-52), so the substation no longer shows a train station.
+* **Status lights.** Substations, plant links and pylons carry a small light: green when power flows through their network, yellow when the network has plants and consumers but nothing flows, red when it is not connected. 2D sprites 53-55, 3D models power 7-9. A change of status redraws the tile.
+* **Substation window.** Clicking a substation or a plant link opens a window with its owner, status, what it covers, what it sent and received last month, its capacity and the figures of its network. It refreshes every second.
+* **Capacity.** An overhead substation passes at most 250 MW (2500 units), an underground one 150 MW (1500). Supply and demand are capped by capacity when power is balanced.
+* **Plants join the grid directly.** A pylon or transition pylon next to a power plant (8 neighbours) becomes a plant link: a node of the network that covers only those plants, with the plant's output as its capacity. The industry window of a plant says whether it is on the grid.
+* **Pylons in shallow water.** Pylons (and the pylons of the line tool) can stand on flat sea or river tiles at four times the price, on a small concrete pier (2D sprite 56, 3D model power 10). Power tiles keep a water class (m1 bits 5-6), restored when the pylon is removed. Save version `PowerOnWater` (371) sets older power tiles to no water.
+* **Underground cables** follow the slope in the 3D view, and the marker post only stands at the ends of a cable, in 2D and 3D.
+* **Hydro dams on a river step** keep the slope: a finished dam tile on an inclined river tile draws the river ground and a dam step with the reservoir above the wall and the outflow below (2D sprites 57-60 by the direction the slope goes up, 3D model power 11).
+* **Line tool preview.** While a line or cable is dragged, only the tiles of the snapped straight or diagonal line are highlighted. For an overhead line the tiles where pylons go are white with the pylon drawn on them, the tiles under wires blue, and the tiles past the point where the line cannot go on red. The 3D view shows see-through pylons and wires at the same places and a red pylon at the end when the line is blocked. The plan comes from the same code as the build command (`PlanPowerLine()`), worked out again only when the line changes. The line and cable tools now pick the tile under the mouse (`HT_RECT`) instead of the nearest tile corner, which made the start jump to a neighbouring tile.

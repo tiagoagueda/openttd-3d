@@ -1178,6 +1178,13 @@ static void DrawTileSelection(const TileInfo *ti)
 	/* No tile selection active? */
 	if ((_thd.drawstyle & HT_DRAG_MASK) == HT_NONE) return;
 
+	/* A power line or cable being dragged shows its own line instead of the rectangle. */
+	std::optional<PaletteID> power_highlight;
+	if (GetPowerLineDragHighlight(ti, power_highlight)) {
+		if (power_highlight.has_value() && !is_redsq) DrawTileSelectionRect(ti, *power_highlight);
+		return;
+	}
+
 	if (_thd.diagonal) { // We're drawing a 45 degrees rotated (diagonal) rectangle
 		if (IsInsideRotatedRectangle((int)ti->x, (int)ti->y)) goto draw_inner;
 		return;

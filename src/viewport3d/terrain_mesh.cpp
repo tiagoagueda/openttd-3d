@@ -2265,6 +2265,26 @@ static bool AddPowerModels(TileIndex tile, const ModelPack &pack, std::vector<Mo
 	if (entry == nullptr || pack.Find(ModelKind::Power, 0, 4) == nullptr) return false;
 	static const std::array<float, 4> WHITE{1, 1, 1, 1};
 	PlaceModelHeading(*entry, GetPowerTileFoot(tile), GetPowerTileHeading(Tile(tile)), WHITE, models);
+	if (IsTileOnWater(tile)) {
+		const ModelPack::Entry *pier = pack.Find(ModelKind::Power, 0, 10);
+		if (pier != nullptr) PlaceModelHeading(*pier, GetPowerTileFoot(tile), {1, 0}, WHITE, models);
+	}
+	/* A small status light on top of substations and of pylons joining power plants. */
+	PowerTileStatus status = GetPowerTileStatus(tile);
+	if (status != PowerTileStatus::None) {
+		const ModelPack::Entry *light = pack.Find(ModelKind::Power, 0, 6 + to_underlying(status));
+		if (light != nullptr) {
+			float height;
+			switch (GetPowerTileKind(tile)) {
+				case PowerTileKind::OverheadSubstation: height = 11.1f; break;
+				case PowerTileKind::UndergroundSubstation: height = 4.4f; break;
+				default: height = 12.45f; break;
+			}
+			std::array<float, 3> foot = GetPowerTileFoot(tile);
+			foot[2] += height * entry->scale;
+			PlaceModelHeading(*light, foot, {1, 0}, WHITE, models);
+		}
+	}
 	for (Direction dir : {Direction::N, Direction::NE, Direction::E, Direction::SE}) {
 		uint span = GetPowerSpan(tile, dir);
 		if (span == 0) continue;
@@ -2288,25 +2308,32 @@ static void AddPowerCableModels(TileIndex tile, const ModelPack &pack, std::vect
 	uint8_t dirs = GetPowerCableDirs(tile);
 	if (dirs == 0) return;
 	static const std::array<float, 4> WHITE{1, 1, 1, 1};
-	auto centre = [](TileIndex t) -> std::array<float, 3> {
-		int x = TileX(t) * TILE_SIZE + TILE_SIZE / 2, y = TileY(t) * TILE_SIZE + TILE_SIZE / 2;
-		return {static_cast<float>(x), static_cast<float>(y), GetSlopePixelZ(x, y) * WORLD_Z_SCALE};
+	auto ground = [](int x, int y) -> float {
+		x = std::clamp<int>(x, 0, static_cast<int>(Map::MaxX() * TILE_SIZE));
+		y = std::clamp<int>(y, 0, static_cast<int>(Map::MaxY() * TILE_SIZE));
+		return GetSlopePixelZ(x, y) * WORLD_Z_SCALE;
 	};
-	std::array<float, 3> here = centre(tile);
-	if (IsTileType(tile, TileType::Clear) || IsTileType(tile, TileType::Trees)) {
+	int hx = TileX(tile) * TILE_SIZE + TILE_SIZE / 2, hy = TileY(tile) * TILE_SIZE + TILE_SIZE / 2;
+	std::array<float, 3> here{static_cast<float>(hx), static_cast<float>(hy), ground(hx, hy)};
+	/* A marker post only where the cable ends, so the player can find its ends without a post on every tile. */
+	if (CountBits(dirs) == 1 && (IsTileType(tile, TileType::Clear) || IsTileType(tile, TileType::Trees))) {
 		const ModelPack::Entry *marker = pack.Find(ModelKind::Power, 0, 5);
 		if (marker != nullptr) PlaceModelHeading(*marker, here, {1, 0}, WHITE, models);
 	}
 	if (!_power_network_view) return;
 	const ModelPack::Entry *cable = pack.Find(ModelKind::Power, 0, 6);
 	if (cable == nullptr) return;
-	for (Direction dir : {Direction::N, Direction::NE, Direction::E, Direction::SE}) {
+	/* Lift the cable a little above the ground, and bend it at the tile edge (or corner), so it follows the slopes
+	 * instead of cutting through the ground between the middles of two tiles. Each half then lies within one
+	 * triangle of the ground, which is flat. */
+	static constexpr float LIFT = 0.6f;
+	for (Direction dir : EnumRange(Direction::End)) {
 		if (!HasBit(dirs, to_underlying(dir))) continue;
 		TileIndexDiffC d = TileIndexDiffCByDir(dir);
-		TileIndex other = TileAddWrap(tile, d.x, d.y);
-		if (other == INVALID_TILE) continue;
-		std::array<float, 3> there = centre(other);
-		AddStretchedModel(*cable, {here[0], here[1], here[2] + 0.3f}, {there[0], there[1], there[2] + 0.3f}, models);
+		int mx = hx + d.x * static_cast<int>(TILE_SIZE) / 2, my = hy + d.y * static_cast<int>(TILE_SIZE) / 2;
+		/* Each tile draws its own half, up to the edge it shares with the next tile. */
+		std::array<float, 3> mid{static_cast<float>(mx), static_cast<float>(my), std::max(ground(mx - d.x, my - d.y), ground(mx, my))};
+		AddStretchedModel(*cable, {here[0], here[1], here[2] + LIFT}, {mid[0], mid[1], mid[2] + LIFT}, models);
 	}
 }
 
@@ -2379,6 +2406,17 @@ static bool AddTileModel(TileIndex tile, const ModelPack &pack, std::vector<Mode
 				if (IsTileOnWater(tile)) return false;
 				PlaceModel(*site, tile, 1, 1, DiagDirection::SW, ModelPack::GetTint(Colours::White), models);
 				return true;
+			}
+			if ((gfx == GFX_HYDRO_DAM_X || gfx == GFX_HYDRO_DAM_Y) && IsInclinedSlope(GetTileSlope(tile)) && IsTileOnWater(tile)) {
+				/* A hydro dam on a river slope: the reservoir behind the wall at the top, the outflow at the foot. */
+				const ModelPack::Entry *step = pack.Find(ModelKind::Power, 0, 11);
+				if (step != nullptr) {
+					TileIndexDiffC up = TileIndexDiffCByDiagDir(GetInclinedSlopeDirection(GetTileSlope(tile)));
+					std::array<float, 3> foot{(TileX(tile) + 0.5f) * TILE_SIZE, (TileY(tile) + 0.5f) * TILE_SIZE, GetTilePixelZ(tile) * WORLD_Z_SCALE};
+					static const std::array<float, 4> WHITE{1, 1, 1, 1};
+					PlaceModelHeading(*step, foot, {static_cast<float>(-up.x), static_cast<float>(-up.y)}, WHITE, models);
+					return true;
+				}
 			}
 			const ModelPack::Entry *entry = pack.Find(ModelKind::IndustryTile, GetIndustryTileSpec(gfx)->grf_prop, gfx);
 			if (entry == nullptr) return false;
@@ -2579,8 +2617,7 @@ void AddPreviewModel(const View3DPreview &preview, TileIndex tile, uint track, c
 
 /**
  * Add see-through pylons and wires along an overhead power line that is being dragged.
- * Pylons go as far apart as allowed, and existing pylons on the way are used, as CmdBuildPowerLine() does;
- * whether the land allows them is only known once the line is built.
+ * The pylons stand where the line tool will put them; when the line cannot be built all the way, its end shows a red pylon.
  * @param start Where the line starts.
  * @param end Where it ends, on a straight or diagonal line from the start.
  * @param pack The package of 3D models.
@@ -2595,27 +2632,24 @@ void AddPowerLinePreview(TileIndex start, TileIndex end, const ModelPack &pack, 
 	int length = std::max(std::abs(dx), std::abs(dy));
 	if (length > 256) return;
 	int sx = Clamp(dx, -1, 1), sy = Clamp(dy, -1, 1);
-	auto tile_at = [&](int i) { return TileXY(TileX(start) + sx * i, TileY(start) + sy * i); };
+	auto step_of = [&](TileIndex t) { return std::max(std::abs(static_cast<int>(TileX(t)) - static_cast<int>(TileX(start))), std::abs(static_cast<int>(TileY(t)) - static_cast<int>(TileY(start)))); };
+
+	/* The pylons where the line tool will put them, in order along the line. */
+	std::vector<TileIndex> pylons;
+	bool buildable = GetPowerLinePlanPylons(start, end, pylons);
+	std::ranges::sort(pylons, {}, step_of);
 
 	static const std::array<float, 4> GHOST{1, 1, 1, 0.55f};
-	auto add_pylon = [&](TileIndex t) {
-		if (!IsPowerTile(t)) PlaceModelHeading(*pylon, GetPowerTileFoot(t), GetPowerDirVector(GetPowerDirVectorDirection(sx, sy)), GHOST, models);
+	static const std::array<float, 4> BLOCKED{1, 0.25f, 0.2f, 0.55f};
+	auto add_pylon = [&](TileIndex t, const std::array<float, 4> &tint) {
+		if (!IsPowerTile(t)) PlaceModelHeading(*pylon, GetPowerTileFoot(t), GetPowerDirVector(GetPowerDirVectorDirection(sx, sy)), tint, models);
 	};
-	add_pylon(start);
-	int cur = 0;
-	while (cur < length) {
-		int step = std::min<int>(POWER_MAX_SPAN, length - cur);
-		for (int i = 1; i < step; i++) {
-			if (IsPowerTile(tile_at(cur + i))) {
-				step = i;
-				break;
-			}
-		}
-		TileIndex a = tile_at(cur), b = tile_at(cur + step);
-		add_pylon(b);
-		AddPowerSpanWires(a, b, pack, GHOST, models);
-		cur += step;
+	for (size_t i = 0; i < pylons.size(); i++) {
+		add_pylon(pylons[i], GHOST);
+		if (i > 0) AddPowerSpanWires(pylons[i - 1], pylons[i], pack, GHOST, models);
 	}
+	/* Where the line cannot go on, a red pylon at its end. */
+	if (!buildable && start != end) add_pylon(end, BLOCKED);
 }
 
 /**

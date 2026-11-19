@@ -222,6 +222,7 @@ Industry::~Industry()
  */
 void Industry::PostDestructor(size_t)
 {
+	InvalidatePowerNetworks(); // A pylon next to it may no longer join a power plant.
 	InvalidateWindowData(WindowClass::IndustryDirectory, 0, IDIWD_FORCE_REBUILD);
 	SetWindowDirty(WindowClass::BuildIndustry, 0);
 }
@@ -357,6 +358,16 @@ static void DrawTile_Industry(TileInfo *ti)
 				indts = GetIndustryTileSpec(gfx);
 			}
 		}
+	}
+
+	/* A hydro dam on a river slope: the river keeps its slope, with the reservoir above the wall and the outflow below it. */
+	if ((gfx == GFX_HYDRO_DAM_X || gfx == GFX_HYDRO_DAM_Y) && IsInclinedSlope(ti->tileh) && IsIndustryCompleted(ti->tile) && _power_sprites_loaded && IsTileOnWater(ti->tile)) {
+		DrawWaterClassGround(ti);
+		if (!IsInvisibilitySet(TransparencyOption::Industries)) {
+			static const SpriteBounds DAM_BOUNDS{{0, 0, 0}, {16, 16, 20}, {0, 0, 0}};
+			AddSortableSpriteToDraw(SPR_POWER_DAM_STEP + to_underlying(GetInclinedSlopeDirection(ti->tileh)), PAL_NONE, ti->x, ti->y, ti->z, DAM_BOUNDS, IsTransparencySet(TransparencyOption::Industries));
+		}
+		return;
 	}
 
 	const DrawBuildingsTileStruct *dits = &_industry_draw_tile_data[gfx << 2 | (indts->anim_state ?
@@ -1829,6 +1840,7 @@ static void PopulateStationsNearby(Industry *ind)
 static void DoCreateNewIndustry(Industry *i, TileIndex tile, IndustryType type, const IndustryTileLayout &layout, size_t layout_index, Town *t, Owner founder, uint16_t initial_random_bits)
 {
 	const IndustrySpec *indspec = GetIndustrySpec(type);
+	InvalidatePowerNetworks(); // A pylon next to it may now join a power plant.
 
 	i->location = TileArea(tile, 1, 1);
 	i->type = type;

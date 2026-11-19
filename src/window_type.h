@@ -380,6 +380,12 @@ enum class WindowClass : uint16_t {
 	IndustryView,
 
 	/**
+	 * Substation or power plant connection view; %Window numbers:
+	 *   - #TileIndex = #PowerTileWidgets
+	 */
+	PowerTileView,
+
+	/**
 	 * Company view; %Window numbers:
 	 *   - #CompanyID = #CompanyWidgets
 	 */

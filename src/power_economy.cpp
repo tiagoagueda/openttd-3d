@@ -22,6 +22,7 @@
 #include "settings_type.h"
 #include "window_func.h"
 #include "weather.h"
+#include "viewport_func.h"
 #include "newgrf_industries.h"
 #include "timer/timer_game_calendar.h"
 #include "core/math_func.hpp"
@@ -297,7 +298,17 @@ uint GetPowerPlantFuelDays(const Industry *i)
 struct PowerSubstation {
 	TileIndex tile; ///< Where it is.
 	uint network; ///< Which network it belongs to.
+	bool plant_link; ///< A pylon next to a power plant, joining the plant to the grid; it covers only the plants it touches.
 };
+
+/** Overhead substations pass at most this much energy each way, in tenths of MW. */
+static constexpr uint POWER_SUBSTATION_CAPACITY = 2500;
+/** Underground substations pass at most this much energy each way, in tenths of MW. */
+static constexpr uint POWER_UNDERGROUND_SUBSTATION_CAPACITY = 1500;
+
+static std::vector<bool> _power_industry_on_grid; ///< Whether a substation or a plant connection covered each industry in the last balancing step.
+static std::vector<PowerTileFigures> _power_figures; ///< What each substation did in the last balancing step, by index into the substations.
+static std::vector<PowerNetworkFigures> _power_network_figures; ///< Totals of each network in the last balancing step.
 
 /** A pair of substations of one network, with the length of line between them. */
 struct PowerPair {
@@ -321,6 +332,49 @@ static TileIndex GetPowerSpanEnd(TileIndex tile, Direction dir, uint length)
 {
 	TileIndexDiffC d = TileIndexDiffCByDir(dir);
 	return TileAddWrap(tile, d.x * static_cast<int>(length), d.y * static_cast<int>(length));
+}
+
+/**
+ * Call a function for every power plant with a tile next to a tile (the eight tiles around it).
+ * @param tile The tile, a pylon.
+ * @param func Called once for every plant.
+ */
+template <typename F>
+static void ForEachPowerPlantNextTo(TileIndex tile, F func)
+{
+	std::vector<IndustryID> seen;
+	for (int dy = -1; dy <= 1; dy++) {
+		for (int dx = -1; dx <= 1; dx++) {
+			if (dx == 0 && dy == 0) continue;
+			TileIndex t = TileAddWrap(tile, dx, dy);
+			if (t == INVALID_TILE || !IsTileType(t, TileType::Industry)) continue;
+			IndustryID id = GetIndustryIndex(t);
+			if (std::ranges::find(seen, id) != seen.end()) continue;
+			seen.push_back(id);
+			const Industry *i = Industry::Get(id);
+			if (IsPowerPlant(i)) func(i);
+		}
+	}
+}
+
+/**
+ * Whether a pylon joins a power plant to the grid: it stands next to the plant. Plants have their own
+ * transformers, so they need no substation of the player's; their own output is the limit.
+ * @param tile A power tile.
+ * @return True for a pylon or transition pylon next to a power plant.
+ */
+bool IsPowerPlantLink(TileIndex tile)
+{
+	if (!IsPowerTile(tile) || IsPowerSubstation(tile)) return false;
+	bool found = false;
+	ForEachPowerPlantNextTo(tile, [&](const Industry *) { found = true; });
+	return found;
+}
+
+/** Find the networks again before the next balancing step, for example because a power plant was built or closed. */
+void InvalidatePowerNetworks()
+{
+	_power_network_version++;
 }
 
 /** Find the substations, the networks and the distances between substations again. */
@@ -409,10 +463,13 @@ static void UpdatePowerNetworks()
 
 	std::vector<int> substation_of(nodes.size(), -1);
 	for (uint n = 0; n < nodes.size(); n++) {
-		if (!IsPowerSubstation(nodes[n])) continue;
+		bool link = !IsPowerSubstation(nodes[n]) && IsPowerPlantLink(nodes[n]);
+		if (!IsPowerSubstation(nodes[n]) && !link) continue;
 		substation_of[n] = static_cast<int>(_power_substations.size());
-		_power_substations.push_back({nodes[n], static_cast<uint>(network[n])});
+		_power_substations.push_back({nodes[n], static_cast<uint>(network[n]), link});
 	}
+	_power_network_figures.assign(networks, {});
+	_power_figures.assign(_power_substations.size(), {});
 	_power_pairs.resize(networks);
 
 	/* Distances from every substation, along the lines (Dijkstra). */
@@ -535,6 +592,19 @@ static uint GetIndustryPowerAmount(const Industry *i, const PowerIndustryRole &r
 	return std::min<uint>(UINT16_MAX, role.idle + role.per_100 * made / 100);
 }
 
+/**
+ * Most energy a substation can pass each way in one balancing step.
+ * @param s Index of the substation.
+ * @param st What it covers.
+ * @return Its capacity in tenths of MW; for a pylon joining a plant, what the plants it touches can give.
+ */
+static uint GetSubstationCapacity(uint s, const PowerSubstationState &st)
+{
+	TileIndex tile = _power_substations[s].tile;
+	if (_power_substations[s].plant_link) return std::max<uint>(st.supply, 1);
+	return GetPowerTileKind(tile) == PowerTileKind::UndergroundSubstation ? POWER_UNDERGROUND_SUBSTATION_CAPACITY : POWER_SUBSTATION_CAPACITY;
+}
+
 /** One balancing step: share out the energy of all networks, nearest plants first, and pay for what arrives. */
 static void BalancePower()
 {
@@ -554,6 +624,7 @@ static void BalancePower()
 		t->power_supplied = 0;
 		t->power_covered = false;
 	}
+	_power_industry_on_grid.assign(Industry::GetPoolSize(), false);
 	if (_power_substations.empty()) return;
 
 	/* What each substation covers; consumers and plants covered by several substations are shared evenly between them. */
@@ -564,6 +635,11 @@ static void BalancePower()
 	for (uint s = 0; s < _power_substations.size(); s++) {
 		TileIndex centre = _power_substations[s].tile;
 		PowerSubstationState &st = state[s];
+		if (_power_substations[s].plant_link) {
+			ForEachPowerPlantNextTo(centre, [&](const Industry *i) { st.industries.push_back(i->index); });
+			for (IndustryID id : st.industries) industry_count[id.base()]++;
+			continue;
+		}
 		for (int dy = -static_cast<int>(radius); dy <= static_cast<int>(radius); dy++) {
 			for (int dx = -static_cast<int>(radius); dx <= static_cast<int>(radius); dx++) {
 				TileIndex tile = TileAddWrap(centre, dx, dy);
@@ -584,6 +660,7 @@ static void BalancePower()
 	}
 	for (PowerSubstationState &st : state) {
 		for (IndustryID id : st.industries) {
+			_power_industry_on_grid[id.base()] = true;
 			uint part = amount[id.base()] / industry_count[id.base()];
 			if (roles[id.base()].plant) {
 				st.supply += part;
@@ -608,8 +685,9 @@ static void BalancePower()
 	/* Share out, nearest first. Loss: 1% at each substation on the way, and 1% for every 16 tiles of line. */
 	std::vector<uint> supply_left(state.size()), need_left(state.size());
 	for (uint s = 0; s < state.size(); s++) {
-		supply_left[s] = state[s].supply;
-		need_left[s] = state[s].demand;
+		uint capacity = GetSubstationCapacity(s, state[s]);
+		supply_left[s] = std::min(state[s].supply, capacity);
+		need_left[s] = std::min(state[s].demand, capacity);
 	}
 	for (const auto &pairs : _power_pairs) {
 		for (const PowerPair &pair : pairs) {
@@ -644,6 +722,44 @@ static void BalancePower()
 		if (st.demand == 0) continue;
 		for (const PowerTownPart &part : st.towns) {
 			Town::Get(part.town)->power_supplied += static_cast<uint>(static_cast<uint64_t>(st.delivered) * part.demand / st.demand);
+		}
+	}
+
+	/* Remember what happened, for the windows and the status lights. */
+	std::ranges::fill(_power_network_figures, PowerNetworkFigures{});
+	std::vector<bool> has_plants(_power_network_figures.size(), false), has_consumers(_power_network_figures.size(), false);
+	for (uint s = 0; s < state.size(); s++) {
+		PowerTileFigures &f = _power_figures[s];
+		PowerTileStatus old_status = f.status;
+		f.supply = state[s].supply;
+		f.demand = state[s].demand;
+		f.sent = state[s].sold;
+		f.received = state[s].delivered;
+		f.capacity = GetSubstationCapacity(s, state[s]);
+		f.plants = 0;
+		f.consumers = static_cast<uint>(state[s].houses.size());
+		for (IndustryID id : state[s].industries) (roles[id.base()].plant ? f.plants : f.consumers)++;
+		f.status = old_status; // Worked out below, once the networks are known.
+		PowerNetworkFigures &n = _power_network_figures[_power_substations[s].network];
+		n.substations++;
+		n.supply += f.supply;
+		n.demand += f.demand;
+		n.sent += f.sent;
+		n.received += f.received;
+		if (f.plants != 0) has_plants[_power_substations[s].network] = true;
+		if (f.consumers != 0) has_consumers[_power_substations[s].network] = true;
+	}
+	for (uint s = 0; s < state.size(); s++) {
+		uint network = _power_substations[s].network;
+		PowerNetworkFigures &n = _power_network_figures[network];
+		n.connected = has_plants[network] && has_consumers[network];
+		PowerTileStatus status = n.received != 0 ? PowerTileStatus::Flowing : (n.connected ? PowerTileStatus::Idle : PowerTileStatus::Unconnected);
+		if (status != _power_figures[s].status) {
+			_power_figures[s].status = status;
+			MarkTileDirtyByTile(_power_substations[s].tile);
+#ifdef WITH_VIEWPORT3D
+			MarkTileDirtyForView3D(_power_substations[s].tile);
+#endif
 		}
 	}
 
@@ -728,4 +844,55 @@ PowerSubstationFigures GetPowerSubstationFigures(TileIndex tile)
 	figures.houses = static_cast<uint>(houses.size());
 	for (TileIndex house : houses) figures.demand += GetHousePowerDemand(house);
 	return figures;
+}
+
+/**
+ * What a substation, or a pylon joining a power plant, did in the last balancing step.
+ * @param tile The power tile.
+ * @return Its figures; status None if it is neither.
+ */
+PowerTileFigures GetPowerTileFigures(TileIndex tile)
+{
+	if (_power_cache_version != _power_network_version) return {};
+	auto it = std::ranges::find(_power_substations, tile, &PowerSubstation::tile);
+	if (it == _power_substations.end()) return {};
+	size_t s = it - _power_substations.begin();
+	if (s >= _power_figures.size()) return {};
+	PowerTileFigures f = _power_figures[s];
+	f.plant_link = it->plant_link;
+	f.network = it->network;
+	return f;
+}
+
+/**
+ * Totals of the network a substation, or a pylon joining a power plant, belongs to.
+ * @param tile The power tile.
+ * @return The totals; all zero if the tile is neither.
+ */
+PowerNetworkFigures GetPowerNetworkFigures(TileIndex tile)
+{
+	if (_power_cache_version != _power_network_version) return {};
+	auto it = std::ranges::find(_power_substations, tile, &PowerSubstation::tile);
+	if (it == _power_substations.end() || it->network >= _power_network_figures.size()) return {};
+	return _power_network_figures[it->network];
+}
+
+/**
+ * Status light of a power tile.
+ * @param tile The power tile.
+ * @return Its status, or PowerTileStatus::None for a tile without a light.
+ */
+PowerTileStatus GetPowerTileStatus(TileIndex tile)
+{
+	return GetPowerTileFigures(tile).status;
+}
+
+/**
+ * Whether a substation, or a pylon next to a power plant, covered an industry in the last balancing step.
+ * @param i The industry.
+ * @return True if it is on a power grid.
+ */
+bool IsIndustryOnPowerGrid(const Industry *i)
+{
+	return i->index.base() < _power_industry_on_grid.size() && _power_industry_on_grid[i->index.base()];
 }

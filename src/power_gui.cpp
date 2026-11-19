@@ -21,6 +21,14 @@
 #include "road_cmd.h"
 #include "power_cmd.h"
 #include "power_func.h"
+#include "power_map.h"
+#include "zoom_func.h"
+#include "strings_func.h"
+#include "timer/timer_window.h"
+#include "timer/timer.h"
+#include "transparency.h"
+#include "slope_func.h"
+#include "landscape.h"
 
 #include "widgets/power_widget.h"
 
@@ -55,13 +63,35 @@ static TileIndex SnapPowerLineEnd(TileIndex start, TileIndex end)
 	return TileXY(TileX(start) + dx, TileY(start) + dy);
 }
 
+/**
+ * Mouse cursor of a power tool.
+ * @param cursor The cursor from power.grf.
+ * @param stand_in The cursor of the base set to use without power.grf.
+ * @return The cursor to use.
+ */
+static CursorID PowerCursor(CursorID cursor, CursorID stand_in)
+{
+	return _power_sprites_loaded ? cursor : stand_in;
+}
+
 /** Toolbar window for building power lines. */
 struct BuildPowerToolbarWindow : Window {
 	WidgetID last_user_action = INVALID_WIDGET; ///< Last started user action.
 
 	BuildPowerToolbarWindow(WindowDesc &desc, WindowNumber window_number) : Window(desc)
 	{
-		this->InitNested(window_number);
+		this->CreateNestedTree();
+		if (!_power_sprites_loaded) {
+			/* Without power.grf, stand-ins from the base set. */
+			static const std::pair<WidgetID, SpriteID> STAND_INS[] = {
+				{WID_PT_BUILD_LINE, SPR_IMG_AUTOELRAIL}, {WID_PT_BUILD_PYLON, SPR_IMG_TRANSMITTER},
+				{WID_PT_BUILD_SUBSTATION, SPR_IMG_RAIL_STATION}, {WID_PT_BUILD_TRANSITION, SPR_IMG_CONVERT_ELRAIL},
+				{WID_PT_BUILD_CABLE, SPR_IMG_TUNNEL_RAIL}, {WID_PT_BUILD_UNDERGROUND_SUBSTATION, SPR_IMG_TRUCK_BAY},
+				{WID_PT_NETWORK_VIEW, SPR_IMG_SHOW_ROUTES},
+			};
+			for (auto [widget, sprite] : STAND_INS) this->GetWidget<NWidgetCore>(widget)->SetSprite(sprite);
+		}
+		this->FinishInitNested(window_number);
 		this->SetWidgetLoweredState(WID_PT_NETWORK_VIEW, _power_network_view);
 	}
 
@@ -75,18 +105,18 @@ struct BuildPowerToolbarWindow : Window {
 	{
 		switch (widget) {
 			case WID_PT_BUILD_LINE:
-				HandlePlacePushButton(this, WID_PT_BUILD_LINE, SPR_CURSOR_AUTOELRAIL, HT_POINT | HT_DIAGONAL);
+				HandlePlacePushButton(this, WID_PT_BUILD_LINE, PowerCursor(SPR_CURSOR_POWER_LINE, SPR_CURSOR_AUTOELRAIL), HT_RECT);
 				this->last_user_action = widget;
 				break;
 
 			case WID_PT_BUILD_PYLON:
-				HandlePlacePushButton(this, WID_PT_BUILD_PYLON, SPR_CURSOR_TRANSMITTER, HT_RECT);
+				HandlePlacePushButton(this, WID_PT_BUILD_PYLON, PowerCursor(SPR_CURSOR_POWER_PYLON, SPR_CURSOR_TRANSMITTER), HT_RECT);
 				this->last_user_action = widget;
 				break;
 
 			case WID_PT_BUILD_SUBSTATION:
 			case WID_PT_BUILD_UNDERGROUND_SUBSTATION:
-				if (HandlePlacePushButton(this, widget, widget == WID_PT_BUILD_SUBSTATION ? SPR_CURSOR_RAIL_STATION : SPR_CURSOR_TRUCK_STATION, HT_RECT)) {
+				if (HandlePlacePushButton(this, widget, widget == WID_PT_BUILD_SUBSTATION ? PowerCursor(SPR_CURSOR_POWER_SUBSTATION, SPR_CURSOR_RAIL_STATION) : PowerCursor(SPR_CURSOR_POWER_UNDERGROUND_SUBSTATION, SPR_CURSOR_TRUCK_STATION), HT_RECT)) {
 					/* Show the reach of the substation around the cursor. */
 					int rad = _settings_game.economy.power_catchment;
 					SetTileSelectBigSize(-rad, -rad, 2 * rad, 2 * rad);
@@ -95,12 +125,12 @@ struct BuildPowerToolbarWindow : Window {
 				break;
 
 			case WID_PT_BUILD_TRANSITION:
-				HandlePlacePushButton(this, WID_PT_BUILD_TRANSITION, SPR_CURSOR_TRANSMITTER, HT_RECT);
+				HandlePlacePushButton(this, WID_PT_BUILD_TRANSITION, PowerCursor(SPR_CURSOR_POWER_TRANSITION, SPR_CURSOR_TRANSMITTER), HT_RECT);
 				this->last_user_action = widget;
 				break;
 
 			case WID_PT_BUILD_CABLE:
-				if (HandlePlacePushButton(this, WID_PT_BUILD_CABLE, SPR_CURSOR_TUNNEL_RAIL, HT_POINT | HT_DIAGONAL)) {
+				if (HandlePlacePushButton(this, WID_PT_BUILD_CABLE, PowerCursor(SPR_CURSOR_POWER_CABLE, SPR_CURSOR_TUNNEL_RAIL), HT_RECT)) {
 					/* Cables are hidden; show them while building them. */
 					SetPowerNetworkView(true);
 					this->SetWidgetLoweredState(WID_PT_NETWORK_VIEW, true);
@@ -222,6 +252,157 @@ struct BuildPowerToolbarWindow : Window {
 	}
 };
 
+/** The plan of the overhead line being dragged, kept while the drag does not change. */
+struct PowerLineDragPlan {
+	TileIndex start = INVALID_TILE; ///< Start of the planned line.
+	TileIndex end = INVALID_TILE; ///< End of the planned line.
+	std::vector<TileIndex> pylons; ///< Tiles that carry the ends of spans.
+	bool buildable = false; ///< Whether the whole line can be built.
+};
+static PowerLineDragPlan _power_line_drag_plan;
+
+/**
+ * Get the plan of an overhead line, worked out again only when the line changes.
+ * @param start Start of the line.
+ * @param end End of the line.
+ * @return The plan.
+ */
+static const PowerLineDragPlan &GetPowerLineDragPlan(TileIndex start, TileIndex end)
+{
+	PowerLineDragPlan &plan = _power_line_drag_plan;
+	if (plan.start != start || plan.end != end) {
+		plan.start = start;
+		plan.end = end;
+		StringID error;
+		plan.buildable = GetPowerLinePreviewPlan(start, end, plan.pylons, error);
+	}
+	return plan;
+}
+
+/**
+ * Get where the line tool puts its pylons on an overhead line, for the 3D preview.
+ * @param start Start of the line.
+ * @param end End of the line.
+ * @param[out] pylons The tiles that carry the ends of spans, as far as the line can be built.
+ * @return Whether the whole line can be built.
+ */
+bool GetPowerLinePlanPylons(TileIndex start, TileIndex end, std::vector<TileIndex> &pylons)
+{
+	const PowerLineDragPlan &plan = GetPowerLineDragPlan(start, end);
+	pylons = plan.pylons;
+	return plan.buildable;
+}
+
+/**
+ * Find the line or cable being dragged with the power toolbar.
+ * @param[out] start Start of the drag.
+ * @param[out] end End of the drag, snapped to one of the eight directions.
+ * @param[out] proc What the drag does.
+ * @return Whether a line or cable is being dragged.
+ */
+static bool GetPowerLineDrag(TileIndex &start, TileIndex &end, ViewportDragDropSelectionProcess &proc)
+{
+	if (_special_mouse_mode != SpecialMouseMode::Sizing) return false;
+	if (dynamic_cast<const BuildPowerToolbarWindow *>(_thd.GetCallbackWnd()) == nullptr) return false;
+	proc = _thd.select_proc;
+	if (proc != DDSP_BUILD_POWER_LINE && proc != DDSP_REMOVE_POWER_LINE && proc != DDSP_BUILD_POWER_CABLE && proc != DDSP_REMOVE_POWER_CABLE) return false;
+	if (_thd.selstart.x < 0 || _thd.selstart.y < 0 || _thd.selend.x < 0 || _thd.selend.y < 0) return false;
+	start = TileVirtXY(_thd.selstart.x, _thd.selstart.y);
+	end = TileVirtXY(_thd.selend.x, _thd.selend.y);
+	if (!IsValidTile(start) || !IsValidTile(end)) return false;
+	end = SnapPowerLineEnd(start, end);
+	return true;
+}
+
+/**
+ * Whether a line or cable is being dragged with the power toolbar.
+ * @return True if so.
+ */
+bool IsPowerLineDragActive()
+{
+	TileIndex start, end;
+	ViewportDragDropSelectionProcess proc;
+	return GetPowerLineDrag(start, end, proc);
+}
+
+/**
+ * Where a tile lies on a straight or diagonal line.
+ * @param start Start of the line.
+ * @param end End of the line, on one of the eight directions from the start.
+ * @param tile The tile.
+ * @return The number of steps from the start, or -1 when the tile is not on the line.
+ */
+static int GetStepOnLine(TileIndex start, TileIndex end, TileIndex tile)
+{
+	int dx = static_cast<int>(TileX(end)) - static_cast<int>(TileX(start));
+	int dy = static_cast<int>(TileY(end)) - static_cast<int>(TileY(start));
+	int tx = static_cast<int>(TileX(tile)) - static_cast<int>(TileX(start));
+	int ty = static_cast<int>(TileY(tile)) - static_cast<int>(TileY(start));
+	int sx = Clamp(dx, -1, 1);
+	int sy = Clamp(dy, -1, 1);
+	int len = std::max(std::abs(dx), std::abs(dy));
+	int k = sx != 0 ? tx * sx : ty * sy;
+	if (k < 0 || k > len || tx != sx * k || ty != sy * k) return -1;
+	return k;
+}
+
+/**
+ * Draw the preview of the line or cable being dragged with the power toolbar on a tile:
+ * the tiles of the line, with the pylons where the line tool will put them.
+ * Tiles the line does not reach turn red where the line cannot be built.
+ * @param ti The tile.
+ * @param[out] highlight The palette of the selection square to draw on the tile, if any.
+ * @return Whether a power line or cable is being dragged; the usual tile selection is then not drawn.
+ */
+bool GetPowerLineDragHighlight(const TileInfo *ti, std::optional<PaletteID> &highlight)
+{
+	highlight.reset();
+	TileIndex start, end;
+	ViewportDragDropSelectionProcess proc;
+	if (!GetPowerLineDrag(start, end, proc)) return false;
+
+	int step = GetStepOnLine(start, end, ti->tile);
+	if (step < 0) return true;
+
+	switch (proc) {
+		case DDSP_REMOVE_POWER_LINE:
+		case DDSP_REMOVE_POWER_CABLE:
+			highlight = PALETTE_SEL_TILE_RED;
+			return true;
+		case DDSP_BUILD_POWER_CABLE:
+			highlight = PAL_NONE;
+			return true;
+		default: break;
+	}
+
+	const PowerLineDragPlan &plan = GetPowerLineDragPlan(start, end);
+	bool pylon = std::ranges::find(plan.pylons, ti->tile) != plan.pylons.end();
+	/* Without a plan to here, the line stops before this tile. */
+	int reached = 0;
+	for (TileIndex t : plan.pylons) reached = std::max(reached, GetStepOnLine(start, end, t));
+	if (!plan.buildable && step > reached) {
+		highlight = PALETTE_SEL_TILE_RED;
+		return true;
+	}
+	highlight = pylon ? PAL_NONE : PALETTE_SEL_TILE_BLUE;
+
+	if (pylon && _power_sprites_loaded && !IsPowerTile(ti->tile) && !IsInvisibilitySet(TransparencyOption::Structures)) {
+		static const SpriteBounds PYLON_BOUNDS{{6, 6, 0}, {4, 4, 40}, {-6, -6, 0}};
+		int dx = std::abs(static_cast<int>(TileX(end)) - static_cast<int>(TileX(start)));
+		int dy = std::abs(static_cast<int>(TileY(end)) - static_cast<int>(TileY(start)));
+		uint dir;
+		if (dy == 0) {
+			dir = 0;
+		} else if (dx == 0) {
+			dir = 1;
+		} else {
+			dir = ((TileX(end) > TileX(start)) == (TileY(end) > TileY(start))) ? 2 : 3;
+		}
+		AddSortableSpriteToDraw(SPR_POWER_PYLON + dir, PAL_NONE, ti->x, ti->y, ti->z + GetSlopeMaxPixelZ(ti->tileh), PYLON_BOUNDS, false);
+	}
+	return true;
+}
+
 static constexpr std::initializer_list<NWidgetPart> _nested_power_toolbar_widgets = {
 	NWidget(NWID_HORIZONTAL),
 		NWidget(WWT_CLOSEBOX, Colours::DarkGreen),
@@ -229,14 +410,14 @@ static constexpr std::initializer_list<NWidgetPart> _nested_power_toolbar_widget
 		NWidget(WWT_STICKYBOX, Colours::DarkGreen),
 	EndContainer(),
 	NWidget(NWID_HORIZONTAL),
-		NWidget(WWT_IMGBTN, Colours::DarkGreen, WID_PT_BUILD_LINE), SetFill(0, 1), SetToolbarMinimalSize(1), SetSpriteTip(SPR_IMG_AUTOELRAIL, STR_POWER_TOOLBAR_TOOLTIP_BUILD_LINE),
-		NWidget(WWT_IMGBTN, Colours::DarkGreen, WID_PT_BUILD_PYLON), SetFill(0, 1), SetToolbarMinimalSize(1), SetSpriteTip(SPR_IMG_TRANSMITTER, STR_POWER_TOOLBAR_TOOLTIP_BUILD_PYLON),
-		NWidget(WWT_IMGBTN, Colours::DarkGreen, WID_PT_BUILD_SUBSTATION), SetFill(0, 1), SetToolbarMinimalSize(1), SetSpriteTip(SPR_IMG_RAIL_STATION, STR_POWER_TOOLBAR_TOOLTIP_BUILD_SUBSTATION),
-		NWidget(WWT_IMGBTN, Colours::DarkGreen, WID_PT_BUILD_TRANSITION), SetFill(0, 1), SetToolbarMinimalSize(1), SetSpriteTip(SPR_IMG_CONVERT_ELRAIL, STR_POWER_TOOLBAR_TOOLTIP_BUILD_TRANSITION),
-		NWidget(WWT_IMGBTN, Colours::DarkGreen, WID_PT_BUILD_CABLE), SetFill(0, 1), SetToolbarMinimalSize(1), SetSpriteTip(SPR_IMG_TUNNEL_RAIL, STR_POWER_TOOLBAR_TOOLTIP_BUILD_CABLE),
-		NWidget(WWT_IMGBTN, Colours::DarkGreen, WID_PT_BUILD_UNDERGROUND_SUBSTATION), SetFill(0, 1), SetToolbarMinimalSize(1), SetSpriteTip(SPR_IMG_TRUCK_BAY, STR_POWER_TOOLBAR_TOOLTIP_BUILD_UNDERGROUND_SUBSTATION),
+		NWidget(WWT_IMGBTN, Colours::DarkGreen, WID_PT_BUILD_LINE), SetFill(0, 1), SetToolbarMinimalSize(1), SetSpriteTip(SPR_IMG_POWER_LINE, STR_POWER_TOOLBAR_TOOLTIP_BUILD_LINE),
+		NWidget(WWT_IMGBTN, Colours::DarkGreen, WID_PT_BUILD_PYLON), SetFill(0, 1), SetToolbarMinimalSize(1), SetSpriteTip(SPR_IMG_POWER_PYLON, STR_POWER_TOOLBAR_TOOLTIP_BUILD_PYLON),
+		NWidget(WWT_IMGBTN, Colours::DarkGreen, WID_PT_BUILD_SUBSTATION), SetFill(0, 1), SetToolbarMinimalSize(1), SetSpriteTip(SPR_IMG_POWER_SUBSTATION, STR_POWER_TOOLBAR_TOOLTIP_BUILD_SUBSTATION),
+		NWidget(WWT_IMGBTN, Colours::DarkGreen, WID_PT_BUILD_TRANSITION), SetFill(0, 1), SetToolbarMinimalSize(1), SetSpriteTip(SPR_IMG_POWER_TRANSITION, STR_POWER_TOOLBAR_TOOLTIP_BUILD_TRANSITION),
+		NWidget(WWT_IMGBTN, Colours::DarkGreen, WID_PT_BUILD_CABLE), SetFill(0, 1), SetToolbarMinimalSize(1), SetSpriteTip(SPR_IMG_POWER_CABLE, STR_POWER_TOOLBAR_TOOLTIP_BUILD_CABLE),
+		NWidget(WWT_IMGBTN, Colours::DarkGreen, WID_PT_BUILD_UNDERGROUND_SUBSTATION), SetFill(0, 1), SetToolbarMinimalSize(1), SetSpriteTip(SPR_IMG_POWER_UNDERGROUND_SUBSTATION, STR_POWER_TOOLBAR_TOOLTIP_BUILD_UNDERGROUND_SUBSTATION),
 		NWidget(WWT_PANEL, Colours::DarkGreen), SetToolbarSpacerMinimalSize(), SetFill(1, 1), EndContainer(),
-		NWidget(WWT_IMGBTN, Colours::DarkGreen, WID_PT_NETWORK_VIEW), SetFill(0, 1), SetToolbarMinimalSize(1), SetSpriteTip(SPR_IMG_SHOW_ROUTES, STR_POWER_TOOLBAR_TOOLTIP_NETWORK_VIEW),
+		NWidget(WWT_IMGBTN, Colours::DarkGreen, WID_PT_NETWORK_VIEW), SetFill(0, 1), SetToolbarMinimalSize(1), SetSpriteTip(SPR_IMG_POWER_NETWORK_VIEW, STR_POWER_TOOLBAR_TOOLTIP_NETWORK_VIEW),
 		NWidget(WWT_IMGBTN, Colours::DarkGreen, WID_PT_DEMOLISH), SetFill(0, 1), SetToolbarMinimalSize(1), SetSpriteTip(SPR_IMG_DYNAMITE, STR_TOOLTIP_DEMOLISH_BUILDINGS_ETC),
 		NWidget(WWT_IMGBTN, Colours::DarkGreen, WID_PT_REMOVE), SetFill(0, 1), SetToolbarMinimalSize(1), SetSpriteTip(SPR_IMG_REMOVE, STR_POWER_TOOLBAR_TOOLTIP_REMOVE),
 	EndContainer(),
@@ -262,6 +443,113 @@ Window *ShowBuildPowerToolbar()
 
 	CloseWindowByClass(WindowClass::BuildToolbar);
 	return AllocateWindowDescFront<BuildPowerToolbarWindow>(_power_toolbar_desc, POWER_TOOLBAR_NUMBER);
+}
+
+/** Window with what a substation, or a pylon joining a power plant to the grid, does. */
+struct PowerTileWindow : Window {
+	static constexpr uint LINES = 8; ///< Most lines of text.
+
+	PowerTileWindow(WindowDesc &desc, WindowNumber window_number) : Window(desc)
+	{
+		this->InitNested(window_number);
+		this->owner = GetTileOwner(this->GetTile());
+	}
+
+	/** The tile the window is about. */
+	TileIndex GetTile() const
+	{
+		return TileIndex{static_cast<uint32_t>(this->window_number)};
+	}
+
+	std::string GetWidgetString(WidgetID widget, StringID stringid) const override
+	{
+		if (widget != WID_PTV_CAPTION) return this->Window::GetWidgetString(widget, stringid);
+		TileIndex tile = this->GetTile();
+		if (IsPowerTile(tile) && IsPowerSubstation(tile)) {
+			return GetString(GetPowerTileKind(tile) == PowerTileKind::UndergroundSubstation ? STR_POWER_TILE_CAPTION_UNDERGROUND_SUBSTATION : STR_POWER_TILE_CAPTION_SUBSTATION);
+		}
+		return GetString(STR_POWER_TILE_CAPTION_PLANT_LINK);
+	}
+
+	void UpdateWidgetSize(WidgetID widget, Dimension &size, const Dimension &padding, [[maybe_unused]] Dimension &fill, [[maybe_unused]] Dimension &resize) override
+	{
+		if (widget != WID_PTV_INFO) return;
+		size.width = std::max<uint>(size.width, ScaleGUITrad(380)) + padding.width;
+		size.height = (LINES + 1) * GetCharacterHeight(FontSize::Normal) + padding.height + WidgetDimensions::scaled.framerect.Vertical();
+	}
+
+	void DrawWidget(const Rect &r, WidgetID widget) const override
+	{
+		if (widget != WID_PTV_INFO) return;
+		TileIndex tile = this->GetTile();
+		if (!IsPowerTile(tile)) return;
+		Rect ir = r.Shrink(WidgetDimensions::scaled.frametext, WidgetDimensions::scaled.framerect);
+		auto line = [&](const std::string &text) {
+			ir.top = DrawStringMultiLine(ir, text);
+		};
+		line(GetString(STR_POWER_TILE_OWNER, GetTileOwner(tile)));
+		PowerTileFigures f = GetPowerTileFigures(tile);
+		switch (f.status) {
+			case PowerTileStatus::Flowing: line(GetString(STR_POWER_TILE_STATUS_FLOWING)); break;
+			case PowerTileStatus::Idle: line(GetString(STR_POWER_TILE_STATUS_IDLE)); break;
+			case PowerTileStatus::Unconnected: line(GetString(STR_POWER_TILE_STATUS_UNCONNECTED)); break;
+			default: line(GetString(STR_POWER_TILE_STATUS_UNKNOWN)); return;
+		}
+		if (f.plant_link) line(GetString(STR_POWER_TILE_PLANT_LINK_INFO));
+		line(GetString(STR_POWER_TILE_COVERS, f.plants, f.consumers));
+		line(GetString(STR_POWER_TILE_SENT, f.sent, 1, f.supply, 1));
+		if (!f.plant_link) line(GetString(STR_POWER_TILE_RECEIVED, f.received, 1, f.demand, 1));
+		line(GetString(STR_POWER_TILE_CAPACITY, f.capacity, 1));
+		PowerNetworkFigures n = GetPowerNetworkFigures(tile);
+		line(GetString(STR_POWER_TILE_NETWORK, n.substations));
+		line(GetString(STR_POWER_TILE_NETWORK_FLOW, n.supply, 1, n.demand, 1, n.received, 1));
+	}
+
+	void OnClick([[maybe_unused]] Point pt, WidgetID widget, [[maybe_unused]] int click_count) override
+	{
+		if (widget != WID_PTV_LOCATION) return;
+		if (IsCtrlPressed()) {
+			ShowExtraViewportWindow(this->GetTile());
+		} else {
+			ScrollMainWindowToTile(this->GetTile());
+		}
+	}
+
+	/** The figures change at every balancing step. */
+	const IntervalTimer<TimerWindow> refresh_interval = {std::chrono::seconds(1), [this](auto) {
+		if (!IsPowerTile(this->GetTile())) {
+			this->Close();
+			return;
+		}
+		this->SetWidgetDirty(WID_PTV_INFO);
+	}};
+};
+
+static constexpr std::initializer_list<NWidgetPart> _nested_power_tile_widgets = {
+	NWidget(NWID_HORIZONTAL),
+		NWidget(WWT_CLOSEBOX, Colours::DarkGreen),
+		NWidget(WWT_CAPTION, Colours::DarkGreen, WID_PTV_CAPTION),
+		NWidget(WWT_PUSHIMGBTN, Colours::DarkGreen, WID_PTV_LOCATION), SetAspect(WidgetDimensions::ASPECT_LOCATION), SetSpriteTip(SPR_GOTO_LOCATION, STR_POWER_TILE_LOCATION_TOOLTIP),
+		NWidget(WWT_SHADEBOX, Colours::DarkGreen),
+		NWidget(WWT_STICKYBOX, Colours::DarkGreen),
+	EndContainer(),
+	NWidget(WWT_PANEL, Colours::DarkGreen, WID_PTV_INFO), EndContainer(),
+};
+
+static WindowDesc _power_tile_desc(
+	WindowPosition::Automatic, "view_power_tile", 0, 0,
+	WindowClass::PowerTileView, WindowClass::None,
+	{},
+	_nested_power_tile_widgets
+);
+
+/**
+ * Open the window of a substation, or of a pylon joining a power plant to the grid.
+ * @param tile The power tile.
+ */
+void ShowPowerTileWindow(TileIndex tile)
+{
+	AllocateWindowDescFront<PowerTileWindow>(_power_tile_desc, tile.base());
 }
 
 #ifdef WITH_VIEWPORT3D

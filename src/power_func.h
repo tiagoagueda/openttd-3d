@@ -86,4 +86,48 @@ struct PowerSubstationFigures {
 };
 PowerSubstationFigures GetPowerSubstationFigures(TileIndex tile);
 
+/** Status light of a substation, or of a pylon joining a power plant to the grid. */
+enum class PowerTileStatus : uint8_t {
+	None, ///< No light: a plain pylon, or not balanced yet.
+	Flowing, ///< Green: energy flows on its network.
+	Idle, ///< Yellow: its network joins plants and consumers, but nothing flows now.
+	Unconnected, ///< Red: its network lacks plants or consumers.
+};
+
+/** What a substation, or a pylon joining a power plant, did in the last balancing step. Power in tenths of MW. */
+struct PowerTileFigures {
+	PowerTileStatus status = PowerTileStatus::None; ///< Its status light.
+	bool plant_link = false; ///< A pylon joining a power plant, rather than a substation.
+	uint network = 0; ///< Number of its network.
+	uint plants = 0; ///< Power plants it covers.
+	uint consumers = 0; ///< Industries and buildings it covers.
+	uint supply = 0; ///< What its plants offered.
+	uint demand = 0; ///< What its consumers needed.
+	uint sent = 0; ///< What it took from its plants into the network, losses included.
+	uint received = 0; ///< What arrived for its consumers.
+	uint capacity = 0; ///< Most it can pass each way.
+};
+
+/** Totals of a network in the last balancing step. Power in tenths of MW. */
+struct PowerNetworkFigures {
+	uint substations = 0; ///< Substations, and pylons joining plants.
+	uint supply = 0; ///< What all its plants offered.
+	uint demand = 0; ///< What all its consumers needed.
+	uint sent = 0; ///< What left the plants.
+	uint received = 0; ///< What arrived at consumers.
+	bool connected = false; ///< Whether it joins at least one plant and one consumer.
+};
+
+PowerTileFigures GetPowerTileFigures(TileIndex tile);
+PowerNetworkFigures GetPowerNetworkFigures(TileIndex tile);
+PowerTileStatus GetPowerTileStatus(TileIndex tile);
+bool IsPowerPlantLink(TileIndex tile);
+bool IsIndustryOnPowerGrid(const Industry *i);
+void InvalidatePowerNetworks();
+void ShowPowerTileWindow(TileIndex tile);
+bool GetPowerLinePreviewPlan(TileIndex start_tile, TileIndex end_tile, std::vector<TileIndex> &pylons, StringID &error);
+bool IsPowerLineDragActive();
+bool GetPowerLinePlanPylons(TileIndex start, TileIndex end, std::vector<TileIndex> &pylons);
+bool GetPowerLineDragHighlight(const struct TileInfo *ti, std::optional<PaletteID> &highlight);
+
 #endif /* POWER_FUNC_H */

@@ -13,6 +13,7 @@
 #include "tile_map.h"
 #include "direction_func.h"
 #include "company_type.h"
+#include "water_map.h"
 
 /**
  * What stands on a tile of #TileType::Power.
@@ -272,11 +273,13 @@ inline bool HasPowerSpans(Tile t)
  * @param t The tile.
  * @param owner The company that builds it.
  * @param kind What stands on it.
+ * @param water The water it stands in, or WaterClass::Invalid on land.
  */
-inline void MakePowerTile(Tile t, Owner owner, PowerTileKind kind)
+inline void MakePowerTile(Tile t, Owner owner, PowerTileKind kind, WaterClass water = WaterClass::Invalid)
 {
 	SetTileType(t, TileType::Power);
 	SetTileOwner(t, owner);
+	SetWaterClass(t, water);
 	t.m2() = 0;
 	t.m3() = 0;
 	t.m4() = 0;

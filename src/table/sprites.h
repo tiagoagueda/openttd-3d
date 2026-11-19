@@ -389,7 +389,23 @@ static constexpr SpriteID SPR_POWER_HALF_WIRES = SPR_POWER_BASE + 15; ///< Wires
 static constexpr SpriteID SPR_POWER_CABLE_MARKER = SPR_POWER_BASE + 23; ///< Marker post over an underground cable.
 static constexpr SpriteID SPR_POWER_CABLE_VIEW = SPR_POWER_BASE + 24; ///< Underground cable in the power network view, from the middle of a tile to its edge, by #Direction.
 static constexpr SpriteID SPR_POWER_PLANT_BASE = SPR_POWER_BASE + 32; ///< Industry tiles of the power plants of the power lines fork, by industry tile from 175 on.
-static constexpr uint16_t POWER_SPRITE_COUNT = 40;
+static constexpr SpriteID SPR_IMG_POWER_LINE = SPR_POWER_BASE + 40; ///< Toolbar icon: build an overhead line.
+static constexpr SpriteID SPR_IMG_POWER_PYLON = SPR_POWER_BASE + 41; ///< Toolbar icon: build a pylon.
+static constexpr SpriteID SPR_IMG_POWER_SUBSTATION = SPR_POWER_BASE + 42; ///< Toolbar icon: build an overhead substation.
+static constexpr SpriteID SPR_IMG_POWER_TRANSITION = SPR_POWER_BASE + 43; ///< Toolbar icon: build a transition pylon.
+static constexpr SpriteID SPR_IMG_POWER_CABLE = SPR_POWER_BASE + 44; ///< Toolbar icon: lay an underground cable.
+static constexpr SpriteID SPR_IMG_POWER_UNDERGROUND_SUBSTATION = SPR_POWER_BASE + 45; ///< Toolbar icon: build an underground substation.
+static constexpr SpriteID SPR_IMG_POWER_NETWORK_VIEW = SPR_POWER_BASE + 46; ///< Toolbar icon: power network view.
+static constexpr SpriteID SPR_CURSOR_POWER_LINE = SPR_POWER_BASE + 47; ///< Mouse cursors for the tools of the icons above, from the line to the underground substation.
+static constexpr SpriteID SPR_CURSOR_POWER_PYLON = SPR_POWER_BASE + 48;
+static constexpr SpriteID SPR_CURSOR_POWER_SUBSTATION = SPR_POWER_BASE + 49;
+static constexpr SpriteID SPR_CURSOR_POWER_TRANSITION = SPR_POWER_BASE + 50;
+static constexpr SpriteID SPR_CURSOR_POWER_CABLE = SPR_POWER_BASE + 51;
+static constexpr SpriteID SPR_CURSOR_POWER_UNDERGROUND_SUBSTATION = SPR_POWER_BASE + 52;
+static constexpr SpriteID SPR_POWER_STATUS_LIGHT = SPR_POWER_BASE + 53; ///< Status lights: green (energy flows), yellow (nothing flows), red (not joined).
+static constexpr SpriteID SPR_POWER_WATER_FOUNDATION = SPR_POWER_BASE + 56; ///< Concrete foundation of a pylon standing in water.
+static constexpr SpriteID SPR_POWER_DAM_STEP = SPR_POWER_BASE + 57; ///< Hydro dam on a river slope, by the #DiagDirection the slope goes up in.
+static constexpr uint16_t POWER_SPRITE_COUNT = 61;
 /** @} */
 
 /** From where can we start putting NewGRFs. */

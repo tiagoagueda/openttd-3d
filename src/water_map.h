@@ -104,7 +104,7 @@ inline void SetWaterTileType(Tile t, WaterTileType type)
  */
 inline bool HasTileWaterClass(Tile t)
 {
-	return IsTileType(t, TileType::Water) || IsTileType(t, TileType::Station) || IsTileType(t, TileType::Industry) || IsTileType(t, TileType::Object) || IsTileType(t, TileType::Trees);
+	return IsTileType(t, TileType::Water) || IsTileType(t, TileType::Station) || IsTileType(t, TileType::Industry) || IsTileType(t, TileType::Object) || IsTileType(t, TileType::Trees) || IsTileType(t, TileType::Power);
 }
 
 /**

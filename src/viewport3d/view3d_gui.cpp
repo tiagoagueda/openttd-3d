@@ -38,6 +38,7 @@
 #include "../tilehighlight_func.h"
 #include "../window_func.h"
 #include "../window_gui.h"
+#include "../power_func.h"
 
 #include "table/strings.h"
 
@@ -833,7 +834,7 @@ public:
 		/* The frame around a rectangle of selected tiles; for tools that build along lines, around the tile below the mouse. */
 		if (edge != nullptr && corner != nullptr) {
 			uint x0 = tx, y0 = ty, x1 = tx + 1, y1 = ty + 1;
-			if ((style == HT_RECT || style == HT_POINT) && _thd.pos.x >= 0 && _thd.pos.y >= 0) {
+			if ((style == HT_RECT || style == HT_POINT) && _thd.pos.x >= 0 && _thd.pos.y >= 0 && !IsPowerLineDragActive()) {
 				x0 = _thd.pos.x / TILE_SIZE;
 				y0 = _thd.pos.y / TILE_SIZE;
 				x1 = std::min<uint>(x0 + std::max(1, _thd.size.x / static_cast<int>(TILE_SIZE)), Map::MaxX());

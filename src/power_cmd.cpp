@@ -9,6 +9,8 @@
 
 #include "stdafx.h"
 #include "power_cmd.h"
+#include "pathfinder/water_regions.h"
+#include "water.h"
 #include "power_func.h"
 #include "power_map.h"
 #include "landscape.h"
@@ -35,6 +37,7 @@
 #include "transparency.h"
 #include "sprite.h"
 #include "settings_type.h"
+#include "core/backup_type.hpp"
 
 #include "table/strings.h"
 #include "table/sprites.h"
@@ -299,11 +302,17 @@ static bool DiagonalStepCrossesWire(TileIndex from, Direction dir)
  * @param flags Command flags; the tile is only cleared when executing.
  * @return Cost of clearing the tile and of a foundation, or an error.
  */
-static CommandCost CheckPowerTileSite(TileIndex tile, DoCommandFlags flags)
+static bool IsPylonWaterSite(TileIndex tile);
+
+static CommandCost CheckPowerTileSite(TileIndex tile, DoCommandFlags flags, bool allow_water = false)
 {
 	if (!IsValidTile(tile)) return CommandCost(STR_ERROR_TOO_CLOSE_TO_EDGE_OF_MAP);
 	if (IsBridgeAbove(tile)) return CommandCost(STR_ERROR_MUST_DEMOLISH_BRIDGE_FIRST);
 	if (HasPowerWire(tile)) return CommandCost(STR_ERROR_POWER_PYLON_UNDER_WIRE);
+	if (allow_water && IsPylonWaterSite(tile)) {
+		/* A pylon on a foundation in the water: four times the price of one on land, the pylon itself counted by the caller. */
+		return CommandCost(ExpensesType::Construction, _price[Price::BuildPowerPylon] * 3);
+	}
 	if (!IsTileType(tile, TileType::Clear) && !IsTileType(tile, TileType::Trees)) return CommandCost(STR_ERROR_POWER_PYLON_NEEDS_OPEN_LAND);
 
 	CommandCost cost(ExpensesType::Construction);
@@ -319,6 +328,33 @@ static CommandCost CheckPowerTileSite(TileIndex tile, DoCommandFlags flags)
 	if (ret.Failed()) return ret;
 	cost.AddCost(ret.GetCost());
 	return cost;
+}
+
+/**
+ * Whether a pylon may stand in the water of a tile: open, flat sea or river, without a lock, depot or ships' dock nearby.
+ * @param tile The tile.
+ * @return True if a pylon can be built on a foundation there.
+ */
+static bool IsPylonWaterSite(TileIndex tile)
+{
+	if (!IsTileType(tile, TileType::Water) || !IsWater(tile)) return false;
+	WaterClass wc = GetWaterClass(tile);
+	if (wc != WaterClass::Sea && wc != WaterClass::River) return false;
+	return GetTileSlope(tile) == SLOPE_FLAT && !IsDockingTile(tile);
+}
+
+/**
+ * Turn a tile into a pylon or substation, keeping the water it stands in.
+ * @param tile The tile, open land or water for a pylon.
+ * @param kind What to build.
+ * @param flags Type of operation, with DoCommandFlag::Execute.
+ */
+static void BuildPowerTileOn(TileIndex tile, PowerTileKind kind, DoCommandFlags flags)
+{
+	WaterClass water = IsPylonWaterSite(tile) ? GetWaterClass(tile) : WaterClass::Invalid;
+	if (water == WaterClass::Invalid) Command<Commands::LandscapeClear>::Do(flags, tile);
+	MakePowerTile(tile, _current_company, kind, water);
+	if (water != WaterClass::Invalid) InvalidateWaterRegion(tile);
 }
 
 /**
@@ -371,7 +407,13 @@ static void RemovePowerSpan(TileIndex tile, Direction dir)
 static void RemovePowerTile(TileIndex tile)
 {
 	for (Direction dir : EnumRange(Direction::End)) RemovePowerSpan(tile, dir);
-	DoClearSquare(tile);
+	if (IsTileOnWater(tile)) {
+		/* The water the pylon stood in comes back. */
+		MakeWaterKeepingClass(tile, OWNER_WATER);
+		InvalidateWaterRegion(tile);
+	} else {
+		DoClearSquare(tile);
+	}
 	MarkPowerTileDirty(tile);
 }
 
@@ -412,12 +454,12 @@ CommandCost CmdBuildPowerPylon(DoCommandFlags flags, TileIndex tile, PowerTileKi
 		return CommandCost(ExpensesType::Construction, price - _price[Price::BuildPowerPylon]);
 	}
 
-	CommandCost cost = CheckPowerTileSite(tile, flags);
+	CommandCost cost = CheckPowerTileSite(tile, flags, true);
 	if (cost.Failed()) return cost;
 	cost.AddCost(price);
 
 	if (flags.Test(DoCommandFlag::Execute)) {
-		MakePowerTile(tile, _current_company, kind);
+		BuildPowerTileOn(tile, kind, flags);
 		MarkPowerTileDirty(tile);
 	}
 	return cost;
@@ -473,32 +515,28 @@ static CommandCost GetLineDirection(TileIndex start_tile, TileIndex end_tile, Di
 }
 
 /**
- * Build an overhead power line between two tiles, placing pylons where they are needed.
- * The line runs along an axis or a map diagonal. Pylons are placed as far apart as allowed;
- * existing pylons on the way are used, because wires join only at pylons.
- * @param flags Type of operation.
- * @param end_tile End of the line.
+ * Plan the pylons and spans of an overhead line, without building anything.
+ * Pylons are placed as far apart as allowed; existing pylons on the way are used, because wires join only at pylons.
+ * @param flags Type of operation; only tested, never executed.
  * @param start_tile Start of the line.
- * @return The cost or an error.
+ * @param dir Direction of the line.
+ * @param length Number of steps from start to end.
+ * @param[out] spans The spans to build.
+ * @param[out] is_new For each step, whether a new pylon is needed there.
+ * @param[out] site_costs For each step, the cost of clearing the site of a new pylon.
+ * @return Success, or the error that stops the line.
  */
-CommandCost CmdBuildPowerLine(DoCommandFlags flags, TileIndex end_tile, TileIndex start_tile)
+static CommandCost PlanPowerLine(DoCommandFlags flags, TileIndex start_tile, Direction dir, uint length, std::vector<PlannedSpan> &spans, std::vector<bool> &is_new, std::vector<CommandCost> &site_costs)
 {
-	if (!IsValidTile(start_tile) || !IsValidTile(end_tile)) return CMD_ERROR;
-	if (start_tile == end_tile) return CmdBuildPowerPylon(flags, start_tile, PowerTileKind::Pylon);
-
-	Direction dir;
-	uint length;
-	CommandCost ret = GetLineDirection(start_tile, end_tile, dir, length);
-	if (ret.Failed()) return ret;
-
 	DoCommandFlags test_flags = flags;
 	test_flags.Reset(DoCommandFlag::Execute);
 
 	auto tile_at = [&](uint i) { return StepTile(start_tile, dir, i); };
+	site_costs.assign(length + 1, CommandCost(ExpensesType::Construction));
+	is_new.assign(length + 1, false);
+	spans.clear();
 
 	/* Whether a tile can carry the end of a span: an own pylon or substation, or open land for a new pylon. */
-	std::vector<CommandCost> site_costs(length + 1, CommandCost(ExpensesType::Construction));
-	std::vector<bool> is_new(length + 1, false);
 	auto usable = [&](uint i) -> CommandCost {
 		TileIndex t = tile_at(i);
 		if (IsPowerTile(t)) {
@@ -507,7 +545,7 @@ CommandCost CmdBuildPowerLine(DoCommandFlags flags, TileIndex end_tile, TileInde
 			if (owner.Failed()) return owner;
 			return CommandCost();
 		}
-		CommandCost site = CheckPowerTileSite(t, test_flags);
+		CommandCost site = CheckPowerTileSite(t, test_flags, true);
 		if (site.Succeeded()) {
 			site_costs[i] = site;
 			is_new[i] = true;
@@ -519,7 +557,6 @@ CommandCost CmdBuildPowerLine(DoCommandFlags flags, TileIndex end_tile, TileInde
 	if (start_ok.Failed()) return start_ok;
 
 	/* Plan the pylons, greedily as far apart as possible. */
-	std::vector<PlannedSpan> spans;
 	uint cur = 0;
 	while (cur < length) {
 		/* A wire cannot pass over a power tile, so the next one on the way is as far as a span can go. */
@@ -575,6 +612,77 @@ CommandCost CmdBuildPowerLine(DoCommandFlags flags, TileIndex end_tile, TileInde
 		}
 	}
 
+	return CommandCost();
+}
+
+/**
+ * Plan an overhead line for the preview of the line tool, the way the local company would build it.
+ * @param start_tile Start of the line.
+ * @param end_tile End of the line.
+ * @param[out] pylons The tiles that carry the ends of spans, existing or new, as far as the plan got.
+ * @param[out] error Why the line cannot be built, or #INVALID_STRING_ID.
+ * @return Whether the whole line can be built.
+ */
+bool GetPowerLinePreviewPlan(TileIndex start_tile, TileIndex end_tile, std::vector<TileIndex> &pylons, StringID &error)
+{
+	pylons.clear();
+	error = INVALID_STRING_ID;
+	if (!IsValidTile(start_tile) || !IsValidTile(end_tile)) return false;
+
+	Backup<CompanyID> cur_company(_current_company, _local_company);
+	CommandCost ret;
+	if (start_tile == end_tile) {
+		ret = IsPowerTile(start_tile) ? CommandCost() : CheckPowerTileSite(start_tile, {}, true);
+		if (ret.Succeeded()) pylons.push_back(start_tile);
+	} else {
+		Direction dir;
+		uint length;
+		ret = GetLineDirection(start_tile, end_tile, dir, length);
+		if (ret.Succeeded()) {
+			std::vector<PlannedSpan> spans;
+			std::vector<bool> is_new;
+			std::vector<CommandCost> site_costs;
+			ret = PlanPowerLine({}, start_tile, dir, length, spans, is_new, site_costs);
+			for (const PlannedSpan &s : spans) {
+				for (uint i : {s.from, s.to}) {
+					TileIndex t = StepTile(start_tile, dir, i);
+					if (std::ranges::find(pylons, t) == pylons.end()) pylons.push_back(t);
+				}
+			}
+		}
+	}
+	cur_company.Restore();
+
+	if (ret.Failed()) error = ret.GetErrorMessage();
+	return ret.Succeeded();
+}
+
+/**
+ * Build an overhead power line between two tiles, placing pylons where they are needed.
+ * The line runs along an axis or a map diagonal. Pylons are placed as far apart as allowed;
+ * existing pylons on the way are used, because wires join only at pylons.
+ * @param flags Type of operation.
+ * @param end_tile End of the line.
+ * @param start_tile Start of the line.
+ * @return The cost or an error.
+ */
+CommandCost CmdBuildPowerLine(DoCommandFlags flags, TileIndex end_tile, TileIndex start_tile)
+{
+	if (!IsValidTile(start_tile) || !IsValidTile(end_tile)) return CMD_ERROR;
+	if (start_tile == end_tile) return CmdBuildPowerPylon(flags, start_tile, PowerTileKind::Pylon);
+
+	Direction dir;
+	uint length;
+	CommandCost ret = GetLineDirection(start_tile, end_tile, dir, length);
+	if (ret.Failed()) return ret;
+
+	std::vector<PlannedSpan> spans;
+	std::vector<bool> is_new;
+	std::vector<CommandCost> site_costs;
+	ret = PlanPowerLine(flags, start_tile, dir, length, spans, is_new, site_costs);
+	if (ret.Failed()) return ret;
+	auto tile_at = [&](uint i) { return StepTile(start_tile, dir, i); };
+
 	if (spans.empty()) return CommandCost(STR_ERROR_ALREADY_BUILT);
 
 	/* Only pylons that end up in the plan are built. */
@@ -596,8 +704,7 @@ CommandCost CmdBuildPowerLine(DoCommandFlags flags, TileIndex end_tile, TileInde
 		for (uint i = 0; i <= length; i++) {
 			if (!needed[i] || !is_new[i]) continue;
 			TileIndex t = tile_at(i);
-			Command<Commands::LandscapeClear>::Do(flags, t);
-			MakePowerTile(t, _current_company, PowerTileKind::Pylon);
+			BuildPowerTileOn(t, PowerTileKind::Pylon, flags);
 			MarkPowerTileDirty(t);
 		}
 		PowerWireKind kind = GetPowerWireKindForDir(dir);
@@ -975,7 +1082,8 @@ static void DrawPowerCable(const TileInfo *ti)
 		}
 	}
 	if (IsInvisibilitySet(TransparencyOption::Structures)) return;
-	if (IsTileType(ti->tile, TileType::Clear) || IsTileType(ti->tile, TileType::Trees)) {
+	/* A marker post only where the cable ends. */
+	if (CountBits(dirs) == 1 && (IsTileType(ti->tile, TileType::Clear) || IsTileType(ti->tile, TileType::Trees))) {
 		static const SpriteBounds MARKER_BOUNDS{{7, 7, 0}, {2, 2, 8}, {-7, -7, 0}};
 		AddSortableSpriteToDraw(SPR_POWER_CABLE_MARKER, PAL_NONE, ti->x, ti->y, z, MARKER_BOUNDS, IsTransparencySet(TransparencyOption::Structures));
 	}
@@ -1010,8 +1118,17 @@ void AddPowerWireTileDesc(TileIndex tile, TileDesc &td)
 /** @copydoc DrawTileProc */
 static void DrawTile_Power(TileInfo *ti)
 {
-	DrawFoundation(ti, FlatteningFoundation(ti->tileh));
-	DrawClearLandTile(ti, 3);
+	if (IsTileOnWater(ti->tile)) {
+		/* A pylon on a small concrete foundation in the water. */
+		DrawWaterClassGround(ti);
+		if (_power_sprites_loaded && !IsInvisibilitySet(TransparencyOption::Structures)) {
+			static const SpriteBounds FOUNDATION_BOUNDS{{1, 1, 0}, {14, 14, 2}, {-1, -1, 0}};
+			AddSortableSpriteToDraw(SPR_POWER_WATER_FOUNDATION, PAL_NONE, ti->x, ti->y, ti->z, FOUNDATION_BOUNDS, IsTransparencySet(TransparencyOption::Structures));
+		}
+	} else {
+		DrawFoundation(ti, FlatteningFoundation(ti->tileh));
+		DrawClearLandTile(ti, 3);
+	}
 
 	PowerTileKind kind = GetPowerTileKind(ti->tile);
 	if (!IsInvisibilitySet(TransparencyOption::Structures)) {
@@ -1042,6 +1159,19 @@ static void DrawTile_Power(TileInfo *ti)
 			static const SpriteBounds PYLON_BOUNDS{{7, 7, 0}, {2, 2, 70}, {}};
 			AddSortableSpriteToDraw(SPR_TRANSMITTER, PAL_NONE, ti->x, ti->y, ti->z, PYLON_BOUNDS, transparent);
 		}
+	}
+
+	/* A small status light on top of substations and of pylons joining power plants. */
+	PowerTileStatus status = GetPowerTileStatus(ti->tile);
+	if (_power_sprites_loaded && status != PowerTileStatus::None && !IsInvisibilitySet(TransparencyOption::Structures)) {
+		int height;
+		switch (kind) {
+			case PowerTileKind::OverheadSubstation: height = 28; break;
+			case PowerTileKind::UndergroundSubstation: height = 12; break;
+			default: height = 32; break;
+		}
+		static const SpriteBounds LIGHT_BOUNDS{{0, 0, 0}, {1, 1, 3}, {0, 0, 0}};
+		AddSortableSpriteToDraw(SPR_POWER_STATUS_LIGHT + to_underlying(status) - 1, PAL_NONE, ti->x + 8, ti->y + 8, ti->z + height, LIGHT_BOUNDS, IsTransparencySet(TransparencyOption::Structures));
 	}
 
 	if (!IsInvisibilitySet(TransparencyOption::Catenary)) {
@@ -1151,12 +1281,25 @@ static CommandCost CheckBuildAbove_Power(TileIndex, DoCommandFlags, Axis, int)
 }
 
 /** TileTypeProcs definitions for TileType::Power tiles. */
+/**
+ * Open the window of a substation, or of a pylon joining a power plant, when it is clicked.
+ * @param tile The power tile.
+ * @return Whether a window opened.
+ */
+static bool ClickTile_Power(TileIndex tile)
+{
+	if (!IsPowerSubstation(tile) && !IsPowerPlantLink(tile)) return false;
+	ShowPowerTileWindow(tile);
+	return true;
+}
+
 extern const TileTypeProcs _tile_type_power_procs = {
 	.draw_tile_proc = DrawTile_Power,
 	.get_slope_pixel_z_proc = GetSlopePixelZ_Power,
 	.clear_tile_proc = ClearTile_Power,
 	.get_tile_desc_proc = GetTileDesc_Power,
-	.tile_loop_proc = [](TileIndex) {},
+	.click_tile_proc = ClickTile_Power,
+	.tile_loop_proc = [](TileIndex tile) { if (IsTileOnWater(tile)) TileLoop_Water(tile); },
 	.change_tile_owner_proc = ChangeTileOwner_Power,
 	.get_foundation_proc = GetFoundation_Power,
 	.terraform_tile_proc = TerraformTile_Power,

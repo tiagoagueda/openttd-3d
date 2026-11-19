@@ -23,4 +23,11 @@ enum BuildPowerToolbarWidgets : WidgetID {
 	WID_PT_REMOVE, ///< Toggle removal of lines.
 };
 
+/** Widgets of the #PowerTileWindow class. */
+enum PowerTileWidgets : WidgetID {
+	WID_PTV_CAPTION, ///< Caption of the window.
+	WID_PTV_LOCATION, ///< Button to centre the main view on the tile.
+	WID_PTV_INFO, ///< Panel with the figures.
+};
+
 #endif /* WIDGETS_POWER_WIDGET_H */

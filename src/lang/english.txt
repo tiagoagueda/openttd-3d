@@ -409,6 +409,7 @@ STR_TOOLBAR_TOOLTIP_BUILD_ROADS                                 :{BLACK}Build ro
 STR_TOOLBAR_TOOLTIP_BUILD_TRAMWAYS                              :{BLACK}Build tramway infrastructure
 STR_TOOLBAR_TOOLTIP_BUILD_SHIP_DOCKS                            :{BLACK}Build waterway infrastructure
 STR_TOOLBAR_TOOLTIP_BUILD_AIRPORTS                              :{BLACK}Build airports
+STR_TOOLBAR_TOOLTIP_UTILITIES                                   :{BLACK}Build utilities: power lines
 STR_TOOLBAR_TOOLTIP_LANDSCAPING                                 :{BLACK}Open landscaping menu, tree menu, or place a sign
 STR_TOOLBAR_TOOLTIP_SHOW_SOUND_MUSIC_WINDOW                     :{BLACK}Open sound/music window
 STR_TOOLBAR_TOOLTIP_SHOW_LAST_MESSAGE_NEWS                      :{BLACK}Open last message/news report, messages history or delete all messages
@@ -3392,6 +3393,24 @@ STR_LAI_BRIDGE_DESCRIPTION_ROAD_TUBULAR_STEEL                   :Tubular road br
 STR_LAI_BRIDGE_DESCRIPTION_AQUEDUCT                             :Aqueduct
 
 STR_LAI_OBJECT_DESCRIPTION_TRANSMITTER                          :Transmitter
+STR_POWER_TILE_CAPTION_SUBSTATION                               :{WHITE}Substation
+STR_POWER_TILE_CAPTION_UNDERGROUND_SUBSTATION                   :{WHITE}Underground substation
+STR_POWER_TILE_CAPTION_PLANT_LINK                               :{WHITE}Power plant connection
+STR_POWER_TILE_LOCATION_TOOLTIP                                 :{BLACK}Centre the main view on this tile. Ctrl+Click opens a new viewport on its location
+STR_POWER_TILE_OWNER                                            :{BLACK}Owner: {LTBLUE}{COMPANY}
+STR_POWER_TILE_STATUS_FLOWING                                   :{BLACK}Status: {GREEN}powered, energy flows through its network
+STR_POWER_TILE_STATUS_IDLE                                      :{BLACK}Status: {YELLOW}connected, but no energy flows now
+STR_POWER_TILE_STATUS_UNCONNECTED                               :{BLACK}Status: {RED}not connected: its network has no power plant or no consumer
+STR_POWER_TILE_STATUS_UNKNOWN                                   :{BLACK}Status: {GRAY}waiting for the next balancing of the networks
+STR_POWER_TILE_PLANT_LINK_INFO                                  :{BLACK}This pylon stands next to a power plant and joins it to the grid; the plant's own transformers set the limit
+STR_POWER_TILE_COVERS                                           :{BLACK}Covers: {GOLD}{NUM} power plant{P "" s}{BLACK}, {GOLD}{NUM} consumer{P "" s}
+STR_POWER_TILE_SENT                                             :{BLACK}From its plants into the network: {GOLD}{DECIMAL} MW{BLACK} of {GOLD}{DECIMAL} MW{BLACK} offered
+STR_POWER_TILE_RECEIVED                                         :{BLACK}To its consumers: {GOLD}{DECIMAL} MW{BLACK} of {GOLD}{DECIMAL} MW{BLACK} needed
+STR_POWER_TILE_CAPACITY                                         :{BLACK}Maximum capacity: {GOLD}{DECIMAL} MW{BLACK} each way
+STR_POWER_TILE_NETWORK                                          :{BLACK}Its network: {GOLD}{NUM}{BLACK} substation{P "" s} and plant connection{P "" s}
+STR_POWER_TILE_NETWORK_FLOW                                     :{BLACK}Network: {GOLD}{DECIMAL} MW{BLACK} offered, {GOLD}{DECIMAL} MW{BLACK} needed, {GOLD}{DECIMAL} MW{BLACK} delivered
+STR_INDUSTRY_VIEW_POWER_NOT_CONNECTED                           :{RED}Not connected to a power grid: build a pylon next to it, or a substation within reach
+STR_INDUSTRY_VIEW_POWER_CONNECTED                               :{GREEN}Connected to a power grid
 STR_LAI_POWER_DESCRIPTION_PYLON                                 :Electricity pylon (network with {NUM} substation{P "" s})
 STR_LAI_POWER_DESCRIPTION_TRANSITION_PYLON                      :Transition pylon (network with {NUM} substation{P "" s})
 STR_LAI_POWER_DESCRIPTION_OVERHEAD_SUBSTATION                   :Overhead substation (network with {NUM} substation{P "" s})

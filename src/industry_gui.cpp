@@ -974,6 +974,10 @@ public:
 			DrawString(ir, GetString(STR_INDUSTRY_VIEW_POWER_CONSUMER, i->power_supplied, 1, i->power_demand, 1, GetPowerBonusPercent(i->power_demand, i->power_supplied)));
 		}
 		ir.top += GetCharacterHeight(FontSize::Normal);
+		if (IsPowerPlant(i)) {
+			DrawString(ir, IsIndustryOnPowerGrid(i) ? STR_INDUSTRY_VIEW_POWER_CONNECTED : STR_INDUSTRY_VIEW_POWER_NOT_CONNECTED);
+			ir.top += GetCharacterHeight(FontSize::Normal);
+		}
 
 		/* Get the extra message for the GUI */
 		if (ind->callback_mask.Test(IndustryCallbackMask::WindowMoreText)) {

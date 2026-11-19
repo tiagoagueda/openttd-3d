@@ -586,6 +586,13 @@ bool AfterLoadGame()
 		}
 	}
 
+	/* Power tiles keep a water class since pylons may stand in water; older ones all stand on land. */
+	if (IsSavegameVersionBefore(SaveLoadVersion::PowerOnWater)) {
+		for (auto t : Map::Iterate()) {
+			if (IsTileType(t, TileType::Power)) SetWaterClass(t, WaterClass::Invalid);
+		}
+	}
+
 	if (IsSavegameVersionBefore(SaveLoadVersion::Gamelog)) _gamelog.GRFAddList(_grfconfig);
 
 	if (IsSavegameVersionBefore(SaveLoadVersion::PauseModes)) {

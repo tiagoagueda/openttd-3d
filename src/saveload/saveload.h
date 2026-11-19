@@ -426,6 +426,7 @@ enum class SaveLoadVersion : uint16_t {
 	DoubleEndedShips, ///< Saveload version: 368, GitHub pull request: 16002\n Double-ended (NewGRF-only) ships can reverse without turning.
 	EnergySales, ///< Saveload version: 369, power lines fork\n Energy sales get their own line in the yearly expenses.
 	PowerPlants, ///< Saveload version: 370, power lines fork\n Oil, solar, wind and hydro power plants join the base industries; NewGRF industry types and tiles move up.
+	PowerOnWater, ///< Saveload version: 371, power lines fork\n Pylons can stand in water; power tiles keep a water class.
 
 	MaxVersion, ///< Highest possible saveload version.
 };

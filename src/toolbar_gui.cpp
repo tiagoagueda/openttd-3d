@@ -994,6 +994,29 @@ static CallBackFunction MenuClickBuildAir(int)
 	return CallBackFunction::None;
 }
 
+/* --- Utilities button menu --- */
+
+static CallBackFunction ToolbarUtilitiesClick(Window *w)
+{
+	DropDownList list;
+	list.push_back(MakeDropDownListIconItem(_power_sprites_loaded ? SPR_IMG_POWER_LINE : SPR_IMG_AUTOELRAIL, PAL_NONE, STR_LANDSCAPING_MENU_POWER_LINES, 0));
+	ShowDropDownList(w, std::move(list), 0, WID_TN_UTILITIES, 140, GetToolbarDropDownOptions());
+	return CallBackFunction::None;
+}
+
+/**
+ * Handle click on the entry in the utilities menu.
+ * @param index Menu entry clicked.
+ * @return #CallBackFunction::None
+ */
+static CallBackFunction MenuClickUtilities(int index)
+{
+	switch (index) {
+		case 0: ShowBuildPowerToolbar(); break;
+	}
+	return CallBackFunction::None;
+}
+
 /* --- Forest button menu --- */
 
 static CallBackFunction ToolbarForestClick(Window *w)
@@ -1005,7 +1028,6 @@ static CallBackFunction ToolbarForestClick(Window *w)
 	if (ObjectClass::GetUIClassCount() != 0) {
 		list.push_back(MakeDropDownListIconItem(SPR_IMG_TRANSMITTER, PAL_NONE, STR_LANDSCAPING_MENU_PLACE_OBJECT, 3));
 	}
-	list.push_back(MakeDropDownListIconItem(SPR_IMG_AUTOELRAIL, PAL_NONE, STR_LANDSCAPING_MENU_POWER_LINES, 4));
 	ShowDropDownList(w, std::move(list), 0, WID_TN_LANDSCAPE, 100, GetToolbarDropDownOptions());
 	return CallBackFunction::None;
 }
@@ -1023,7 +1045,6 @@ static CallBackFunction MenuClickForest(int index)
 		case 1: ShowBuildTreesToolbar(); break;
 		case 2: return SelectSignTool();
 		case 3: ShowBuildObjectPicker(); break;
-		case 4: ShowBuildPowerToolbar(); break;
 	}
 	return CallBackFunction::None;
 }
@@ -1370,10 +1391,11 @@ static MenuClickedProc * const _menu_clicked_procs[] = {
 	MenuClickBuildTram,   // 23
 	MenuClickBuildWater,  // 24
 	MenuClickBuildAir,    // 25
-	MenuClickForest,      // 26
-	MenuClickMusicWindow, // 27
-	MenuClickNewspaper,   // 28
-	MenuClickHelp,        // 29
+	MenuClickUtilities,   // 26
+	MenuClickForest,      // 27
+	MenuClickMusicWindow, // 28
+	MenuClickNewspaper,   // 29
+	MenuClickHelp,        // 30
 };
 
 /** Full blown container to make it behave exactly as we want :) */
@@ -1561,7 +1583,7 @@ class NWidgetMainToolbarContainer : public NWidgetToolbarContainer {
 			WID_TN_COMPANIES,
 			WID_TN_GRAPHS,
 			WID_TN_INDUSTRIES,
-			WID_TN_MUSIC_SOUND,
+			WID_TN_UTILITIES,
 			WID_TN_MESSAGES,
 			WID_TN_HELP,
 			WID_TN_SWITCH_BAR,
@@ -1594,7 +1616,7 @@ class NWidgetMainToolbarContainer : public NWidgetToolbarContainer {
 			WID_TN_COMPANIES,
 			WID_TN_GRAPHS,
 			WID_TN_INDUSTRIES,
-			WID_TN_MUSIC_SOUND,
+			WID_TN_UTILITIES,
 			WID_TN_MESSAGES,
 			WID_TN_HELP,
 			WID_TN_SWITCH_BAR,
@@ -1618,7 +1640,7 @@ class NWidgetMainToolbarContainer : public NWidgetToolbarContainer {
 			WID_TN_SWITCH_BAR,
 			/* lower toolbar */
 			WID_TN_PAUSE,
-			WID_TN_FAST_FORWARD,
+			WID_TN_UTILITIES,
 			WID_TN_SAVE,
 			WID_TN_TOWNS,
 			WID_TN_SUBSIDIES,
@@ -1654,7 +1676,7 @@ class NWidgetMainToolbarContainer : public NWidgetToolbarContainer {
 			WID_TN_SWITCH_BAR,
 			/* lower toolbar */
 			WID_TN_PAUSE,
-			WID_TN_FAST_FORWARD,
+			WID_TN_UTILITIES,
 			WID_TN_SAVE,
 			WID_TN_SMALL_MAP,
 			WID_TN_SUBSIDIES,
@@ -1692,7 +1714,7 @@ class NWidgetMainToolbarContainer : public NWidgetToolbarContainer {
 			WID_TN_SWITCH_BAR,
 			/* lower toolbar */
 			WID_TN_PAUSE,
-			WID_TN_FAST_FORWARD,
+			WID_TN_UTILITIES,
 			WID_TN_SAVE,
 			WID_TN_SMALL_MAP,
 			WID_TN_TOWNS,
@@ -1732,7 +1754,6 @@ class NWidgetMainToolbarContainer : public NWidgetToolbarContainer {
 			WID_TN_SWITCH_BAR,
 			/* lower toolbar */
 			WID_TN_PAUSE,
-			WID_TN_FAST_FORWARD,
 			WID_TN_SAVE,
 			WID_TN_SMALL_MAP,
 			WID_TN_STATIONS,
@@ -1746,6 +1767,7 @@ class NWidgetMainToolbarContainer : public NWidgetToolbarContainer {
 			WID_TN_WATER,
 			WID_TN_AIR,
 			WID_TN_LANDSCAPE,
+			WID_TN_UTILITIES,
 			WID_TN_HELP,
 			WID_TN_ZOOM_IN,
 			WID_TN_ZOOM_OUT,
@@ -1774,7 +1796,6 @@ class NWidgetMainToolbarContainer : public NWidgetToolbarContainer {
 			WID_TN_SWITCH_BAR,
 			/* lower toolbar */
 			WID_TN_PAUSE,
-			WID_TN_FAST_FORWARD,
 			WID_TN_SAVE,
 			WID_TN_SMALL_MAP,
 			WID_TN_STATIONS,
@@ -1788,6 +1809,7 @@ class NWidgetMainToolbarContainer : public NWidgetToolbarContainer {
 			WID_TN_WATER,
 			WID_TN_AIR,
 			WID_TN_LANDSCAPE,
+			WID_TN_UTILITIES,
 			WID_TN_STORY,
 			WID_TN_HELP,
 			WID_TN_ZOOM_IN,
@@ -1821,6 +1843,7 @@ class NWidgetMainToolbarContainer : public NWidgetToolbarContainer {
 			WID_TN_TRAMS,
 			WID_TN_WATER,
 			WID_TN_AIR,
+			WID_TN_UTILITIES,
 			WID_TN_LANDSCAPE,
 			WID_TN_MUSIC_SOUND,
 			WID_TN_MESSAGES,
@@ -1999,6 +2022,7 @@ static ToolbarButtonProc * const _toolbar_button_procs[] = {
 	ToolbarBuildTramClick,
 	ToolbarBuildWaterClick,
 	ToolbarBuildAirClick,
+	ToolbarUtilitiesClick,
 	ToolbarForestClick,
 	ToolbarMusicClick,
 	ToolbarNewspaperClick,
@@ -2011,6 +2035,7 @@ struct MainToolbarWindow : Window {
 	MainToolbarWindow(WindowDesc &desc) : Window(desc)
 	{
 		this->InitNested(0);
+		if (!_power_sprites_loaded) this->GetWidget<NWidgetCore>(WID_TN_UTILITIES)->SetSprite(SPR_IMG_AUTOELRAIL);
 
 		_last_started_action = CallBackFunction::None;
 		this->flags.Reset(WindowFlag::WhiteBorder);
@@ -2030,7 +2055,7 @@ struct MainToolbarWindow : Window {
 		/* If spectator, disable all construction buttons
 		 * ie : Build road, rail, ships, airports and landscaping
 		 * Since enabled state is the default, just disable when needed */
-		this->SetWidgetsDisabledState(_local_company == COMPANY_SPECTATOR, WID_TN_RAILS, WID_TN_ROADS, WID_TN_TRAMS, WID_TN_WATER, WID_TN_AIR, WID_TN_LANDSCAPE);
+		this->SetWidgetsDisabledState(_local_company == COMPANY_SPECTATOR, WID_TN_RAILS, WID_TN_ROADS, WID_TN_TRAMS, WID_TN_WATER, WID_TN_AIR, WID_TN_UTILITIES, WID_TN_LANDSCAPE);
 		/* disable company list drop downs, if there are no companies */
 		this->SetWidgetsDisabledState(Company::GetNumItems() == 0, WID_TN_STATIONS, WID_TN_FINANCES, WID_TN_TRAINS, WID_TN_ROADVEHS, WID_TN_SHIPS, WID_TN_AIRCRAFT);
 
@@ -2217,6 +2242,7 @@ static constexpr std::tuple<WidgetID, WidgetType, SpriteID> _toolbar_button_spri
 	{WID_TN_TRAMS,        WWT_IMGBTN,     SPR_IMG_BUILDTRAMS},
 	{WID_TN_WATER,        WWT_IMGBTN,     SPR_IMG_BUILDWATER},
 	{WID_TN_AIR,          WWT_IMGBTN,     SPR_IMG_BUILDAIR},
+	{WID_TN_UTILITIES,    WWT_IMGBTN,     SPR_IMG_POWER_LINE},
 	{WID_TN_LANDSCAPE,    WWT_IMGBTN,     SPR_IMG_LANDSCAPING},
 	{WID_TN_MUSIC_SOUND,  WWT_IMGBTN,     SPR_IMG_MUSIC},
 	{WID_TN_MESSAGES,     WWT_IMGBTN,     SPR_IMG_MESSAGES},
