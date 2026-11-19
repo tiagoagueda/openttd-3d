@@ -648,6 +648,7 @@ struct EconomySettings {
 	uint8_t town_growth_rate; ///< town growth rate
 	uint8_t larger_towns; ///< the number of cities to build. These start off larger and grow twice as fast
 	uint8_t power_bonus; ///< extra production and growth, in percent, of industries and towns with all the power they need
+	uint8_t power_line_fee; ///< share of the value of energy carried the whole way over the power lines of another company that it pays as fee, in percent
 	uint8_t power_catchment; ///< how far around a substation it reaches industries and buildings, in tiles
 	uint8_t weather; ///< how much weather there is; see #WeatherSetting
 	uint8_t day_length; ///< minutes of play that a day and a night last; 0 for no day and night

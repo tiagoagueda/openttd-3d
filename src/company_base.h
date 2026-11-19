@@ -106,6 +106,8 @@ struct CompanyProperties {
 	int16_t bankrupt_timeout = 0; ///< If bigger than \c 0, amount of time to wait for an answer on an offer to buy this company.
 	Money bankrupt_value = 0;
 
+	bool power_sharing = false; ///< Whether other companies may use its power lines, for a fee.
+
 	uint32_t terraform_limit = 0; ///< Amount of tileheights we can (still) terraform (times 65536).
 	uint32_t clear_limit = 0; ///< Amount of tiles we can (still) clear (times 65536).
 	uint32_t tree_limit = 0; ///< Amount of trees we can (still) plant (times 65536).

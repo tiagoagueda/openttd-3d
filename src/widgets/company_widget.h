@@ -49,6 +49,10 @@ enum CompanyWidgets : WidgetID {
 
 	WID_C_SELECT_MULTIPLAYER,         ///< Multiplayer selection panel.
 	WID_C_COMPANY_JOIN,               ///< Button to join company.
+
+	WID_C_DESC_POWER_SHARING,         ///< Whether the power lines are shared.
+	WID_C_SELECT_POWER_SHARING,       ///< Selection widget for the power sharing button.
+	WID_C_POWER_SHARING,              ///< Button to share power lines or stop sharing them.
 };
 
 /** Widgets of the #CompanyFinancesWindow class. */

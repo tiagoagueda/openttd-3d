@@ -13,6 +13,8 @@
 #include "industry_type.h"
 
 #include "command_type.h"
+#include "economy_type.h"
+#include "company_type.h"
 #include "house_type.h"
 #include "tile_cmd.h"
 #include "cargo_type.h"
@@ -125,6 +127,28 @@ bool IsPowerPlantLink(TileIndex tile);
 bool IsIndustryOnPowerGrid(const Industry *i);
 void InvalidatePowerNetworks();
 void ShowPowerTileWindow(TileIndex tile);
+bool IsPowerLineOpenTo(Owner owner, Owner user);
+
+/** Upkeep of one piece of power infrastructure compared to a piece of rail, in eighths. */
+static constexpr uint POWER_UPKEEP_WIRE = 8;
+static constexpr uint POWER_UPKEEP_PYLON = 16;
+static constexpr uint POWER_UPKEEP_CABLE = 32;
+static constexpr uint POWER_UPKEEP_SUBSTATION = 96;
+
+/** The power lines a company owns. */
+struct PowerInfrastructure {
+	uint32_t pylons = 0; ///< Pylons and transition pylons.
+	uint32_t substations = 0; ///< Overhead and underground substations.
+	uint32_t wire = 0; ///< Tiles with its overhead wire above.
+	uint32_t cable = 0; ///< Tiles with its underground cable, joints not counted.
+
+	/** @return All pieces, weighted by their upkeep, for how fast the upkeep grows. */
+	uint32_t Units() const { return (this->wire * POWER_UPKEEP_WIRE + this->pylons * POWER_UPKEEP_PYLON + this->cable * POWER_UPKEEP_CABLE + this->substations * POWER_UPKEEP_SUBSTATION) / 8; }
+};
+
+const PowerInfrastructure &GetPowerInfrastructure(CompanyID owner);
+Money PowerMaintenanceCost(const PowerInfrastructure &infra, uint32_t count, uint weight);
+Money PowerMaintenanceCost(const PowerInfrastructure &infra);
 bool GetPowerLinePreviewPlan(TileIndex start_tile, TileIndex end_tile, std::vector<TileIndex> &pylons, StringID &error);
 bool IsPowerLineDragActive();
 bool GetPowerLinePlanPylons(TileIndex start, TileIndex end, std::vector<TileIndex> &pylons);

@@ -56,6 +56,7 @@
 #include "station_base.h"
 #include "aircraft.h"
 #include "aircraft_cmd.h"
+#include "power_func.h"
 
 #ifdef WITH_VIEWPORT3D
 #include "viewport3d/view3d_gui.h"

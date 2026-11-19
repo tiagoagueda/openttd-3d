@@ -126,6 +126,7 @@ public:
 		EXPENSES_LOAN_INT     = to_underlying(::ExpensesType::LoanInterest), ///< Interest payments over the loan.
 		EXPENSES_OTHER        = to_underlying(::ExpensesType::Other), ///< Other expenses.
 		EXPENSES_ENERGY_SALES = to_underlying(::ExpensesType::EnergySales), ///< Income from power delivered over power lines.
+		EXPENSES_ENERGY_FEES = to_underlying(::ExpensesType::EnergyFees), ///< Fees for carrying energy over the power lines of other companies.
 		EXPENSES_INVALID      = to_underlying(::ExpensesType::Invalid), ///< Invalid expense type.
 	};
 

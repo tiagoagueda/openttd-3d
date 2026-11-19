@@ -310,11 +310,25 @@ static std::vector<bool> _power_industry_on_grid; ///< Whether a substation or a
 static std::vector<PowerTileFigures> _power_figures; ///< What each substation did in the last balancing step, by index into the substations.
 static std::vector<PowerNetworkFigures> _power_network_figures; ///< Totals of each network in the last balancing step.
 
+/** What a company owes another for carrying its energy between two substations. */
+struct PowerFee {
+	Owner owner; ///< The company whose lines and substations are used.
+	uint16_t per_mille; ///< Share of the value of the energy that arrives, in thousandths.
+};
+
 /** A pair of substations of one network, with the length of line between them. */
 struct PowerPair {
 	uint32_t distance; ///< Length of the shortest line, overhead 24 per straight tile and 34 per diagonal tile, underground half that.
 	uint16_t from; ///< Index into the substations.
 	uint16_t to; ///< Index into the substations.
+	std::vector<PowerFee> fees; ///< Fees to other companies for the lines and substations on the way; empty on own lines.
+};
+
+/** A line or cable from one power tile to another, for finding networks and distances. */
+struct PowerEdge {
+	uint to; ///< Index of the node at the other end.
+	uint32_t weight; ///< Length, as #PowerPair::distance.
+	Owner owner; ///< Owner of the line or cable; #OWNER_NONE for a short link between two companies, which is free.
 };
 
 static uint32_t _power_cache_version = UINT32_MAX; ///< #_power_network_version the cache below was made for.
@@ -371,6 +385,68 @@ bool IsPowerPlantLink(TileIndex tile)
 	return found;
 }
 
+/**
+ * Whether energy of a company may pass over the power lines, cables and substations of a company.
+ * @param owner The owner of the lines.
+ * @param user The company whose energy it is.
+ * @return True for its own lines, and for lines of a company that shares them.
+ */
+bool IsPowerLineOpenTo(Owner owner, Owner user)
+{
+	if (owner == user) return true;
+	const Company *c = Company::GetIfValid(owner);
+	return c != nullptr && c->power_sharing;
+}
+
+/** Power infrastructure of every company, counted again when the power lines change. */
+static std::array<PowerInfrastructure, MAX_COMPANIES> _power_infrastructure{};
+static uint32_t _power_infrastructure_version = UINT32_MAX; ///< #_power_network_version the counts were made for.
+
+/**
+ * Get the power infrastructure of a company.
+ * @param owner The company.
+ * @return Its pylons, substations, tiles under its wires and tiles of its cables.
+ */
+const PowerInfrastructure &GetPowerInfrastructure(CompanyID owner)
+{
+	if (_power_infrastructure_version != _power_network_version) {
+		_power_infrastructure_version = _power_network_version;
+		_power_infrastructure = {};
+		for (TileIndex t : Map::Iterate()) {
+			if (IsPowerTile(t)) {
+				Owner o = GetTileOwner(t);
+				if (o < MAX_COMPANIES) (IsPowerSubstation(t) ? _power_infrastructure[o.base()].substations : _power_infrastructure[o.base()].pylons)++;
+			}
+			if (HasPowerWire(t) && GetPowerWireOwner(t) < MAX_COMPANIES) _power_infrastructure[GetPowerWireOwner(t).base()].wire++;
+			if (HasPowerCable(t) && !IsPowerTile(t) && GetPowerCableOwner(t) < MAX_COMPANIES) _power_infrastructure[GetPowerCableOwner(t).base()].cable++;
+		}
+	}
+	return _power_infrastructure[owner.base()];
+}
+
+/**
+ * Monthly upkeep of a part of the power infrastructure of a company. Like rail, it grows a little faster than the network.
+ * @param infra All power infrastructure of the company, which sets how fast the cost grows.
+ * @param count How many pieces of this part.
+ * @param weight Upkeep of one piece in eighths of a piece of rail: wire 8, pylon 16, cable 32 and substation 96.
+ * @return The monthly cost.
+ */
+Money PowerMaintenanceCost(const PowerInfrastructure &infra, uint32_t count, uint weight)
+{
+	return (_price[Price::InfrastructureRail] * weight * count * (1 + IntSqrt(infra.Units()))) >> 11;
+}
+
+/**
+ * Monthly upkeep of all the power infrastructure of a company.
+ * @param infra Its power infrastructure.
+ * @return The monthly cost.
+ */
+Money PowerMaintenanceCost(const PowerInfrastructure &infra)
+{
+	return PowerMaintenanceCost(infra, infra.wire, POWER_UPKEEP_WIRE) + PowerMaintenanceCost(infra, infra.pylons, POWER_UPKEEP_PYLON) +
+		PowerMaintenanceCost(infra, infra.cable, POWER_UPKEEP_CABLE) + PowerMaintenanceCost(infra, infra.substations, POWER_UPKEEP_SUBSTATION);
+}
+
 /** Find the networks again before the next balancing step, for example because a power plant was built or closed. */
 void InvalidatePowerNetworks()
 {
@@ -395,54 +471,72 @@ static void UpdatePowerNetworks()
 		return (it != nodes.end() && *it == tile) ? static_cast<int>(it - nodes.begin()) : -1;
 	};
 
-	/* Edges, with their weights. */
-	std::vector<std::vector<std::pair<uint, uint32_t>>> edges(nodes.size());
+	/* Edges, with their weights and owners. */
+	std::vector<std::vector<PowerEdge>> edges(nodes.size());
 	for (uint n = 0; n < nodes.size(); n++) {
 		for (Direction dir : EnumRange(Direction::End)) {
 			uint length = GetPowerSpan(nodes[n], dir);
 			if (length == 0) continue;
 			int other = node_of(GetPowerSpanEnd(nodes[n], dir, length));
 			if (other < 0) continue;
-			/* Lines join only lines of the same owner, until sharing comes. */
-			if (GetTileOwner(nodes[other]) != GetTileOwner(nodes[n])) continue;
+			/* A span between pylons of two companies belongs to whoever built its wires; a span of one tile has none, and is a free link. */
+			Owner owner = GetTileOwner(nodes[n]);
+			if (GetTileOwner(nodes[other]) != owner) owner = length > 1 ? GetPowerWireOwner(GetPowerSpanEnd(nodes[n], dir, 1)) : OWNER_NONE;
 			bool diagonal = to_underlying(dir) % 2 == 0;
-			edges[n].emplace_back(other, length * (diagonal ? 34 : 24));
+			edges[n].push_back({static_cast<uint>(other), length * (diagonal ? 34 : 24), owner});
 		}
 
-		/* Underground cables, from an underground substation or a transition pylon to every other one the cables of the
-		 * same owner reach; cables join wherever they meet on a tile. They lose half as much as overhead lines. */
+		/* Underground cables, from an underground substation or a transition pylon to every other one the cables
+		 * reach; cables of one owner join wherever they meet on a tile, cables of different owners only at those joints.
+		 * They lose half as much as overhead lines. */
 		if (!CanAttachPowerCables(nodes[n]) || !HasPowerCable(nodes[n])) continue;
-		Owner owner = GetTileOwner(nodes[n]);
 		std::map<TileIndex, uint32_t> dist{{nodes[n], 0}};
-		using Item = std::pair<uint32_t, TileIndex>;
+		/* Distance, tile, and the owner of the cable followed so far (INVALID_OWNER while still on the joint). */
+		using Item = std::tuple<uint32_t, TileIndex, Owner>;
 		std::priority_queue<Item, std::vector<Item>, std::greater<Item>> queue;
-		queue.emplace(0, nodes[n]);
+		queue.emplace(0, nodes[n], INVALID_OWNER);
 		while (!queue.empty()) {
-			auto [d, tile] = queue.top();
+			auto [d, tile, segment] = queue.top();
 			queue.pop();
 			if (d != dist[tile]) continue;
 			if (tile != nodes[n] && CanAttachPowerCables(tile)) {
 				/* Another substation or transition pylon: an edge, and the cable network goes on from there by its own edges. */
 				int other = node_of(tile);
-				if (other >= 0 && GetTileOwner(tile) == owner) edges[n].emplace_back(other, d);
+				if (other < 0) continue;
+				Owner owner = segment;
+				if (owner == INVALID_OWNER) owner = GetPowerCableOwner(tile) == GetPowerCableOwner(nodes[n]) ? GetPowerCableOwner(tile) : OWNER_NONE;
+				edges[n].push_back({static_cast<uint>(other), d, owner});
 				continue;
 			}
 			uint8_t dirs = GetPowerCableDirs(tile);
-			if (GetPowerCableOwner(tile) != owner) continue;
 			for (Direction dir : EnumRange(Direction::End)) {
 				if (!HasBit(dirs, to_underlying(dir))) continue;
 				TileIndex next = GetPowerSpanEnd(tile, dir, 1);
 				if (next == INVALID_TILE || !HasBit(GetPowerCableDirs(next), to_underlying(ReverseDir(dir)))) continue;
+				Owner next_segment = segment;
+				if (!(IsPowerTile(next) && CanAttachPowerCables(next))) {
+					Owner cable = GetPowerCableOwner(next);
+					if (segment == INVALID_OWNER) {
+						next_segment = cable;
+					} else if (cable != segment) {
+						continue;
+					}
+				}
 				uint32_t nd = d + ((to_underlying(dir) % 2 == 0) ? 17 : 12);
 				auto it = dist.find(next);
 				if (it != dist.end() && it->second <= nd) continue;
 				dist[next] = nd;
-				queue.emplace(nd, next);
+				queue.emplace(nd, next, next_segment);
 			}
 		}
 	}
 
-	/* Networks, by flood fill. */
+	/* Whether energy of a company may pass along an edge: the line and the tile at its end must be open to it. */
+	auto open_to = [&](const PowerEdge &e, Owner user) {
+		return (e.owner == OWNER_NONE || IsPowerLineOpenTo(e.owner, user)) && IsPowerLineOpenTo(GetTileOwner(nodes[e.to]), user);
+	};
+
+	/* Networks, by flood fill over the edges energy can use one way or the other. */
 	std::vector<int> network(nodes.size(), -1);
 	uint networks = 0;
 	for (uint n = 0; n < nodes.size(); n++) {
@@ -452,10 +546,13 @@ static void UpdatePowerNetworks()
 		while (!stack.empty()) {
 			uint cur = stack.back();
 			stack.pop_back();
-			for (auto [next, weight] : edges[cur]) {
-				if (network[next] >= 0) continue;
-				network[next] = networks;
-				stack.push_back(next);
+			for (const PowerEdge &e : edges[cur]) {
+				if (network[e.to] >= 0) continue;
+				Owner here = GetTileOwner(nodes[cur]);
+				Owner there = GetTileOwner(nodes[e.to]);
+				if (!open_to(e, here) && !(IsPowerLineOpenTo(here, there) && (e.owner == OWNER_NONE || IsPowerLineOpenTo(e.owner, there)))) continue;
+				network[e.to] = networks;
+				stack.push_back(e.to);
 			}
 		}
 		networks++;
@@ -472,10 +569,14 @@ static void UpdatePowerNetworks()
 	_power_figures.assign(_power_substations.size(), {});
 	_power_pairs.resize(networks);
 
-	/* Distances from every substation, along the lines (Dijkstra). */
+	/* Distances from every substation, along the lines its owner may use (Dijkstra), and the fees on the way. */
+	uint fee_rate = _settings_game.economy.power_line_fee;
 	for (uint n = 0; n < nodes.size(); n++) {
 		if (substation_of[n] < 0) continue;
+		Owner user = GetTileOwner(nodes[n]);
 		std::vector<uint32_t> dist(nodes.size(), UINT32_MAX);
+		std::vector<const PowerEdge *> via(nodes.size(), nullptr);
+		std::vector<uint> from(nodes.size(), 0);
 		using Item = std::pair<uint32_t, uint>;
 		std::priority_queue<Item, std::vector<Item>, std::greater<Item>> queue;
 		dist[n] = 0;
@@ -484,15 +585,33 @@ static void UpdatePowerNetworks()
 			auto [d, cur] = queue.top();
 			queue.pop();
 			if (d != dist[cur]) continue;
-			for (auto [next, weight] : edges[cur]) {
-				if (d + weight >= dist[next]) continue;
-				dist[next] = d + weight;
-				queue.emplace(dist[next], next);
+			for (const PowerEdge &e : edges[cur]) {
+				if (d + e.weight >= dist[e.to] || !open_to(e, user)) continue;
+				dist[e.to] = d + e.weight;
+				via[e.to] = &e;
+				from[e.to] = cur;
+				queue.emplace(dist[e.to], e.to);
 			}
 		}
 		for (uint m = 0; m < nodes.size(); m++) {
 			if (substation_of[m] < 0 || dist[m] == UINT32_MAX) continue;
-			_power_pairs[network[n]].push_back({dist[m], static_cast<uint16_t>(substation_of[n]), static_cast<uint16_t>(substation_of[m])});
+			PowerPair pair{dist[m], static_cast<uint16_t>(substation_of[n]), static_cast<uint16_t>(substation_of[m]), {}};
+			/* Walk back along the way: a share of the fee rate by length on each other company's lines, and 5% for each of its substations used. */
+			std::map<Owner, std::pair<uint32_t, uint>> used;
+			for (uint cur = m; cur != n; cur = from[cur]) {
+				const PowerEdge *e = via[cur];
+				if (e->owner != OWNER_NONE && e->owner != user) used[e->owner].first += e->weight;
+				Owner node_owner = GetTileOwner(nodes[cur]);
+				if (node_owner != user && substation_of[cur] >= 0) used[node_owner].second++;
+			}
+			uint total = 0;
+			for (auto &[owner, part] : used) {
+				uint per_mille = (pair.distance == 0 ? 0 : fee_rate * 10 * part.first / pair.distance) + 50 * part.second;
+				per_mille = std::min(per_mille, 900 - total);
+				total += per_mille;
+				if (per_mille != 0) pair.fees.push_back({owner, static_cast<uint16_t>(per_mille)});
+			}
+			_power_pairs[network[n]].push_back(std::move(pair));
 		}
 	}
 	for (auto &pairs : _power_pairs) {
@@ -683,6 +802,7 @@ static void BalancePower()
 	}
 
 	/* Share out, nearest first. Loss: 1% at each substation on the way, and 1% for every 16 tiles of line. */
+	std::map<std::pair<Owner, Owner>, uint64_t> fees; ///< Energy carried for a company over the lines of another, times thousandths of its value owed.
 	std::vector<uint> supply_left(state.size()), need_left(state.size());
 	for (uint s = 0; s < state.size(); s++) {
 		uint capacity = GetSubstationCapacity(s, state[s]);
@@ -702,6 +822,9 @@ static void BalancePower()
 			state[pair.to].delivered += delivered;
 			state[pair.from].sold += taken;
 			state[pair.from].income += delivered;
+			for (const PowerFee &fee : pair.fees) {
+				fees[{GetTileOwner(_power_substations[pair.from].tile), fee.owner}] += static_cast<uint64_t>(delivered) * fee.per_mille;
+			}
 		}
 	}
 
@@ -773,6 +896,16 @@ static void BalancePower()
 		Money money = _price[Price::PowerSale] * static_cast<int64_t>(energy) / 100;
 		if (money == 0) continue;
 		SubtractMoneyFromCompany(owner, CommandCost(ExpensesType::EnergySales, -money));
+	}
+
+	/* Fees for the lines of other companies: paid by the company whose energy it is, earned by the owner of the lines. */
+	for (auto [companies, energy] : fees) {
+		auto [user, owner] = companies;
+		if (!Company::IsValidID(user) || !Company::IsValidID(owner)) continue;
+		Money money = _price[Price::PowerSale] * static_cast<int64_t>(energy) / 100000;
+		if (money == 0) continue;
+		SubtractMoneyFromCompany(user, CommandCost(ExpensesType::EnergyFees, money));
+		SubtractMoneyFromCompany(owner, CommandCost(ExpensesType::EnergyFees, -money));
 	}
 }
 

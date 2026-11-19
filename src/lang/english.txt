@@ -824,6 +824,8 @@ STR_SMALLMAP_LEGENDA_TRUCK_LOADING_BAY                          :{TINY_FONT}{BLA
 STR_SMALLMAP_LEGENDA_BUS_STATION                                :{TINY_FONT}{BLACK}Bus Station
 STR_SMALLMAP_LEGENDA_AIRPORT_HELIPORT                           :{TINY_FONT}{BLACK}Airport/Heliport
 STR_SMALLMAP_LEGENDA_DOCK                                       :{TINY_FONT}{BLACK}Dock
+STR_SMALLMAP_LEGENDA_POWER_LINES                                :{TINY_FONT}{BLACK}Power lines
+STR_SMALLMAP_LEGENDA_POWER_SUBSTATION                           :{TINY_FONT}{BLACK}Power substation
 STR_SMALLMAP_LEGENDA_ROUGH_LAND                                 :{TINY_FONT}{BLACK}Rough Land
 STR_SMALLMAP_LEGENDA_GRASS_LAND                                 :{TINY_FONT}{BLACK}Grass Land
 STR_SMALLMAP_LEGENDA_BARE_LAND                                  :{TINY_FONT}{BLACK}Bare Land
@@ -2179,6 +2181,8 @@ STR_CONFIG_SETTING_POWER_BONUS                                  :Extra output wi
 STR_CONFIG_SETTING_POWER_BONUS_HELPTEXT                         :How much more industries produce, and how much faster towns grow and make passengers and mail, when power lines give them all the power they need. Partial power gives part of it
 STR_CONFIG_SETTING_POWER_CATCHMENT                              :Reach of a power substation: {STRING2}
 STR_CONFIG_SETTING_POWER_CATCHMENT_HELPTEXT                     :How far around a substation it supplies industries and buildings, and takes power from power plants
+STR_CONFIG_SETTING_POWER_LINE_FEE                               :Fee for using the power lines of another company: {STRING2}
+STR_CONFIG_SETTING_POWER_LINE_FEE_HELPTEXT                      :Share of the value of energy that a company pays to the owner when its energy travels the whole way over the power lines of a company that shares them. A shorter part of the way costs less; each substation of the owner used adds 5%
 STR_CONFIG_SETTING_LARGER_TOWNS                                 :Proportion of towns that will become cities: {STRING2}
 STR_CONFIG_SETTING_LARGER_TOWNS_HELPTEXT                        :Amount of towns which will become a city, thus a town which starts out larger and grows faster
 STR_CONFIG_SETTING_LARGER_TOWNS_VALUE                           :1 in {COMMA}
@@ -4104,7 +4108,7 @@ STR_FINANCES_OPERATING_EXPENSES_TITLE                           :{WHITE}Operatin
 STR_FINANCES_CAPITAL_EXPENSES_TITLE                             :{WHITE}Capital Expenses
 
 
-###length 13
+###length 15
 STR_FINANCES_SECTION_CONSTRUCTION                               :{GOLD}Construction
 STR_FINANCES_SECTION_NEW_VEHICLES                               :{GOLD}New Vehicles
 STR_FINANCES_SECTION_TRAIN_RUNNING_COSTS                        :{GOLD}Trains
@@ -4119,6 +4123,7 @@ STR_FINANCES_SECTION_SHIP_REVENUE                               :{GOLD}Ships
 STR_FINANCES_SECTION_LOAN_INTEREST                              :{GOLD}Loan Interest
 STR_FINANCES_SECTION_OTHER                                      :{GOLD}Other
 STR_FINANCES_SECTION_ENERGY_SALES                               :{GOLD}Energy Sales
+STR_FINANCES_SECTION_ENERGY_FEES                                :{GOLD}Power Line Fees
 
 STR_FINANCES_TOTAL_CAPTION                                      :{WHITE}Total
 STR_FINANCES_NEGATIVE_INCOME                                    :-{CURRENCY_LONG}
@@ -4157,6 +4162,7 @@ STR_COMPANY_VIEW_INFRASTRUCTURE_RAIL                            :{WHITE}{COMMA} 
 STR_COMPANY_VIEW_INFRASTRUCTURE_ROAD                            :{WHITE}{COMMA} road piece{P "" s}
 STR_COMPANY_VIEW_INFRASTRUCTURE_WATER                           :{WHITE}{COMMA} water tile{P "" s}
 STR_COMPANY_VIEW_INFRASTRUCTURE_STATION                         :{WHITE}{COMMA} station tile{P "" s}
+STR_COMPANY_VIEW_INFRASTRUCTURE_POWER                           :{WHITE}{COMMA} power line piece{P "" s}
 STR_COMPANY_VIEW_INFRASTRUCTURE_AIRPORT                         :{WHITE}{COMMA} airport{P "" s}
 STR_COMPANY_VIEW_INFRASTRUCTURE_NONE                            :{WHITE}None
 
@@ -4168,6 +4174,11 @@ STR_COMPANY_VIEW_RELOCATE_HQ                                    :{BLACK}Relocate
 STR_COMPANY_VIEW_RELOCATE_HQ_TOOLTIP                            :{BLACK}Rebuild company headquarters elsewhere for 1% cost of company value. Also press Shift to show cost estimate only
 STR_COMPANY_VIEW_INFRASTRUCTURE_BUTTON                          :{BLACK}Details
 STR_COMPANY_VIEW_INFRASTRUCTURE_TOOLTIP                         :{BLACK}View detailed infrastructure counts
+STR_COMPANY_VIEW_POWER_SHARING_OPEN                             :{GOLD}Power lines: {WHITE}open to other companies, for a fee
+STR_COMPANY_VIEW_POWER_SHARING_CLOSED                           :{GOLD}Power lines: {WHITE}for own use only
+STR_COMPANY_VIEW_POWER_SHARING_OPEN_BUTTON                      :{BLACK}Share
+STR_COMPANY_VIEW_POWER_SHARING_CLOSE_BUTTON                     :{BLACK}Stop sharing
+STR_COMPANY_VIEW_POWER_SHARING_TOOLTIP                          :{BLACK}Allow other companies to join their power lines to yours and carry their energy over them. They pay a fee for every unit carried, by distance, and for each of your substations they use
 STR_COMPANY_VIEW_GIVE_MONEY_BUTTON                              :{BLACK}Give money
 STR_COMPANY_VIEW_GIVE_MONEY_TOOLTIP                             :{BLACK}Give money to this company
 STR_COMPANY_VIEW_HOSTILE_TAKEOVER_BUTTON                        :{BLACK}Hostile takeover
@@ -4200,6 +4211,11 @@ STR_COMPANY_INFRASTRUCTURE_VIEW_CANALS                          :{WHITE}Canals
 STR_COMPANY_INFRASTRUCTURE_VIEW_STATION_SECT                    :{GOLD}Stations:
 STR_COMPANY_INFRASTRUCTURE_VIEW_STATIONS                        :{WHITE}Station tiles
 STR_COMPANY_INFRASTRUCTURE_VIEW_AIRPORTS                        :{WHITE}Airports
+STR_COMPANY_INFRASTRUCTURE_VIEW_POWER_SECT                      :{GOLD}Power lines:
+STR_COMPANY_INFRASTRUCTURE_VIEW_POWER_PYLONS                    :{WHITE}Pylons
+STR_COMPANY_INFRASTRUCTURE_VIEW_POWER_WIRES                     :{WHITE}Overhead wire
+STR_COMPANY_INFRASTRUCTURE_VIEW_POWER_CABLES                    :{WHITE}Underground cable
+STR_COMPANY_INFRASTRUCTURE_VIEW_POWER_SUBSTATIONS               :{WHITE}Substations
 STR_COMPANY_INFRASTRUCTURE_VIEW_TOTAL_YEAR                      :{WHITE}{CURRENCY_LONG}/year
 STR_COMPANY_INFRASTRUCTURE_VIEW_TOTAL_PERIOD                    :{WHITE}{CURRENCY_LONG}/period
 

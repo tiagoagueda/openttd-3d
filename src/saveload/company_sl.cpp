@@ -491,19 +491,20 @@ public:
 };
 
 /** Save/load of companies. */
-/** Yearly expenses of savegames from before energy sales, with 13 kinds of expenses a year. */
-static std::array<Money, 3 * 13> _old_yearly_expenses{};
+/** Yearly expenses of savegames from before energy sales (13 kinds a year) or energy fees (14 kinds a year). */
+static std::array<Money, 3 * 14> _old_yearly_expenses{};
 
 /**
- * Move the yearly expenses of a savegame from before energy sales into place; the energy sales start at zero.
+ * Move the yearly expenses of a savegame from before energy sales or energy fees into place; the new kinds start at zero.
  * @param c The company just loaded.
+ * @param kinds How many kinds of expenses a year the savegame has.
  */
-static void MoveOldYearlyExpenses(CompanyProperties &c)
+static void MoveOldYearlyExpenses(CompanyProperties &c, uint kinds)
 {
 	for (uint year = 0; year < 3; year++) {
 		c.yearly_expenses[year] = {};
-		for (uint type = 0; type < 13; type++) {
-			c.yearly_expenses[year][static_cast<ExpensesType>(type)] = _old_yearly_expenses[year * 13 + type];
+		for (uint type = 0; type < kinds; type++) {
+			c.yearly_expenses[year][static_cast<ExpensesType>(type)] = _old_yearly_expenses[year * kinds + type];
 		}
 	}
 }
@@ -557,9 +558,11 @@ static const SaveLoad _company_desc[] = {
 	/* Before energy sales there were 13 kinds of expenses; they are loaded aside and moved into place after loading. */
 	SaveLoad::Array<VarFileType::I32, 3 * 13>("yearly_expenses", SLE_GLOBAL_ADDRESS(_old_yearly_expenses), SaveLoadVersion::MinVersion, SaveLoadVersion::VehicleCurrencyStationChanges),
 	SaveLoad::Array<VarFileType::I64, 3 * 13>("yearly_expenses", SLE_GLOBAL_ADDRESS(_old_yearly_expenses), SaveLoadVersion::VehicleCurrencyStationChanges, SaveLoadVersion::EnergySales),
-	SaveLoad::Array<VarFileType::I64, 3 * to_underlying(ExpensesType::End)>("yearly_expenses", SLE_OBJECT_ADDRESS(CompanyProperties, yearly_expenses), SaveLoadVersion::EnergySales),
+	SaveLoad::Array<VarFileType::I64, 3 * 14>("yearly_expenses", SLE_GLOBAL_ADDRESS(_old_yearly_expenses), SaveLoadVersion::EnergySales, SaveLoadVersion::PowerSharing),
+	SaveLoad::Array<VarFileType::I64, 3 * to_underlying(ExpensesType::End)>("yearly_expenses", SLE_OBJECT_ADDRESS(CompanyProperties, yearly_expenses), SaveLoadVersion::PowerSharing),
 
 	SaveLoad::Variable<VarFileType::Bool>("is_ai", SLE_OBJECT_ADDRESS(CompanyProperties, is_ai), SaveLoadVersion::VehicleCurrencyStationChanges),
+	SaveLoad::Variable<VarFileType::Bool>("power_sharing", SLE_OBJECT_ADDRESS(CompanyProperties, power_sharing), SaveLoadVersion::PowerSharing),
 
 	SaveLoad::Variable<VarFileType::U32>("terraform_limit", SLE_OBJECT_ADDRESS(CompanyProperties, terraform_limit), SaveLoadVersion::TerraformLimits),
 	SaveLoad::Variable<VarFileType::U32>("clear_limit", SLE_OBJECT_ADDRESS(CompanyProperties, clear_limit), SaveLoadVersion::TerraformLimits),
@@ -592,7 +595,11 @@ struct PLYRChunkHandler : ChunkHandler {
 		while ((index = SlIterateArray()) != -1) {
 			Company *c = Company::CreateAtIndex(CompanyID(index));
 			SlObject(c, slt);
-			if (IsSavegameVersionBefore(SaveLoadVersion::EnergySales)) MoveOldYearlyExpenses(*c);
+			if (IsSavegameVersionBefore(SaveLoadVersion::EnergySales)) {
+				MoveOldYearlyExpenses(*c, 13);
+			} else if (IsSavegameVersionBefore(SaveLoadVersion::PowerSharing)) {
+				MoveOldYearlyExpenses(*c, 14);
+			}
 			_company_colours[c->index] = c->colour;
 		}
 	}

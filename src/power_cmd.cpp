@@ -20,6 +20,7 @@
 #include "company_base.h"
 #include "economy_func.h"
 #include "viewport_func.h"
+#include "window_func.h"
 #ifdef WITH_VIEWPORT3D
 #include "viewport3d/view3d_gui.h"
 #endif
@@ -489,6 +490,37 @@ CommandCost CmdBuildPowerSubstation(DoCommandFlags flags, TileIndex tile, PowerT
 	return cost;
 }
 
+/**
+ * Whether the current company may join its lines or cables to a power tile: its own, or one of a company that shares its power lines.
+ * @param tile A power tile.
+ * @return Success, or why not.
+ */
+static CommandCost CheckPowerTileJoinable(TileIndex tile)
+{
+	CommandCost owner = CheckTileOwnership(tile);
+	if (owner.Succeeded()) return owner;
+	if (IsPowerLineOpenTo(GetTileOwner(tile), _current_company)) return CommandCost();
+	return owner;
+}
+
+/**
+ * Open or close the power lines of the current company to other companies.
+ * @param flags Type of operation.
+ * @param share Whether others may use them, for a fee.
+ * @return The cost or an error.
+ */
+CommandCost CmdSetPowerSharing(DoCommandFlags flags, bool share)
+{
+	Company *c = Company::GetIfValid(_current_company);
+	if (c == nullptr) return CMD_ERROR;
+	if (flags.Test(DoCommandFlag::Execute)) {
+		c->power_sharing = share;
+		InvalidatePowerNetworks();
+		InvalidateWindowData(WindowClass::Company, c->index);
+	}
+	return CommandCost();
+}
+
 /** One step of a planned line: where the next pylon goes and how far it is. */
 struct PlannedSpan {
 	uint from; ///< Index along the line of the pylon the span starts at.
@@ -541,9 +573,7 @@ static CommandCost PlanPowerLine(DoCommandFlags flags, TileIndex start_tile, Dir
 		TileIndex t = tile_at(i);
 		if (IsPowerTile(t)) {
 			if (!CanAttachPowerWires(t)) return CommandCost(STR_ERROR_POWER_LINES_JOIN_ONLY_AT_PYLONS);
-			CommandCost owner = CheckTileOwnership(t);
-			if (owner.Failed()) return owner;
-			return CommandCost();
+			return CheckPowerTileJoinable(t);
 		}
 		CommandCost site = CheckPowerTileSite(t, test_flags, true);
 		if (site.Succeeded()) {
@@ -757,7 +787,9 @@ CommandCost CmdRemovePowerLine(DoCommandFlags flags, TileIndex end_tile, TileInd
 		if (!IsPowerTile(t)) continue;
 		uint span = GetPowerSpan(t, dir);
 		if (span == 0 || i + span > length) continue;
+		/* A span between two companies can be taken down from either end. */
 		CommandCost owner = CheckTileOwnership(t);
+		if (owner.Failed() && CheckTileOwnership(tile_at(i + span)).Succeeded()) owner = CommandCost();
 		if (owner.Failed()) {
 			last_error = owner;
 			continue;
@@ -838,10 +870,13 @@ CommandCost CmdBuildPowerCable(DoCommandFlags flags, TileIndex end_tile, TileInd
 	for (uint i = 0; i <= length; i++) {
 		TileIndex t = tile_at(i);
 		if (!IsValidTile(t)) return CommandCost(STR_ERROR_TOO_CLOSE_TO_EDGE_OF_MAP);
-		if (HasPowerCable(t) && GetPowerCableOwner(t) != _current_company) return CommandCost(STR_ERROR_POWER_CABLE_OWNED_BY_OTHER);
-		if (IsPowerTile(t) && CanAttachPowerCables(t)) {
-			CommandCost owner = CheckTileOwnership(t);
+		bool joint = IsPowerTile(t) && CanAttachPowerCables(t);
+		if (joint) {
+			/* Cables of different companies meet only at an underground substation or transition pylon that is open to them. */
+			CommandCost owner = CheckPowerTileJoinable(t);
 			if (owner.Failed()) return owner;
+		} else if (HasPowerCable(t) && GetPowerCableOwner(t) != _current_company) {
+			return CommandCost(STR_ERROR_POWER_CABLE_OWNED_BY_OTHER);
 		}
 		dirs[i] = GetPowerCableDirs(t);
 		if (i > 0) SetBit(dirs[i], to_underlying(ReverseDir(dir)));
@@ -858,7 +893,9 @@ CommandCost CmdBuildPowerCable(DoCommandFlags flags, TileIndex end_tile, TileInd
 	if (flags.Test(DoCommandFlag::Execute)) {
 		for (uint i = 0; i <= length; i++) {
 			TileIndex t = tile_at(i);
-			SetPowerCable(t, dirs[i], _current_company);
+			/* The cable on a joint of another company stays theirs. */
+			Owner cable_owner = (IsPowerTile(t) && CanAttachPowerCables(t) && HasPowerCable(t)) ? GetPowerCableOwner(t) : _current_company;
+			SetPowerCable(t, dirs[i], cable_owner);
 			MarkPowerTileDirty(t);
 		}
 	}
@@ -923,8 +960,8 @@ void SetPowerNetworkView(bool on)
 }
 
 /**
- * Hand all underground cables of a company to another, or remove them.
- * Called when a company goes bankrupt or is bought; overhead wires follow their pylons instead.
+ * Hand all underground cables and the overhead wires over other tiles of a company to another, or remove the cables.
+ * Called when a company goes bankrupt or is bought; the pylons themselves change owner with their tiles.
  * @param old_owner The company that goes.
  * @param new_owner The company taking over, or INVALID_OWNER to remove the cables.
  */
@@ -932,6 +969,8 @@ void ChangePowerCableOwner(Owner old_owner, Owner new_owner)
 {
 	if (_power_layer == nullptr) return;
 	for (TileIndex t : Map::Iterate()) {
+		/* Wires over other tiles go with their pylons; those of a company that closes were taken down with its pylons. */
+		if (HasPowerWire(t) && GetPowerWireOwner(t) == old_owner && new_owner != INVALID_OWNER) SetPowerWire(t, GetPowerWireKind(t), new_owner);
 		if (!HasPowerCable(t) || GetPowerCableOwner(t) != old_owner) continue;
 		SetPowerCable(t, new_owner == INVALID_OWNER ? 0 : GetPowerCableDirs(t), new_owner);
 	}

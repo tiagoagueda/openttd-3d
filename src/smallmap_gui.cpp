@@ -31,6 +31,7 @@
 #include "timer/timer_window.h"
 #include "smallmap_gui.h"
 #include "core/enum_type.hpp"
+#include "power_map.h"
 
 #include "widgets/smallmap_widget.h"
 
@@ -109,6 +110,8 @@ static const LegendAndColour _legend_routes[] = {
 	{.legend = STR_SMALLMAP_LEGENDA_BUS_STATION, .colour = PC_YELLOW},
 	{.legend = STR_SMALLMAP_LEGENDA_AIRPORT_HELIPORT, .colour = PC_RED},
 	{.legend = STR_SMALLMAP_LEGENDA_DOCK, .colour = PC_LIGHT_BLUE},
+	{.legend = STR_SMALLMAP_LEGENDA_POWER_LINES, .colour = PC_WHITE, .col_break = true},
+	{.legend = STR_SMALLMAP_LEGENDA_POWER_SUBSTATION, .colour = PC_YELLOW},
 	{.end = true},
 };
 
@@ -482,7 +485,19 @@ static inline uint32_t GetSmallMapIndustriesPixels(TileIndex tile, TileType t)
  */
 static inline uint32_t GetSmallMapRoutesPixels(TileIndex tile, TileType t)
 {
+	/* Overhead wires over open land and water show as power lines. */
+	if ((t == TileType::Clear || t == TileType::Trees || t == TileType::Water) && HasPowerWire(tile)) {
+		const SmallMapColourScheme &cs = _heightmap_schemes[_settings_client.gui.smallmap_land_colour];
+		return ApplyMask(t == TileType::Water ? MKCOLOUR_XXXX(PC_WATER) : cs.default_colour, AndOr(MKCOLOUR_0XX0(PC_WHITE), MKCOLOUR_F00F));
+	}
+
 	switch (t) {
+		case TileType::Power: {
+			if (IsPowerSubstation(tile)) return MKCOLOUR_XXXX(PC_YELLOW);
+			const SmallMapColourScheme &cs = _heightmap_schemes[_settings_client.gui.smallmap_land_colour];
+			return ApplyMask(cs.default_colour, AndOr(MKCOLOUR_0XX0(PC_WHITE), MKCOLOUR_F00F));
+		}
+
 		case TileType::Station:
 			switch (GetStationType(tile)) {
 				case StationType::Rail:    return MKCOLOUR_XXXX(PC_VERY_DARK_BROWN);

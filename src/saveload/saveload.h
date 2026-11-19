@@ -427,6 +427,7 @@ enum class SaveLoadVersion : uint16_t {
 	EnergySales, ///< Saveload version: 369, power lines fork\n Energy sales get their own line in the yearly expenses.
 	PowerPlants, ///< Saveload version: 370, power lines fork\n Oil, solar, wind and hydro power plants join the base industries; NewGRF industry types and tiles move up.
 	PowerOnWater, ///< Saveload version: 371, power lines fork\n Pylons can stand in water; power tiles keep a water class.
+	PowerSharing, ///< Saveload version: 372, power lines fork\n Companies can share their power lines for a fee; energy fees get their own line in the yearly expenses.
 
 	MaxVersion, ///< Highest possible saveload version.
 };

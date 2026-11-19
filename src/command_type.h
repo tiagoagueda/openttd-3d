@@ -217,6 +217,7 @@ enum class Commands : uint8_t {
 	RemovePowerLine, ///< remove an overhead power line
 	BuildPowerCable, ///< build an underground power cable
 	RemovePowerCable, ///< remove an underground power cable
+	SetPowerSharing, ///< open or close the power lines of a company to others
 	BuildTunnel, ///< build a tunnel
 
 	RemoveFromRailStation, ///< remove a (rectangle of) tiles from a rail station

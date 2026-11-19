@@ -194,6 +194,7 @@ enum class ExpensesType : uint8_t {
 	LoanInterest, ///< Interest payments over the loan.
 	Other, ///< Other expenses.
 	EnergySales, ///< Income from power delivered over power lines.
+	EnergyFees, ///< Fees for carrying energy over the power lines of other companies, paid or earned.
 	End, ///< End marker.
 	Begin = ExpensesType::Construction, ///< Begin marker.
 	Invalid = 0xFF, ///< Invalid expense type.

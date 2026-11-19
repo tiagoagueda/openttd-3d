@@ -856,6 +856,7 @@ SettingsContainer &GetSettingsTree()
 			{
 				energy->Add(new SettingEntry("economy.power_bonus"));
 				energy->Add(new SettingEntry("economy.power_catchment"));
+				energy->Add(new SettingEntry("economy.power_line_fee"));
 			}
 
 			SettingsPage *industries = environment->Add(new SettingsPage(STR_CONFIG_SETTING_ENVIRONMENT_INDUSTRIES));

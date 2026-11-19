@@ -19,6 +19,7 @@ CommandCost CmdBuildPowerLine(DoCommandFlags flags, TileIndex end_tile, TileInde
 CommandCost CmdRemovePowerLine(DoCommandFlags flags, TileIndex end_tile, TileIndex start_tile);
 CommandCost CmdBuildPowerCable(DoCommandFlags flags, TileIndex end_tile, TileIndex start_tile);
 CommandCost CmdRemovePowerCable(DoCommandFlags flags, TileIndex end_tile, TileIndex start_tile);
+CommandCost CmdSetPowerSharing(DoCommandFlags flags, bool share);
 
 DEF_CMD_TRAIT(Commands::BuildPowerPylon, CmdBuildPowerPylon, CommandFlags({CommandFlag::NoWater, CommandFlag::Auto}), CommandType::LandscapeConstruction)
 DEF_CMD_TRAIT(Commands::BuildPowerSubstation, CmdBuildPowerSubstation, CommandFlags({CommandFlag::NoWater, CommandFlag::Auto}), CommandType::LandscapeConstruction)
@@ -26,5 +27,6 @@ DEF_CMD_TRAIT(Commands::BuildPowerLine, CmdBuildPowerLine, CommandFlags({Command
 DEF_CMD_TRAIT(Commands::RemovePowerLine, CmdRemovePowerLine, CommandFlags({CommandFlag::Auto}), CommandType::LandscapeConstruction)
 DEF_CMD_TRAIT(Commands::BuildPowerCable, CmdBuildPowerCable, CommandFlags({CommandFlag::Auto}), CommandType::LandscapeConstruction)
 DEF_CMD_TRAIT(Commands::RemovePowerCable, CmdRemovePowerCable, CommandFlags({CommandFlag::Auto}), CommandType::LandscapeConstruction)
+DEF_CMD_TRAIT(Commands::SetPowerSharing, CmdSetPowerSharing, {}, CommandType::CompanySetting)
 
 #endif /* POWER_CMD_H */

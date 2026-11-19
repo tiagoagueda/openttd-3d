@@ -562,7 +562,7 @@ static bool ConScrollToTile(std::span<std::string_view> argv)
 static bool ConPowerBuild(std::span<std::string_view> argv)
 {
 	if (argv.empty()) {
-		IConsolePrint(CC_HELP, "Build power lines for your company. Usage: 'power_build line <x1> <y1> <x2> <y2>', 'power_build pylon <x> <y>', 'power_build substation|usubstation|transition <x> <y>', 'power_build cable|removecable <x1> <y1> <x2> <y2>', 'power_build info', 'power_build fuel <industry> <amount>', 'power_build plant <industry type> <x> <y> [layout]', 'power_build riversteps'.");
+		IConsolePrint(CC_HELP, "Build power lines for your company. Usage: 'power_build line <x1> <y1> <x2> <y2>', 'power_build pylon <x> <y>', 'power_build substation|usubstation|transition <x> <y>', 'power_build cable|removecable <x1> <y1> <x2> <y2>', 'power_build info', 'power_build fuel <industry> <amount>', 'power_build plant <industry type> <x> <y> [layout]', 'power_build riversteps', 'power_build share on|off', 'power_build company <id>|new'.");
 		return true;
 	}
 	if (argv.size() == 2 && argv[1] == "info") {
@@ -581,8 +581,42 @@ static bool ConPowerBuild(std::span<std::string_view> argv)
 			IConsolePrint(CC_DEFAULT, "town {} at {},{}: needs {} gets {} bonus {}% street lamps lit {}/4{}", t->index, TileX(t->xy), TileY(t->xy), t->power_demand, t->power_supplied, GetPowerBonusPercent(t->power_demand, t->power_supplied), t->street_lamp_share, t->power_covered ? "" : " (off grid)");
 		}
 		for (const Company *c : Company::Iterate()) {
-			IConsolePrint(CC_DEFAULT, "company {}: money {} energy sales this year {}", c->index, c->money, -c->yearly_expenses[0][ExpensesType::EnergySales]);
+			const PowerInfrastructure &infra = GetPowerInfrastructure(c->index);
+			for (const auto tile : Map::Iterate()) {
+				if (!IsPowerTile(tile) || GetTileOwner(tile) != c->index) continue;
+				PowerTileFigures f = GetPowerTileFigures(tile);
+				if (f.status == PowerTileStatus::None) continue;
+				IConsolePrint(CC_DEFAULT, "  substation at {},{}{}: network {} status {} sent {} received {}", TileX(tile), TileY(tile), f.plant_link ? " (plant link)" : "", f.network, to_underlying(f.status), f.sent, f.received);
+			}
+			IConsolePrint(CC_DEFAULT, "company {}: money {} energy sales this year {} fees this year {} sharing {} pylons {} substations {} wire {} cable {} upkeep {}", c->index, c->money, -c->yearly_expenses[0][ExpensesType::EnergySales], c->yearly_expenses[0][ExpensesType::EnergyFees], c->power_sharing ? "on" : "off", infra.pylons, infra.substations, infra.wire, infra.cable, PowerMaintenanceCost(infra));
 		}
+		return true;
+	}
+	if (argv.size() == 3 && argv[1] == "share") {
+		/* Open or close the power lines of your company to others. */
+		Command<Commands::SetPowerSharing>::Post(argv[2] == "on");
+		return true;
+	}
+	if (argv.size() == 3 && argv[1] == "company") {
+		/* For tests in single player: play as another company, or start a new one. */
+		if (_networking) {
+			IConsolePrint(CC_ERROR, "Only in single player.");
+			return true;
+		}
+		if (argv[2] == "new") {
+			extern Company *DoStartupNewCompany(bool is_ai, CompanyID company);
+			Company *c = DoStartupNewCompany(false, CompanyID::Invalid());
+			if (c == nullptr) {
+				IConsolePrint(CC_ERROR, "No room for a new company.");
+				return true;
+			}
+			SetLocalCompany(c->index);
+			IConsolePrint(CC_DEFAULT, "now company {}", c->index);
+			return true;
+		}
+		auto id = ParseInteger(argv[2], 0);
+		if (!id.has_value() || !Company::IsValidID(CompanyID(*id))) return false;
+		SetLocalCompany(CompanyID(*id));
 		return true;
 	}
 	if (argv.size() == 4 && argv[1] == "fuel") {

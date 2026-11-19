@@ -43,6 +43,8 @@
 #include "timer/timer.h"
 #include "timer/timer_window.h"
 #include "core/string_consumer.hpp"
+#include "power_func.h"
+#include "power_cmd.h"
 
 #include "widgets/company_widget.h"
 
@@ -73,6 +75,7 @@ static const std::initializer_list<ExpensesType> _expenses_list_operating_costs 
 	ExpensesType::AircraftRun,
 	ExpensesType::ShipRun,
 	ExpensesType::Property,
+	ExpensesType::EnergyFees,
 	ExpensesType::LoanInterest,
 };
 
@@ -1682,6 +1685,22 @@ struct CompanyInfrastructureWindow : Window
 			}
 		}
 
+		if (const PowerInfrastructure &power = GetPowerInfrastructure(c->index); power.Units() > 0) {
+			/* Power lines. */
+			if (!this->list.empty()) this->list.emplace_back(InfrastructureItemType::Spacer);
+			this->list.emplace_back(InfrastructureItemType::Header, STR_COMPANY_INFRASTRUCTURE_VIEW_POWER_SECT);
+			auto add = [&](StringID label, uint32_t count, uint weight) {
+				if (count == 0) return;
+				Money monthly_cost = PowerMaintenanceCost(power, count, weight);
+				total_monthly_cost += monthly_cost;
+				this->list.emplace_back(InfrastructureItemType::Value, label, count, monthly_cost);
+			};
+			add(STR_COMPANY_INFRASTRUCTURE_VIEW_POWER_PYLONS, power.pylons, POWER_UPKEEP_PYLON);
+			add(STR_COMPANY_INFRASTRUCTURE_VIEW_POWER_WIRES, power.wire, POWER_UPKEEP_WIRE);
+			add(STR_COMPANY_INFRASTRUCTURE_VIEW_POWER_CABLES, power.cable, POWER_UPKEEP_CABLE);
+			add(STR_COMPANY_INFRASTRUCTURE_VIEW_POWER_SUBSTATIONS, power.substations, POWER_UPKEEP_SUBSTATION);
+		}
+
 		if (_settings_game.economy.infrastructure_maintenance) {
 			/* Total monthly maintenance cost. */
 			this->list.emplace_back(InfrastructureItemType::Spacer);
@@ -1892,9 +1911,16 @@ static constexpr std::initializer_list<NWidgetPart> _nested_company_widgets = {
 
 				NWidget(NWID_HORIZONTAL), SetPIP(0, WidgetDimensions::unscaled.hsep_normal, 0),
 					NWidget(WWT_TEXT, Colours::Invalid, WID_C_DESC_INFRASTRUCTURE), SetStringTip(STR_COMPANY_VIEW_INFRASTRUCTURE),  SetAlignment({AlignmentH::Start, AlignmentV::Top}),
-					NWidget(WWT_EMPTY, Colours::Invalid, WID_C_DESC_INFRASTRUCTURE_COUNTS), SetMinimalTextLines(5, 0), SetFill(1, 0),
+					NWidget(WWT_EMPTY, Colours::Invalid, WID_C_DESC_INFRASTRUCTURE_COUNTS), SetMinimalTextLines(6, 0), SetFill(1, 0),
 					NWidget(NWID_VERTICAL), SetPIPRatio(0, 0, 1),
 						NWidget(WWT_PUSHTXTBTN, Colours::Grey, WID_C_VIEW_INFRASTRUCTURE), SetStringTip(STR_COMPANY_VIEW_INFRASTRUCTURE_BUTTON, STR_COMPANY_VIEW_INFRASTRUCTURE_TOOLTIP),
+					EndContainer(),
+				EndContainer(),
+
+				NWidget(NWID_HORIZONTAL), SetPIP(0, WidgetDimensions::unscaled.hsep_normal, 0),
+					NWidget(WWT_TEXT, Colours::Invalid, WID_C_DESC_POWER_SHARING), SetFill(1, 0),
+					NWidget(NWID_SELECTION, Colours::Invalid, WID_C_SELECT_POWER_SHARING),
+						NWidget(WWT_PUSHTXTBTN, Colours::Grey, WID_C_POWER_SHARING), SetToolTip(STR_COMPANY_VIEW_POWER_SHARING_TOOLTIP),
 					EndContainer(),
 				EndContainer(),
 
@@ -1987,6 +2013,9 @@ struct CompanyWindow : Window
 
 			this->SetWidgetDisabledState(WID_C_COMPANY_JOIN, c->is_ai);
 
+			/* Power sharing button, for the own company. */
+			reinit |= this->GetWidget<NWidgetStacked>(WID_C_SELECT_POWER_SHARING)->SetDisplayedPlane(local ? 0 : SZSP_NONE);
+
 			if (reinit) {
 				this->ReInit();
 				return;
@@ -2032,10 +2061,19 @@ struct CompanyWindow : Window
 				size.width = std::max(size.width, GetStringBoundingBox(GetString(STR_COMPANY_VIEW_INFRASTRUCTURE_WATER, max_value)).width);
 				size.width = std::max(size.width, GetStringBoundingBox(GetString(STR_COMPANY_VIEW_INFRASTRUCTURE_STATION, max_value)).width);
 				size.width = std::max(size.width, GetStringBoundingBox(GetString(STR_COMPANY_VIEW_INFRASTRUCTURE_AIRPORT, max_value)).width);
+				size.width = std::max(size.width, GetStringBoundingBox(GetString(STR_COMPANY_VIEW_INFRASTRUCTURE_POWER, max_value)).width);
 				size.width = std::max(size.width, GetStringBoundingBox(GetString(STR_COMPANY_VIEW_INFRASTRUCTURE_NONE, max_value)).width);
 				size.width += padding.width;
 				break;
 			}
+
+			case WID_C_DESC_POWER_SHARING:
+				size.width = std::max(GetStringBoundingBox(STR_COMPANY_VIEW_POWER_SHARING_OPEN).width, GetStringBoundingBox(STR_COMPANY_VIEW_POWER_SHARING_CLOSED).width) + padding.width;
+				break;
+
+			case WID_C_POWER_SHARING:
+				size.width = std::max(GetStringBoundingBox(STR_COMPANY_VIEW_POWER_SHARING_OPEN_BUTTON).width, GetStringBoundingBox(STR_COMPANY_VIEW_POWER_SHARING_CLOSE_BUTTON).width) + padding.width;
+				break;
 
 			case WID_C_VIEW_HQ:
 			case WID_C_BUILD_HQ:
@@ -2105,6 +2143,12 @@ struct CompanyWindow : Window
 			y += GetCharacterHeight(FontSize::Normal);
 		}
 
+		const PowerInfrastructure &power = GetPowerInfrastructure(c->index);
+		if (uint32_t power_pieces = power.pylons + power.substations + power.wire + power.cable; power_pieces != 0) {
+			DrawString(r.left, r.right, y, GetString(STR_COMPANY_VIEW_INFRASTRUCTURE_POWER, power_pieces));
+			y += GetCharacterHeight(FontSize::Normal);
+		}
+
 		if (y == r.top) {
 			/* No String was emitted before, so there must be no infrastructure at all. */
 			DrawString(r.left, r.right, y, STR_COMPANY_VIEW_INFRASTRUCTURE_NONE);
@@ -2157,6 +2201,12 @@ struct CompanyWindow : Window
 
 			case WID_C_DESC_COMPANY_VALUE:
 				return GetString(STR_COMPANY_VIEW_COMPANY_VALUE, CalculateCompanyValue(Company::Get(this->window_number)));
+
+			case WID_C_DESC_POWER_SHARING:
+				return GetString(Company::Get(this->window_number)->power_sharing ? STR_COMPANY_VIEW_POWER_SHARING_OPEN : STR_COMPANY_VIEW_POWER_SHARING_CLOSED);
+
+			case WID_C_POWER_SHARING:
+				return GetString(Company::Get(this->window_number)->power_sharing ? STR_COMPANY_VIEW_POWER_SHARING_CLOSE_BUTTON : STR_COMPANY_VIEW_POWER_SHARING_OPEN_BUTTON);
 
 			default:
 				return this->Window::GetWidgetString(widget, stringid);
@@ -2226,6 +2276,10 @@ struct CompanyWindow : Window
 
 			case WID_C_VIEW_INFRASTRUCTURE:
 				ShowCompanyInfrastructure(this->window_number);
+				break;
+
+			case WID_C_POWER_SHARING:
+				Command<Commands::SetPowerSharing>::Post(!Company::Get(this->window_number)->power_sharing);
 				break;
 
 			case WID_C_GIVE_MONEY:

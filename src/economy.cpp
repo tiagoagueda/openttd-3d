@@ -667,6 +667,7 @@ static void CompaniesGenStatistics()
 			cost.AddCost(CanalMaintenanceCost(c->infrastructure.water));
 			cost.AddCost(StationMaintenanceCost(c->infrastructure.station));
 			cost.AddCost(AirportMaintenanceCost(c->index));
+			cost.AddCost(PowerMaintenanceCost(GetPowerInfrastructure(c->index)));
 
 			SubtractMoneyFromCompany(c->index, cost);
 		}
