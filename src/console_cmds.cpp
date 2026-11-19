@@ -562,7 +562,7 @@ static bool ConScrollToTile(std::span<std::string_view> argv)
 static bool ConPowerBuild(std::span<std::string_view> argv)
 {
 	if (argv.empty()) {
-		IConsolePrint(CC_HELP, "Build power lines for your company. Usage: 'power_build line <x1> <y1> <x2> <y2>', 'power_build pylon <x> <y>', 'power_build substation|usubstation|transition <x> <y>', 'power_build cable|removecable <x1> <y1> <x2> <y2>', 'power_build info', 'power_build fuel <industry> <amount>', 'power_build plant <industry type> <x> <y> [layout]', 'power_build riversteps', 'power_build share on|off', 'power_build company <id>|new'.");
+		IConsolePrint(CC_HELP, "Build power lines for your company. Usage: 'power_build line <x1> <y1> <x2> <y2>', 'power_build pylon <x> <y>', 'power_build substation|usubstation|transition <x> <y>', 'power_build cable|removecable <x1> <y1> <x2> <y2>', 'power_build info', 'power_build fuel <industry> <amount>', 'power_build plant <industry type> <x> <y> [layout]', 'power_build riversteps', 'power_build spans <x> <y>', 'power_build share on|off', 'power_build company <id>|new'.");
 		return true;
 	}
 	if (argv.size() == 2 && argv[1] == "info") {
@@ -668,6 +668,20 @@ static bool ConPowerBuild(std::span<std::string_view> argv)
 			IConsolePrint(CC_DEFAULT, "river step at {},{}, flowing along {}, {} wide from {},{}", TileX(tile), TileY(tile), DiagDirToAxis(down) == Axis::X ? "x" : "y", width, TileX(first), TileY(first));
 			if (++found == 10) break;
 		}
+		return true;
+	}
+	if (argv.size() == 4 && argv[1] == "spans") {
+		/* For tests: what the map stores for one tile. */
+		auto x = ParseInteger(argv[2], 0);
+		auto y = ParseInteger(argv[3], 0);
+		if (!x.has_value() || !y.has_value() || *x >= Map::SizeX() || *y >= Map::SizeY()) return false;
+		TileIndex tile = TileXY(*x, *y);
+		std::string spans;
+		if (IsPowerTile(tile)) {
+			for (Direction dir : EnumRange(Direction::End)) spans += fmt::format(" {}", GetPowerSpan(tile, dir));
+		}
+		IConsolePrint(CC_DEFAULT, "tile {},{}: height {} slope {} power tile {} spans{} wire {} wire height {}", *x, *y, TileHeight(tile), to_underlying(GetTileSlope(tile)),
+			IsPowerTile(tile), spans, HasPowerWire(tile), HasPowerWire(tile) ? GetPowerWireHeight(tile) : 0);
 		return true;
 	}
 	if ((argv.size() == 5 || argv.size() == 6) && argv[1] == "plant") {

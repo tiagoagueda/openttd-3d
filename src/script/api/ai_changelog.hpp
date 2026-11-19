@@ -19,6 +19,21 @@
  *
  * This version is not yet released. The following changes are not set in stone yet.
  *
+ * API additions of the power lines fork (not in upstream OpenTTD):
+ * \li AIPower
+ * \li AIError::ERR_CAT_POWER
+ * \li AIEventPowerNetworkShort
+ * \li AIEventIndustryPowered
+ * \li AIInfrastructure::INFRASTRUCTURE_POWER
+ * \li AIIndustry::IsPowerPlant
+ * \li AIIndustry::GetPowerDemand
+ * \li AIIndustry::GetPowerSupplied
+ * \li AIIndustry::IsOnPowerGrid
+ * \li AITown::GetPowerDemand
+ * \li AITown::GetPowerSupplied
+ * \li AICompany::EXPENSES_ENERGY_SALES
+ * \li AICompany::EXPENSES_ENERGY_FEES
+ *
  * \b 16.0
  *
  * API additions:

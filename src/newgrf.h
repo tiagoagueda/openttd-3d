@@ -141,6 +141,7 @@ struct GRFFile {
 	std::vector<std::unique_ptr<struct RoadStopSpec>> roadstops; ///< RoadStop definitions.
 
 	std::vector<uint32_t> param{}; ///< Parameters, initialised by GRFConfig.
+	bool energy_properties = false; ///< Asked for the 'energy_transport' feature, so it may use the fork-only energy properties of industries and houses.
 
 	std::vector<GRFLabel> labels{}; ///< List of labels
 

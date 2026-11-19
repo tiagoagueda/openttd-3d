@@ -397,3 +397,15 @@
 
 	return (ScriptTown::RoadLayout)((TownLayout)::Town::Get(town_id)->layout);
 }
+
+/* static */ SQInteger ScriptTown::GetPowerDemand(TownID town_id)
+{
+	if (!IsValidTown(town_id)) return -1;
+	return ::Town::Get(town_id)->power_demand;
+}
+
+/* static */ SQInteger ScriptTown::GetPowerSupplied(TownID town_id)
+{
+	if (!IsValidTown(town_id)) return -1;
+	return ::Town::Get(town_id)->power_supplied;
+}

@@ -184,13 +184,14 @@ static const StringID _low_house_names[] = {
 /**
  * Is a house low enough to stand under an overhead wire?
  * This must be the same on every computer in a game, so it cannot come from the graphics:
- * base game houses are listed by name, houses from NewGRFs count as tall.
+ * base game houses are listed by name, houses from NewGRFs count as tall unless their fork-only property 0x61 says otherwise.
  * @param house The house type.
  * @return True if it is low.
  */
 bool IsHouseLowForPowerWire(HouseID house)
 {
 	const HouseSpec *hs = HouseSpec::Get(house);
+	if (hs->power_height != 0) return hs->power_height == 1;
 	if (hs->grf_prop.HasGrfFile()) return false;
 	return std::ranges::find(_low_house_names, hs->building_name) != std::end(_low_house_names);
 }

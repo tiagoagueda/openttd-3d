@@ -357,8 +357,10 @@ static constexpr AllowedSubtags _tags_info[] = {
 };
 
 /** Action14 root tags */
+static bool SkipFeatureTest(ByteReader &buf);
 static constexpr AllowedSubtags _tags_root[] = {
 	AllowedSubtags{"INFO", std::make_pair(std::begin(_tags_info), std::end(_tags_info))},
+	AllowedSubtags{"FTST", SkipFeatureTest},
 };
 
 
@@ -473,6 +475,15 @@ static bool HandleNodes(ByteReader &buf, std::span<const AllowedSubtags> subtags
 }
 
 /**
+ * Callback function for 'FTST' while scanning the file: feature tests are done when the NewGRF is loaded into the game.
+ * @copydoc BranchHandler
+ */
+static bool SkipFeatureTest(ByteReader &buf)
+{
+	return SkipUnknownInfo(buf, 'C');
+}
+
+/**
  * Handle Action 0x14
  * @param buf Buffer.
  */
@@ -482,6 +493,125 @@ static void StaticGRFInfo(ByteReader &buf)
 	HandleNodes(buf, _tags_root);
 }
 
+/*
+ * Feature tests of this fork: 'FTST' nodes at the root of an Action 14.
+ * Each names a feature and the versions of it the NewGRF can use, and names a parameter that is set to 1 when this
+ * game has the feature and to 0 when not; the NewGRF then skips what needs the feature with an Action 7 on that
+ * parameter. Upstream OpenTTD skips the unknown node, so the parameter keeps its value there.
+ */
+
+/** A feature of this fork that NewGRFs can test for. */
+struct GRFFeatureInfo {
+	std::string_view name; ///< Name the NewGRF asks for.
+	uint16_t version; ///< Version this game has.
+	bool GRFFile::*flag; ///< What to set on the NewGRF when it asks for the feature and gets it, or nullptr.
+};
+
+/** Features NewGRFs can test for. */
+static const GRFFeatureInfo _grf_feature_list[] = {
+	{"energy_transport", 1, &GRFFile::energy_properties}, // Industry properties 0x60 to 0x64 and house properties 0x60 and 0x61.
+};
+
+/** The feature test being read. */
+static struct {
+	std::string name; ///< Feature name.
+	uint16_t min_version = 1; ///< Lowest version the NewGRF can use.
+	uint16_t max_version = UINT16_MAX; ///< Highest version the NewGRF can use.
+	uint8_t param = UINT8_MAX; ///< Parameter to set, or UINT8_MAX for none.
+} _cur_feature_test;
+
+/** Callback function for 'FTST'->'NAME': the feature. @copydoc TextHandler */
+static bool ChangeFeatureTestName(GRFLanguage, std::string_view str)
+{
+	_cur_feature_test.name = str;
+	return true;
+}
+
+/** Callback function for 'FTST'->'MINV' and 'FTST'->'MAXV'. */
+static bool ReadFeatureTestVersion(size_t len, ByteReader &buf, uint16_t &version)
+{
+	if (len != 2) {
+		GrfMsg(Severity::Warning, "FeatureTest: expected 2 bytes for a version but got {}, ignoring this field", len);
+		buf.Skip(len);
+	} else {
+		version = buf.ReadWord();
+	}
+	return true;
+}
+
+/** Callback function for 'FTST'->'MINV': the lowest version of the feature the NewGRF can use. @copydoc DataHandler */
+static bool ChangeFeatureTestMinVersion(size_t len, ByteReader &buf) { return ReadFeatureTestVersion(len, buf, _cur_feature_test.min_version); }
+
+/** Callback function for 'FTST'->'MAXV': the highest version of the feature the NewGRF can use. @copydoc DataHandler */
+static bool ChangeFeatureTestMaxVersion(size_t len, ByteReader &buf) { return ReadFeatureTestVersion(len, buf, _cur_feature_test.max_version); }
+
+/** Callback function for 'FTST'->'SETP': the parameter to set to the result. @copydoc DataHandler */
+static bool ChangeFeatureTestParam(size_t len, ByteReader &buf)
+{
+	if (len != 1) {
+		GrfMsg(Severity::Warning, "FeatureTest: expected 1 byte for 'FTST'->'SETP' but got {}, ignoring this field", len);
+		buf.Skip(len);
+	} else {
+		_cur_feature_test.param = buf.ReadByte();
+	}
+	return true;
+}
+
+/** Action14 feature test tags */
+static constexpr AllowedSubtags _tags_feature_test[] = {
+	AllowedSubtags{"NAME", ChangeFeatureTestName},
+	AllowedSubtags{"MINV", ChangeFeatureTestMinVersion},
+	AllowedSubtags{"MAXV", ChangeFeatureTestMaxVersion},
+	AllowedSubtags{"SETP", ChangeFeatureTestParam},
+};
+
+/**
+ * Callback function for 'FTST': read one feature test and give the NewGRF its result.
+ * @copydoc BranchHandler
+ */
+static bool HandleFeatureTest(ByteReader &buf)
+{
+	_cur_feature_test = {};
+	if (!HandleNodes(buf, _tags_feature_test)) return false;
+
+	bool present = false;
+	for (const GRFFeatureInfo &feature : _grf_feature_list) {
+		if (feature.name != _cur_feature_test.name) continue;
+		present = feature.version >= _cur_feature_test.min_version && feature.version <= _cur_feature_test.max_version;
+		if (present && feature.flag != nullptr) _cur_gps.grffile->*feature.flag = true;
+	}
+	GrfMsg(Severity::Info, "FeatureTest: feature '{}' {}", _cur_feature_test.name, present ? "present" : "absent");
+
+	uint8_t param = _cur_feature_test.param;
+	if (param != UINT8_MAX) {
+		if (param >= 0x80) {
+			GrfMsg(Severity::Warning, "FeatureTest: 'SETP' names parameter {:02X}, which cannot be set, ignoring it", param);
+		} else {
+			if (param >= std::size(_cur_gps.grffile->param)) _cur_gps.grffile->param.resize(param + 1);
+			_cur_gps.grffile->param[param] = present ? 1 : 0;
+		}
+	}
+	return true;
+}
+
+/**
+ * Handle Action 0x14 while the NewGRF is loaded into the game: only the feature tests, everything else was read when scanning the file.
+ * @param buf Buffer.
+ */
+static void FeatureTestGRFInfo(ByteReader &buf)
+{
+	uint8_t type = buf.ReadByte();
+	while (type != 0) {
+		NodeID id = buf.ReadLabel<NodeID>();
+		if (type == 'C' && id == NodeID{"FTST"}) {
+			if (!HandleFeatureTest(buf)) return;
+		} else if (!SkipUnknownInfo(buf, type)) {
+			return;
+		}
+		type = buf.ReadByte();
+	}
+}
+
 /** @copydoc GrfActionHandler::FileScan */
 template <> void GrfActionHandler<0x14>::FileScan(ByteReader &buf) { StaticGRFInfo(buf); }
 /** @copybrief GrfActionHandler::SafetyScan */
@@ -489,8 +619,8 @@ template <> void GrfActionHandler<0x14>::SafetyScan(ByteReader &) { }
 /** @copybrief GrfActionHandler::LabelScan */
 template <> void GrfActionHandler<0x14>::LabelScan(ByteReader &) { }
 /** @copybrief GrfActionHandler::Init */
-template <> void GrfActionHandler<0x14>::Init(ByteReader &) { }
+template <> void GrfActionHandler<0x14>::Init(ByteReader &buf) { FeatureTestGRFInfo(buf); }
 /** @copybrief GrfActionHandler::Reserve */
-template <> void GrfActionHandler<0x14>::Reserve(ByteReader &) { }
+template <> void GrfActionHandler<0x14>::Reserve(ByteReader &buf) { FeatureTestGRFInfo(buf); }
 /** @copybrief GrfActionHandler::Activation */
-template <> void GrfActionHandler<0x14>::Activation(ByteReader &) { }
+template <> void GrfActionHandler<0x14>::Activation(ByteReader &buf) { FeatureTestGRFInfo(buf); }

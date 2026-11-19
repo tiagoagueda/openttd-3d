@@ -289,6 +289,23 @@ static ChangeInfoResult IgnoreIndustryProperty(int prop, ByteReader &buf)
 			SkipBadgeList(buf);
 			break;
 
+		case 0x60: // Energy role (fork-only)
+			if (!_cur_gps.grffile->energy_properties) return ChangeInfoResult::Unknown;
+			buf.ReadByte();
+			break;
+
+		case 0x61: // Energy capacity (fork-only)
+		case 0x62: // Idle energy consumption (fork-only)
+		case 0x63: // Energy consumption per output (fork-only)
+			if (!_cur_gps.grffile->energy_properties) return ChangeInfoResult::Unknown;
+			buf.ReadWord();
+			break;
+
+		case 0x64: // Fuel cargoes and their yield (fork-only)
+			if (!_cur_gps.grffile->energy_properties) return ChangeInfoResult::Unknown;
+			buf.Skip(buf.ReadByte() * 6);
+			break;
+
 		default:
 			ret = ChangeInfoResult::Unknown;
 			break;
@@ -697,6 +714,45 @@ static ChangeInfoResult IndustriesChangeInfo(uint first, uint last, int prop, By
 			case 0x29: // Badge list
 				indsp->badges = ReadBadgeList(buf, GrfSpecFeature::Industries);
 				break;
+
+			/* Fork-only energy properties, for NewGRFs that asked for the 'energy_transport' feature. */
+			case 0x60: { // Energy role
+				if (!_cur_gps.grffile->energy_properties) return ChangeInfoResult::Unknown;
+				uint8_t role = buf.ReadByte();
+				if (role >= to_underlying(IndustryPowerRole::End)) {
+					GrfMsg(Severity::Warning, "IndustriesChangeInfo: Unknown energy role {} for industry {}, ignoring", role, id);
+					break;
+				}
+				indsp->power.role = static_cast<IndustryPowerRole>(role);
+				break;
+			}
+
+			case 0x61: // Energy capacity of a plant
+				if (!_cur_gps.grffile->energy_properties) return ChangeInfoResult::Unknown;
+				indsp->power.capacity = buf.ReadWord();
+				break;
+
+			case 0x62: // Idle energy consumption
+				if (!_cur_gps.grffile->energy_properties) return ChangeInfoResult::Unknown;
+				indsp->power.idle = buf.ReadWord();
+				break;
+
+			case 0x63: // Energy consumption per 100 units of output
+				if (!_cur_gps.grffile->energy_properties) return ChangeInfoResult::Unknown;
+				indsp->power.per_100 = buf.ReadWord();
+				break;
+
+			case 0x64: { // Fuel cargoes and their yield
+				if (!_cur_gps.grffile->energy_properties) return ChangeInfoResult::Unknown;
+				uint8_t count = buf.ReadByte();
+				indsp->power.fuel.clear();
+				for (uint8_t j = 0; j < count; j++) {
+					CargoLabel label = buf.ReadLabel<CargoLabel>();
+					uint16_t yield = buf.ReadWord();
+					indsp->power.fuel.emplace_back(label, yield);
+				}
+				break;
+			}
 
 			default:
 				ret = ChangeInfoResult::Unknown;

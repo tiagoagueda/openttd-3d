@@ -192,6 +192,7 @@ add_files(
     script_objecttype.hpp
     script_objecttypelist.hpp
     script_order.hpp
+    script_power.hpp
     script_priorityqueue.hpp
     script_rail.hpp
     script_railtypelist.hpp
@@ -265,6 +266,7 @@ add_files(
     script_objecttype.cpp
     script_objecttypelist.cpp
     script_order.cpp
+    script_power.cpp
     script_priorityqueue.cpp
     script_rail.cpp
     script_railtypelist.cpp

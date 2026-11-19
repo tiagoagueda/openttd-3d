@@ -132,6 +132,8 @@ struct HouseSpec {
 	std::vector<BadgeID> badges;
 
 	CargoLabel accepts_cargo_label[HOUSE_ORIGINAL_NUM_ACCEPTS]; ///< input landscape cargo slots
+	uint8_t power_idle = 0xFF; ///< Energy the building needs besides its people, in tenths of MW; 0xFF for the built-in 0.1 MW (fork-only NewGRF property 0x60).
+	uint8_t power_height = 0; ///< Whether overhead wires may pass over it: 0 built-in rule, 1 low (they may), 2 tall (fork-only NewGRF property 0x61).
 
 	HouseID Index() const;
 	Money GetRemovalCost() const;

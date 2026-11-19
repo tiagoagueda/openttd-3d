@@ -19,6 +19,21 @@
  *
  * This version is not yet released. The following changes are not set in stone yet.
  *
+ * API additions of the power lines fork (not in upstream OpenTTD):
+ * \li GSPower
+ * \li GSError::ERR_CAT_POWER
+ * \li GSEventPowerNetworkShort
+ * \li GSEventIndustryPowered
+ * \li GSInfrastructure::INFRASTRUCTURE_POWER
+ * \li GSIndustry::IsPowerPlant
+ * \li GSIndustry::GetPowerDemand
+ * \li GSIndustry::GetPowerSupplied
+ * \li GSIndustry::IsOnPowerGrid
+ * \li GSTown::GetPowerDemand
+ * \li GSTown::GetPowerSupplied
+ * \li GSCompany::EXPENSES_ENERGY_SALES
+ * \li GSCompany::EXPENSES_ENERGY_FEES
+ *
  * \b 16.0
  *
  * API additions:

@@ -26,12 +26,16 @@
 #include "newgrf_industries.h"
 #include "timer/timer_game_calendar.h"
 #include "core/math_func.hpp"
+#include "ai/ai.hpp"
+#include "game/game.hpp"
+#include "script/api/script_event_types.hpp"
 #ifdef WITH_VIEWPORT3D
 #	include "viewport3d/view3d_gui.h"
 #endif
 
 #include <map>
 #include <queue>
+#include <set>
 
 #include "safeguards.h"
 
@@ -59,13 +63,19 @@ struct PowerIndustryRole {
 
 /**
  * Energy in a unit of fuel delivered to a power plant.
+ * @param type The industry type of the plant.
  * @param cargo The cargo.
- * @return Energy units (tenths of MW for one step) in one unit of the cargo, or 0 if it is no fuel.
+ * @return Energy units (tenths of MW for one step) in one unit of the cargo, or 0 if it is no fuel of this plant.
  */
-static uint GetPowerFuelYield(CargoType cargo)
+static uint GetPowerFuelYield(IndustryType type, CargoType cargo)
 {
 	if (!IsValidCargoType(cargo)) return 0;
 	const CargoSpec *cs = CargoSpec::Get(cargo);
+	const IndustryPowerSpec &spec = GetIndustrySpec(type)->power;
+	if (!spec.fuel.empty()) {
+		auto it = std::ranges::find(spec.fuel, cs->label, &std::pair<CargoLabel, uint16_t>::first);
+		return it == spec.fuel.end() ? 0 : it->second * POWER_STEPS_PER_MONTH_100 / 100;
+	}
 	/* A tonne of coal gives 2 MW for a month; a thousand litres of oil 3 MW. */
 	if (cs->label == CT_COAL) return 20 * POWER_STEPS_PER_MONTH_100 / 100;
 	if (cs->label == CT_OIL) return 30 * POWER_STEPS_PER_MONTH_100 / 100;
@@ -74,13 +84,16 @@ static uint GetPowerFuelYield(CargoType cargo)
 
 /**
  * Find what an industry does with energy.
- * An industry that accepts coal or oil and produces nothing is a fuel power plant; every other industry is a consumer.
+ * A NewGRF can say so through the properties of its industry type. Otherwise an industry that accepts coal or oil
+ * and produces nothing is a fuel power plant, and every other industry is a consumer.
  * @param i The industry.
  * @return Its role.
  */
 static PowerIndustryRole GetPowerIndustryRole(const Industry *i)
 {
 	PowerIndustryRole role;
+	const IndustrySpec *indspec = GetIndustrySpec(i->type);
+	const IndustryPowerSpec &spec = indspec->power;
 	PowerPlantSource source = GetPowerPlantSource(i->type);
 	if (source != PowerPlantSource::Fuel) {
 		role.plant = true;
@@ -88,7 +101,9 @@ static PowerIndustryRole GetPowerIndustryRole(const Industry *i)
 		/* 120 MW for a solar plant at a clear noon, 30 MW for each wind turbine, 80 MW for each tile of dam at normal flow. */
 		uint per_tile = source == PowerPlantSource::Wind ? 300 : 800;
 		IndustryGfx counted = source == PowerPlantSource::Wind ? GFX_WIND_TURBINE : GFX_HYDRO_DAM_X;
-		if (source == PowerPlantSource::Solar) {
+		if (spec.capacity.has_value()) {
+			role.capacity = *spec.capacity;
+		} else if (source == PowerPlantSource::Solar || i->type >= NEW_INDUSTRYOFFSET || indspec->grf_prop.HasGrfFile()) {
 			role.capacity = 1200;
 		} else {
 			for (TileIndex tile : i->location) {
@@ -101,20 +116,29 @@ static PowerIndustryRole GetPowerIndustryRole(const Industry *i)
 	}
 
 	bool produces = std::ranges::any_of(i->produced, [](const auto &p) { return IsValidCargoType(p.cargo); });
-	if (!produces) {
+	if (spec.role == IndustryPowerRole::FuelPlant) {
+		role.plant = true;
+		role.capacity = spec.capacity.value_or(6000);
+		return role;
+	}
+	if (spec.role == IndustryPowerRole::Default && !produces) {
 		for (const auto &a : i->accepted) {
 			if (!IsValidCargoType(a.cargo)) continue;
 			const CargoSpec *cs = CargoSpec::Get(a.cargo);
+			if (!spec.fuel.empty()) {
+				if (GetPowerFuelYield(i->type, a.cargo) != 0) role.capacity = 6000;
+				continue;
+			}
 			if (cs->label == CT_COAL) role.capacity = std::max<uint>(role.capacity, 6000);
 			if (cs->label == CT_OIL) role.capacity = std::max<uint>(role.capacity, 4500);
 		}
 		if (role.capacity != 0) {
 			role.plant = true;
+			if (spec.capacity.has_value()) role.capacity = *spec.capacity;
 			return role;
 		}
 	}
 
-	const IndustrySpec *indspec = GetIndustrySpec(i->type);
 	if (!produces) {
 		role.idle = 30;
 	} else if (indspec->life_type.Test(IndustryLifeType::Processing)) {
@@ -127,6 +151,8 @@ static PowerIndustryRole GetPowerIndustryRole(const Industry *i)
 		role.idle = 20;
 		role.per_100 = 40;
 	}
+	if (spec.idle.has_value()) role.idle = *spec.idle;
+	if (spec.per_100.has_value()) role.per_100 = *spec.per_100;
 	return role;
 }
 
@@ -204,7 +230,7 @@ uint ApplyTownPowerGrowthBonus(const Town *t, uint ticks)
  */
 void AddPowerPlantFuel(Industry *i, CargoType cargo, uint amount)
 {
-	uint yield = GetPowerFuelYield(cargo);
+	uint yield = GetPowerFuelYield(i->type, cargo);
 	if (yield == 0 || amount == 0) return;
 	PowerIndustryRole role = GetPowerIndustryRole(i);
 	if (!role.plant) return;
@@ -226,6 +252,13 @@ bool IsPowerPlant(const Industry *i)
  */
 PowerPlantSource GetPowerPlantSource(IndustryType type)
 {
+	switch (GetIndustrySpec(type)->power.role) {
+		case IndustryPowerRole::Solar: return PowerPlantSource::Solar;
+		case IndustryPowerRole::Wind: return PowerPlantSource::Wind;
+		case IndustryPowerRole::Hydro: return PowerPlantSource::Hydro;
+		case IndustryPowerRole::Default: break;
+		default: return PowerPlantSource::Fuel;
+	}
 	/* A NewGRF that takes over one of these types decides itself what it is. */
 	if (type >= NEW_INDUSTRYOFFSET || GetIndustrySpec(type)->grf_prop.HasGrfFile()) return PowerPlantSource::Fuel;
 	switch (type) {
@@ -309,6 +342,7 @@ static constexpr uint POWER_UNDERGROUND_SUBSTATION_CAPACITY = 1500;
 static std::vector<bool> _power_industry_on_grid; ///< Whether a substation or a plant connection covered each industry in the last balancing step.
 static std::vector<PowerTileFigures> _power_figures; ///< What each substation did in the last balancing step, by index into the substations.
 static std::vector<PowerNetworkFigures> _power_network_figures; ///< Totals of each network in the last balancing step.
+static std::set<TileIndex> _power_short_networks; ///< First substation of each network that was short of energy in the last balancing step.
 
 /** What a company owes another for carrying its energy between two substations. */
 struct PowerFee {
@@ -664,7 +698,7 @@ static bool AreStreetLampsOn()
 }
 
 /**
- * Demand of a building, in tenths of MW: 0.1 MW idle, 1 MW per 100 inhabitants with up to 10% more while the
+ * Demand of a building, in tenths of MW: 0.1 MW idle (or what a NewGRF sets), 1 MW per 100 inhabitants with up to 10% more while the
  * town grows, and 0.5 MW while it is being built.
  * @param tile Northern tile of the building.
  * @return The demand.
@@ -672,8 +706,10 @@ static bool AreStreetLampsOn()
 static uint GetHousePowerDemand(TileIndex tile)
 {
 	if (!IsHouseCompleted(tile)) return 5;
-	if (AreStreetLampsOn()) return 2 + GetHousePopulationPowerDemand(tile);
-	return 1 + GetHousePopulationPowerDemand(tile);
+	uint8_t idle = HouseSpec::Get(GetHouseType(tile))->power_idle;
+	uint demand = idle == 0xFF ? 1 : idle;
+	if (AreStreetLampsOn()) demand++;
+	return demand + GetHousePopulationPowerDemand(tile);
 }
 
 /**
@@ -732,7 +768,9 @@ static void BalancePower()
 	/* Start from nothing; uncovered consumers still show what they would need. */
 	std::vector<PowerIndustryRole> roles(Industry::GetPoolSize());
 	std::vector<uint> amount(Industry::GetPoolSize(), 0);
+	std::vector<bool> had_power(Industry::GetPoolSize(), false);
 	for (Industry *i : Industry::Iterate()) {
+		had_power[i->index.base()] = i->power_supplied != 0;
 		roles[i->index.base()] = GetPowerIndustryRole(i);
 		amount[i->index.base()] = GetIndustryPowerAmount(i, roles[i->index.base()]);
 		i->power_demand = static_cast<uint16_t>(std::min<uint>(UINT16_MAX, amount[i->index.base()]));
@@ -744,7 +782,10 @@ static void BalancePower()
 		t->power_covered = false;
 	}
 	_power_industry_on_grid.assign(Industry::GetPoolSize(), false);
-	if (_power_substations.empty()) return;
+	if (_power_substations.empty()) {
+		_power_short_networks.clear();
+		return;
+	}
 
 	/* What each substation covers; consumers and plants covered by several substations are shared evenly between them. */
 	uint radius = _settings_game.economy.power_catchment;
@@ -848,6 +889,13 @@ static void BalancePower()
 		}
 	}
 
+	/* Tell the scripts about consumers that get energy now. */
+	for (const Industry *i : Industry::Iterate()) {
+		if (roles[i->index.base()].plant || had_power[i->index.base()] || i->power_supplied == 0) continue;
+		AI::BroadcastNewEvent(new ScriptEventIndustryPowered(i->index));
+		Game::NewEvent(new ScriptEventIndustryPowered(i->index));
+	}
+
 	/* Remember what happened, for the windows and the status lights. */
 	std::ranges::fill(_power_network_figures, PowerNetworkFigures{});
 	std::vector<bool> has_plants(_power_network_figures.size(), false), has_consumers(_power_network_figures.size(), false);
@@ -885,6 +933,30 @@ static void BalancePower()
 #endif
 		}
 	}
+
+	/* Tell the scripts about networks whose consumers newly get less than nine tenths of what they need.
+	 * A network is known by its first substation, which stays the same while the network is rebuilt. */
+	std::set<TileIndex> short_networks;
+	std::vector<bool> network_seen(_power_network_figures.size(), false);
+	for (uint s = 0; s < _power_substations.size(); s++) {
+		uint network = _power_substations[s].network;
+		if (network_seen[network]) continue;
+		network_seen[network] = true;
+		const PowerNetworkFigures &n = _power_network_figures[network];
+		if (!n.connected || n.demand == 0 || static_cast<uint64_t>(n.received) * 10 >= static_cast<uint64_t>(n.demand) * 9) continue;
+		TileIndex tile = _power_substations[s].tile;
+		short_networks.insert(tile);
+		if (_power_short_networks.contains(tile)) continue;
+		std::set<Owner> owners;
+		for (const PowerSubstation &sub : _power_substations) {
+			if (sub.network == network) owners.insert(GetTileOwner(sub.tile));
+		}
+		for (Owner owner : owners) {
+			if (Company::IsValidID(owner)) AI::NewEvent(owner, new ScriptEventPowerNetworkShort(tile, n.supply, n.demand, n.received));
+		}
+		Game::NewEvent(new ScriptEventPowerNetworkShort(tile, n.supply, n.demand, n.received));
+	}
+	_power_short_networks = std::move(short_networks);
 
 	/* Pay the owners of the substations that took the energy from the plants. */
 	std::map<Owner, uint64_t> income;

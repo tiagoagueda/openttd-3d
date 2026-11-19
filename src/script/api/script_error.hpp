@@ -111,6 +111,7 @@ public:
 		ERR_CAT_MARINE,   ///< Error messages related to building / removing ships, docks and channels.
 		ERR_CAT_WAYPOINT, ///< Error messages related to building / maintaining waypoints.
 		ERR_CAT_DEPOT,    ///< Error messages related to managing depots.
+		ERR_CAT_POWER,    ///< Error messages related to building / removing power lines.
 
 		/**
 		 * DO NOT USE! The error bitsize determines how many errors can be stored in

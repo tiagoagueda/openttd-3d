@@ -14,6 +14,7 @@
 #include "../../road_func.h"
 #include "../../water.h"
 #include "../../station_func.h"
+#include "../../power_func.h"
 
 #include "../../safeguards.h"
 
@@ -58,6 +59,11 @@
 
 		case INFRASTRUCTURE_AIRPORT:
 			return c->infrastructure.airport;
+
+		case INFRASTRUCTURE_POWER: {
+			const PowerInfrastructure &power = GetPowerInfrastructure(c->index);
+			return power.pylons + power.substations + power.wire + power.cable;
+		}
 
 		default:
 			return 0;
@@ -119,6 +125,9 @@
 
 		case INFRASTRUCTURE_AIRPORT:
 			return AirportMaintenanceCost(c->index);
+
+		case INFRASTRUCTURE_POWER:
+			return PowerMaintenanceCost(GetPowerInfrastructure(c->index));
 
 		default:
 			return 0;

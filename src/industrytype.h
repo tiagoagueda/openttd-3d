@@ -103,6 +103,26 @@ struct IndustryTileLayoutTile {
 /** A complete tile layout for an industry is a list of tiles */
 using IndustryTileLayout = std::vector<IndustryTileLayoutTile>;
 
+/** What an industry type does with energy, as a NewGRF sets it (fork-only property 0x60). */
+enum class IndustryPowerRole : uint8_t {
+	Default = 0, ///< The built-in rule: base types by their table, others a fuel plant when they accept coal or oil and make nothing.
+	Consumer = 1, ///< Takes energy from the grid.
+	FuelPlant = 2, ///< Burns delivered fuel.
+	Solar = 3, ///< Driven by the sun.
+	Wind = 4, ///< Driven by the wind.
+	Hydro = 5, ///< Driven by the river flow.
+	End, ///< End marker.
+};
+
+/** Energy properties of an industry type, set by fork-only NewGRF properties 0x60 to 0x64; unset ones keep the built-in rules. */
+struct IndustryPowerSpec {
+	IndustryPowerRole role = IndustryPowerRole::Default; ///< What it does with energy.
+	std::optional<uint16_t> capacity; ///< Plants: highest output of the whole plant, in tenths of MW.
+	std::optional<uint16_t> idle; ///< Consumers: demand when making nothing, in tenths of MW.
+	std::optional<uint16_t> per_100; ///< Consumers: extra demand for every 100 units made last month, in tenths of MW.
+	std::vector<std::pair<CargoLabel, uint16_t>> fuel; ///< Fuel plants: accepted fuels, each with the tenths of MW one unit gives for a month.
+};
+
 /**
  * Defines the data structure for constructing industry.
  */
@@ -143,6 +163,7 @@ struct IndustrySpec {
 
 	std::array<std::variant<CargoLabel, MixedCargoType>, INDUSTRY_ORIGINAL_NUM_OUTPUTS> produced_cargo_label; ///< Cargo labels of produced cargo for default industries.
 	std::array<std::variant<CargoLabel, MixedCargoType>, INDUSTRY_ORIGINAL_NUM_INPUTS> accepts_cargo_label; ///< Cargo labels of accepted cargo for default industries.
+	IndustryPowerSpec power{}; ///< Energy properties set by a NewGRF.
 
 	bool IsRawIndustry() const;
 	bool IsProcessingIndustry() const;

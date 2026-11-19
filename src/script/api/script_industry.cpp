@@ -19,6 +19,7 @@
 #include "../../strings_func.h"
 #include "../../newgrf_industries.h"
 #include "../../industry_cmd.h"
+#include "../../power_func.h"
 
 #include "table/strings.h"
 
@@ -310,4 +311,28 @@
 	EnforcePrecondition(false, prod_level >= PRODLEVEL_MINIMUM && prod_level <= PRODLEVEL_MAXIMUM);
 
 	return ScriptObject::Command<Commands::IndustrySetProduction>::Do(industry_id, prod_level, show_news, custom_news != nullptr ? custom_news->GetEncodedText() : EncodedString{});
+}
+
+/* static */ bool ScriptIndustry::IsPowerPlant(IndustryID industry_id)
+{
+	if (!IsValidIndustry(industry_id)) return false;
+	return ::IsPowerPlant(::Industry::Get(industry_id));
+}
+
+/* static */ SQInteger ScriptIndustry::GetPowerDemand(IndustryID industry_id)
+{
+	if (!IsValidIndustry(industry_id)) return -1;
+	return ::Industry::Get(industry_id)->power_demand;
+}
+
+/* static */ SQInteger ScriptIndustry::GetPowerSupplied(IndustryID industry_id)
+{
+	if (!IsValidIndustry(industry_id)) return -1;
+	return ::Industry::Get(industry_id)->power_supplied;
+}
+
+/* static */ bool ScriptIndustry::IsOnPowerGrid(IndustryID industry_id)
+{
+	if (!IsValidIndustry(industry_id)) return false;
+	return ::IsIndustryOnPowerGrid(::Industry::Get(industry_id));
 }

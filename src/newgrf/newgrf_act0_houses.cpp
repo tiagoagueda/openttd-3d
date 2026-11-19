@@ -78,6 +78,12 @@ static ChangeInfoResult IgnoreTownHouseProperty(int prop, ByteReader &buf)
 			buf.Skip(buf.ReadByte() * 2);
 			break;
 
+		case 0x60: // Idle energy consumption (fork-only)
+		case 0x61: // Height class under power lines (fork-only)
+			if (!_cur_gps.grffile->energy_properties) return ChangeInfoResult::Unknown;
+			buf.ReadByte();
+			break;
+
 		default:
 			ret = ChangeInfoResult::Unknown;
 			break;
@@ -345,6 +351,19 @@ static ChangeInfoResult TownHouseChangeInfo(uint first, uint last, int prop, Byt
 			case 0x24: // Badge list
 				housespec->badges = ReadBadgeList(buf, GrfSpecFeature::Houses);
 				break;
+
+			/* Fork-only energy properties, for NewGRFs that asked for the 'energy_transport' feature. */
+			case 0x60: // Idle energy consumption, in tenths of MW
+				if (!_cur_gps.grffile->energy_properties) return ChangeInfoResult::Unknown;
+				housespec->power_idle = buf.ReadByte();
+				break;
+
+			case 0x61: { // Height class under power lines: 0 built-in rule, 1 low, 2 tall
+				if (!_cur_gps.grffile->energy_properties) return ChangeInfoResult::Unknown;
+				uint8_t height = buf.ReadByte();
+				housespec->power_height = height <= 2 ? height : 0;
+				break;
+			}
 
 			default:
 				ret = ChangeInfoResult::Unknown;

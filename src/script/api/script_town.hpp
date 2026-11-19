@@ -483,6 +483,22 @@ public:
 	 * @return The RoadLayout for the town.
 	 */
 	static RoadLayout GetRoadLayout(TownID town_id);
+
+	/**
+	 * Get the energy all houses of a town need from the power grid.
+	 * @param town_id The index of the town.
+	 * @pre IsValidTown(town_id).
+	 * @return The energy, in tenths of MW, or -1 if the town is not valid.
+	 */
+	static SQInteger GetPowerDemand(TownID town_id);
+
+	/**
+	 * Get the energy the houses of a town got from the power grid in the last balancing step.
+	 * @param town_id The index of the town.
+	 * @pre IsValidTown(town_id).
+	 * @return The energy, in tenths of MW, or -1 if the town is not valid.
+	 */
+	static SQInteger GetPowerSupplied(TownID town_id);
 };
 
 #endif /* SCRIPT_TOWN_HPP */

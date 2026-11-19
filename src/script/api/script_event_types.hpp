@@ -1432,4 +1432,98 @@ private:
 	std::string new_name; ///< The new name of the president.
 };
 
+/**
+ * Event Power Network Short, indicating that the consumers of a power network get much less energy than they need.
+ * It is sent once when that starts, to the companies with a substation in the network, and to the game script.
+ * @api ai game
+ */
+class ScriptEventPowerNetworkShort : public ScriptEvent {
+public:
+#ifndef DOXYGEN_API
+	/**
+	 * @param tile A substation of the network.
+	 * @param supply What the plants of the network can give, in tenths of MW.
+	 * @param demand What the consumers of the network need, in tenths of MW.
+	 * @param received What arrived at the consumers, in tenths of MW.
+	 */
+	ScriptEventPowerNetworkShort(TileIndex tile, uint supply, uint demand, uint received) :
+		ScriptEvent(ET_POWER_NETWORK_SHORT),
+		tile(tile),
+		supply(supply),
+		demand(demand),
+		received(received)
+	{}
+#endif /* DOXYGEN_API */
+
+	/**
+	 * Convert an ScriptEvent to the real instance.
+	 * @param instance The instance to convert.
+	 * @return The converted instance.
+	 */
+	static ScriptEventPowerNetworkShort *Convert(ScriptEvent *instance) { return dynamic_cast<ScriptEventPowerNetworkShort *>(instance); }
+
+	/**
+	 * Get a substation of the network; use it with the network functions of ScriptPower.
+	 * @return The tile of the substation.
+	 */
+	TileIndex GetTile() const { return this->tile; }
+
+	/**
+	 * Get what the plants of the network could give.
+	 * @return The supply, in tenths of MW.
+	 */
+	SQInteger GetSupply() const { return this->supply; }
+
+	/**
+	 * Get what the consumers of the network needed.
+	 * @return The demand, in tenths of MW.
+	 */
+	SQInteger GetDemand() const { return this->demand; }
+
+	/**
+	 * Get what arrived at the consumers of the network.
+	 * @return The energy, in tenths of MW.
+	 */
+	SQInteger GetReceived() const { return this->received; }
+
+private:
+	TileIndex tile; ///< A substation of the network.
+	uint supply; ///< What the plants can give.
+	uint demand; ///< What the consumers need.
+	uint received; ///< What arrived at the consumers.
+};
+
+/**
+ * Event Industry Powered, indicating that an industry gets energy from the power grid, where it got none before.
+ * @api ai game
+ */
+class ScriptEventIndustryPowered : public ScriptEvent {
+public:
+#ifndef DOXYGEN_API
+	/**
+	 * @param industry_id The industry.
+	 */
+	ScriptEventIndustryPowered(IndustryID industry_id) :
+		ScriptEvent(ET_INDUSTRY_POWERED),
+		industry_id(industry_id)
+	{}
+#endif /* DOXYGEN_API */
+
+	/**
+	 * Convert an ScriptEvent to the real instance.
+	 * @param instance The instance to convert.
+	 * @return The converted instance.
+	 */
+	static ScriptEventIndustryPowered *Convert(ScriptEvent *instance) { return dynamic_cast<ScriptEventIndustryPowered *>(instance); }
+
+	/**
+	 * Get the IndustryID of the industry that gets energy.
+	 * @return The IndustryID of the industry.
+	 */
+	IndustryID GetIndustryID() const { return this->industry_id; }
+
+private:
+	IndustryID industry_id; ///< The industry that gets energy.
+};
+
 #endif /* SCRIPT_EVENT_TYPES_HPP */

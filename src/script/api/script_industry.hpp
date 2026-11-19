@@ -356,6 +356,38 @@ public:
 	 * @api -ai
 	 */
 	static bool SetProductionLevel(IndustryID industry_id, SQInteger prod_level, bool show_news, Text *custom_news);
+
+	/**
+	 * Check whether an industry is a power plant, feeding the power grid.
+	 * @param industry_id The index of the industry.
+	 * @pre IsValidIndustry(industry_id).
+	 * @return True if and only if the industry is a power plant.
+	 */
+	static bool IsPowerPlant(IndustryID industry_id);
+
+	/**
+	 * Get the energy an industry needs from the power grid or, for a power plant, can give to it.
+	 * @param industry_id The index of the industry.
+	 * @pre IsValidIndustry(industry_id).
+	 * @return The energy, in tenths of MW, or -1 if the industry is not valid.
+	 */
+	static SQInteger GetPowerDemand(IndustryID industry_id);
+
+	/**
+	 * Get the energy an industry got from the power grid or, for a power plant, sold to it, in the last balancing step.
+	 * @param industry_id The index of the industry.
+	 * @pre IsValidIndustry(industry_id).
+	 * @return The energy, in tenths of MW, or -1 if the industry is not valid.
+	 */
+	static SQInteger GetPowerSupplied(IndustryID industry_id);
+
+	/**
+	 * Check whether an industry is covered by a substation, or joined to the grid by a pylon next to it.
+	 * @param industry_id The index of the industry.
+	 * @pre IsValidIndustry(industry_id).
+	 * @return True if and only if the industry is on the power grid.
+	 */
+	static bool IsOnPowerGrid(IndustryID industry_id);
 };
 
 #endif /* SCRIPT_INDUSTRY_HPP */

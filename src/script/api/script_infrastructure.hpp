@@ -27,6 +27,7 @@ public:
 		INFRASTRUCTURE_CANAL,   ///< Canal infrastructure.
 		INFRASTRUCTURE_STATION, ///< Station infrastructure.
 		INFRASTRUCTURE_AIRPORT, ///< Airport infrastructure.
+		INFRASTRUCTURE_POWER,   ///< Power line infrastructure: pylons, substations, tiles of overhead wire and of underground cable.
 	};
 
 	/**

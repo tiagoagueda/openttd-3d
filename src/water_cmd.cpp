@@ -1185,6 +1185,10 @@ FloodingBehaviour GetFloodingBehaviour(TileIndex tile)
 		case TileType::Object:
 			return GetWaterClass(tile) == WaterClass::Sea ? FloodingBehaviour::Active : FloodingBehaviour::None;
 
+		case TileType::Power:
+			/* A pylon standing in the sea passes the flood on, like a buoy. */
+			return HasTileWaterClass(tile) && GetWaterClass(tile) == WaterClass::Sea ? FloodingBehaviour::Active : FloodingBehaviour::None;
+
 		case TileType::Railway:
 			if (GetRailGroundType(tile) == RailGroundType::HalfTileWater) {
 				return IsSlopeWithOneCornerRaised(GetTileSlope(tile)) ? FloodingBehaviour::Active : FloodingBehaviour::DryOut;
@@ -1344,6 +1348,8 @@ void TileLoop_Water(TileIndex tile)
 
 				/* Buoys and docks cannot be flooded, and when removed turn into flooding water. */
 				if (IsTileType(dest, TileType::Station) && (IsBuoy(dest) || IsDock(dest))) continue;
+				/* Neither can pylons standing in water. */
+				if (IsTileType(dest, TileType::Power) && HasTileWaterClass(dest) && GetWaterClass(dest) != WaterClass::Invalid) continue;
 
 				/* This neighbour tile might be floodable later if the tile is cleared, so allow flooding to continue. */
 				continue_flooding = true;

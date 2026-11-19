@@ -228,3 +228,74 @@ Changes after Tiago's first real play test of the energy branch.
 * **Savegame.** Version `PowerSharing` (372): the sharing switch, and a 15th kind of yearly expenses (older savegames have their expenses moved into place).
 * **Tests.** `power_build share on|off`, `power_build company <id>|new` (single player: play as another company or start one), and `power_build info` now lists the substations of each company with their network, status and flow, and the company's fees, power infrastructure and upkeep.
 * The plant timeline (hydro 1920, oil 1950, wind 1985, solar 1995) and bankruptcy (power tiles removed) were already in place from phases 3-5.
+
+## Phase 7: scripts and NewGRF
+
+### Script API (AI and game scripts)
+
+New class **`ScriptPower`** (`AIPower` / `GSPower`). Energy is counted in tenths of MW, as everywhere else.
+
+* Tiles: `IsPowerTile`, `GetPowerTileType` (`PT_PYLON`, `PT_TRANSITION_PYLON`, `PT_SUBSTATION`, `PT_UNDERGROUND_SUBSTATION`), `HasWire`, `HasCable`, `GetWireOwner`, `GetCableOwner`, `GetMaxSpan`.
+* Building, in company mode: `BuildPylon`, `BuildTransitionPylon`, `BuildSubstation`, `BuildUndergroundSubstation`, `BuildLine(start, end)` (pylons placed as the line tool places them), `RemoveLine`, `BuildCable`, `RemoveCable`, `RemovePowerTile`.
+* Figures of the last balancing step: `IsPlantLink`, `GetSubstationStatus` (`SS_FLOWING`, `SS_IDLE`, `SS_UNCONNECTED`), `GetSubstationSent`, `GetSubstationReceived`, `GetSubstationCapacity`, and for the whole network of a substation `GetNetworkSupply`, `GetNetworkDemand`, `GetNetworkReceived`.
+* Sharing: `IsSharing(company)`, `SetSharing(bool)`.
+* Errors: a new category `ERR_CAT_POWER` with `ERR_POWER_LINE_IN_THE_WAY`, `ERR_POWER_BRIDGE_IN_THE_WAY`, `ERR_POWER_LINES_CANNOT_CROSS`, `ERR_POWER_LINES_JOIN_ONLY_AT_PYLONS`, `ERR_POWER_LINE_OVER_AIRPORT_OR_INDUSTRY`, `ERR_POWER_LINE_STRUCTURE_TOO_TALL`, `ERR_POWER_LINE_TOO_LOW`, `ERR_POWER_PYLON_UNDER_WIRE`, `ERR_POWER_PYLON_NEEDS_OPEN_LAND`, `ERR_POWER_PYLONS_HEIGHT_DIFFERENCE`, `ERR_POWER_CABLE_OWNED_BY_OTHER`.
+
+Other classes:
+
+* `ScriptInfrastructure::INFRASTRUCTURE_POWER`: pieces (pylons, substations, tiles of wire and of cable) and monthly upkeep.
+* `ScriptIndustry::IsPowerPlant`, `GetPowerDemand` (what a consumer needs or a plant can give), `GetPowerSupplied` (what it got or sold), `IsOnPowerGrid`.
+* `ScriptTown::GetPowerDemand`, `GetPowerSupplied`.
+* `ScriptCompany::EXPENSES_ENERGY_SALES`, `EXPENSES_ENERGY_FEES` (from phases 3 and 6).
+
+Events:
+
+* **`ScriptEventIndustryPowered`** (`ET_INDUSTRY_POWERED`): a consumer industry gets energy, where it got none in the step before. Sent to every AI and to the game script.
+* **`ScriptEventPowerNetworkShort`** (`ET_POWER_NETWORK_SHORT`): the consumers of a network newly get less than nine tenths of what they need. `GetTile` gives a substation of the network (its first one, by tile index), with `GetSupply`, `GetDemand` and `GetReceived`. Sent once when the shortage starts, to the AIs of the companies with a substation in the network and to the game script. Which networks were short is not saved, so after loading a game a network that is still short is announced again.
+
+The additions are listed in the AI and game script changelogs as fork-only. A test game script is in `docs/power_lines_tests/PowerTest` (copy it to `game/` and pick it in the settings): it builds a wind farm, substations and an L-shaped line with the API and logs the figures and events.
+
+### NewGRF properties
+
+The properties are fork-only, so a NewGRF must ask for them first with a **feature test** in Action 14, and skip them with an Action 7 when the game does not have them. Upstream OpenTTD ignores the unknown node, so the parameter stays 0 there and the NewGRF loads cleanly.
+
+Action 14, at the root (next to `INFO`):
+
+```
+C "FTST"
+    T "NAME" <lang> "energy_transport" 00
+    B "MINV" 02 00 <word: lowest version the NewGRF can use, default 1>
+    B "MAXV" 02 00 <word: highest version, default FFFF>
+    B "SETP" 01 00 <byte: number of a GRF parameter, 00-7F>
+00
+```
+
+The game sets the named parameter to 1 when it has the feature in a version between `MINV` and `MAXV`, and to 0 otherwise. The current version of `energy_transport` is 1. The properties below are only accepted from a NewGRF whose feature test found `energy_transport`; from any other NewGRF they are unknown properties, as in upstream OpenTTD.
+
+Industries (feature 0A):
+
+| Property | Size | Meaning |
+| --- | --- | --- |
+| 60 | B | Energy role: 0 built-in rule (default), 1 consumer, 2 fuel power plant, 3 solar, 4 wind, 5 hydro. The built-in rule makes an industry that accepts coal or oil and produces nothing a fuel plant, and everything else a consumer. |
+| 61 | W | Capacity of a plant in tenths of MW: the most a fuel plant gives, or what a solar, wind or hydro plant gives at full sun, wind or flow (default 600 MW for fuel plants, 120 MW for NewGRF weather plants). |
+| 62 | W | Idle consumption of a consumer, in tenths of MW. |
+| 63 | W | Extra consumption of a consumer for every 100 units of cargo it made last month, in tenths of MW. |
+| 64 | V | Fuels: a byte count n, then n times a cargo label (4 bytes) and a word yield: the tenths of MW one unit of the cargo gives for a month (built in: coal 20, oil 30). When set, only these cargoes are fuel for the plant, and with role 0 an industry that accepts one of them and makes nothing is a fuel plant. |
+
+Houses (feature 07):
+
+| Property | Size | Meaning |
+| --- | --- | --- |
+| 60 | B | Energy the building needs besides its people, in tenths of MW (FF: the built-in 0.1 MW). |
+| 61 | B | Height class under overhead wires: 0 built-in rule (NewGRF houses count as tall), 1 low (wires may pass over it), 2 tall. |
+
+A NewGRF industry without these properties keeps the built-in rules, so existing sets such as FIRS still work as before. A test GRF built by `docs/power_lines_tests/make_energy_test_grf.py <out.grf> <off.grf>` (pseudo sprites only; it copies the power station with role 2, 1000 MW and coal at 50) loaded with the feature found, and its plants offered 1000 MW and kept 14 days of fuel from 100 tonnes where a base power station keeps 9; a copy asking for an unknown feature skipped the properties.
+
+### Sprites
+
+Every 3D model of the power lines and the new power plants already had its 2D sprite in `power.grf` (pylons, transition pylons, substations, wires, cable markers and views, plant tiles, status lights, pier, dam step, toolbar icons and cursors). The built-in placeholders (the power station transformer and the catenary wires) are only used when `power.grf` is missing.
+
+### Fix found while testing
+
+* **Pylons in the sea were washed away.** The sea floods flat tiles at sea level next to it by clearing them, and a pylon standing in the sea on its pier is such a tile, so the sea removed it within a few days and the line fell apart into two networks. Flooding now passes over power tiles that stand in water, and a pylon in the sea floods onwards like a buoy.
+* `power_build spans <x> <y>` prints what the map stores for a tile: height, slope, the span lengths of a power tile in the 8 directions, and the wire above it.
